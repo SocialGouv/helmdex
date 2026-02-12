@@ -57,7 +57,8 @@ type CatalogConfig struct {
 }
 
 type ArtifactHubConfig struct {
-	Enabled bool `yaml:"enabled"`
+	// Enabled defaults to true when omitted.
+	Enabled *bool `yaml:"enabled,omitempty"`
 }
 
 func DefaultConfig() Config {
@@ -72,7 +73,7 @@ func DefaultConfig() Config {
 		},
 		Sources: []Source{},
 		ArtifactHub: ArtifactHubConfig{
-			Enabled: true,
+			Enabled: boolPtr(true),
 		},
 	}
 }
@@ -87,14 +88,11 @@ func LoadFile(path string) (Config, error) {
 	if err := yaml.Unmarshal(b, &cfg); err != nil {
 		return Config{}, err
 	}
+
+	applyDefaults(&cfg)
+
 	if err := cfg.Validate(); err != nil {
 		return Config{}, err
-	}
-	if cfg.Repo.AppsDir == "" {
-		cfg.Repo.AppsDir = "apps"
-	}
-	if cfg.ArtifactHub.Enabled == false {
-		// keep as-is
 	}
 	return cfg, nil
 }
@@ -135,13 +133,6 @@ func (c Config) Validate() error {
 		if s.Presets.Enabled && c.Platform.Name == "" {
 			return fmt.Errorf("platform.name is required when source %q presets are enabled", s.Name)
 		}
-		if s.Presets.Enabled && s.Presets.ChartsPath == "" {
-			// default according to spec
-			s.Presets.ChartsPath = "charts"
-		}
-		if s.Catalog.Enabled && s.Catalog.Path == "" {
-			s.Catalog.Path = "catalog.yaml"
-		}
 	}
 	return nil
 }
@@ -163,3 +154,29 @@ func (c Config) ValidateForWrite() error {
 	return nil
 }
 
+func (c Config) ArtifactHubEnabled() bool {
+	if c.ArtifactHub.Enabled == nil {
+		return true
+	}
+	return *c.ArtifactHub.Enabled
+}
+
+func applyDefaults(cfg *Config) {
+	if cfg.Repo.AppsDir == "" {
+		cfg.Repo.AppsDir = "apps"
+	}
+	if cfg.ArtifactHub.Enabled == nil {
+		cfg.ArtifactHub.Enabled = boolPtr(true)
+	}
+	for i := range cfg.Sources {
+		s := &cfg.Sources[i]
+		if s.Presets.Enabled && s.Presets.ChartsPath == "" {
+			s.Presets.ChartsPath = "charts"
+		}
+		if s.Catalog.Enabled && s.Catalog.Path == "" {
+			s.Catalog.Path = "catalog.yaml"
+		}
+	}
+}
+
+func boolPtr(v bool) *bool { return &v }

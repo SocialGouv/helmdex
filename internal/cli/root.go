@@ -36,16 +36,5 @@ func NewRootCmd() *cobra.Command {
 	cmd.SilenceUsage = true
 	cmd.SilenceErrors = true
 
-	cmd.PersistentPreRunE = func(cmd *cobra.Command, args []string) error {
-		// Prevent cobra from printing errors twice.
-		cmd.SetOut(os.Stdout)
-		cmd.SetErr(os.Stderr)
-		return nil
-	}
-
-	cmd.PersistentPostRunE = func(cmd *cobra.Command, args []string) error {
-		return nil
-	}
-
 	return cmd
 }
