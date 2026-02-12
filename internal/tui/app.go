@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 
+	"helmdex/internal/config"
+
 	tea "github.com/charmbracelet/bubbletea"
 )
 
@@ -17,7 +19,7 @@ const (
 type Params struct {
 	RepoRoot   string
 	ConfigPath string
-	Config     any
+	Config     *config.Config
 
 	StartScreen ScreenID
 }
@@ -35,4 +37,3 @@ func Run(ctx context.Context, p Params) error {
 	_, err := prog.Run()
 	return err
 }
-

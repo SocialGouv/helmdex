@@ -8,14 +8,14 @@ import (
 )
 
 func DependencyUpdate(ctx context.Context, chartDir string) error {
-	return run(ctx, chartDir, "helm", "dependency", "update")
+	return runCmd(ctx, chartDir, "helm", "dependency", "update")
 }
 
 func DependencyBuild(ctx context.Context, chartDir string) error {
-	return run(ctx, chartDir, "helm", "dependency", "build")
+	return runCmd(ctx, chartDir, "helm", "dependency", "build")
 }
 
-func run(ctx context.Context, dir, name string, args ...string) error {
+func runCmd(ctx context.Context, dir, name string, args ...string) error {
 	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.Dir = dir
 	cmd.Stdout = os.Stdout
@@ -25,4 +25,3 @@ func run(ctx context.Context, dir, name string, args ...string) error {
 	}
 	return nil
 }
-
