@@ -1,7 +1,12 @@
 package cli
 
 import (
+	"path/filepath"
 	"os"
+
+	"helmdex/internal/config"
+	"helmdex/internal/repo"
+	"helmdex/internal/tui"
 
 	"github.com/spf13/cobra"
 )
@@ -19,8 +24,26 @@ func NewRootCmd() *cobra.Command {
 		Short: "helmdex scaffolds and maintains GitOps-friendly Helm umbrella chart instances",
 		Long: "helmdex is a TUI-first organizer for Helm umbrella chart instances (no template rendering, no deploy).",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			// v0.1 skeleton: show help by default
-			return cmd.Help()
+			repoRoot, err := repo.ResolveRoot(f.RepoRoot)
+			if err != nil {
+				return err
+			}
+			cfgPath := f.Config
+			if cfgPath == "" {
+				cfgPath = filepath.Join(repoRoot, "helmdex.yaml")
+			}
+
+			var cfg *config.Config
+			loaded, err := config.LoadFile(cfgPath)
+			if err == nil {
+				cfg = &loaded
+			}
+
+			return tui.Run(cmd.Context(), tui.Params{
+				RepoRoot: repoRoot,
+				ConfigPath: cfgPath,
+				Config: cfg,
+			})
 		},
 	}
 
@@ -30,6 +53,7 @@ func NewRootCmd() *cobra.Command {
 	cmd.AddCommand(newInitCmd(&f))
 	cmd.AddCommand(newCatalogCmd(&f))
 	cmd.AddCommand(newInstanceCmd(&f))
+	cmd.AddCommand(newTUICmd(&f))
 
 	cmd.SetOut(os.Stdout)
 	cmd.SetErr(os.Stderr)
