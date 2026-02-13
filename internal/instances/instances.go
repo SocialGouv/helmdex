@@ -101,3 +101,18 @@ func RelockDependencies(ctx context.Context, instancePath string) error {
 	return helmutil.DependencyUpdate(ctx, instancePath)
 }
 
+// RelockIfDepsChanged re-locks dependencies only when the instance's declared
+// dependencies are out of sync with Chart.lock.
+//
+// If Chart.lock does not exist, this will relock only when Chart.yaml declares
+// any dependencies.
+func RelockIfDepsChanged(ctx context.Context, instancePath string) (bool, error) {
+	changed, err := DepsChanged(instancePath)
+	if err != nil {
+		return false, err
+	}
+	if !changed {
+		return false, nil
+	}
+	return true, RelockDependencies(ctx, instancePath)
+}

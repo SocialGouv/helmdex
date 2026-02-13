@@ -14,10 +14,8 @@ import (
 // It deep-merges (in order):
 // - values.default.yaml (if exists)
 // - values.platform.yaml (if exists)
-// - values.set.*.yaml (if exists; lexicographic order for v0.1 skeleton)
+// - values.set.*.yaml (if exists; lexicographic order)
 // - values.instance.yaml (must exist; user-owned)
-//
-// v0.1 skeleton note: set ordering will be made user-configurable later.
 func GenerateMergedValues(instanceDir string) error {
 	paths := []string{}
 	addIfExists := func(p string, required bool) error {
@@ -96,4 +94,3 @@ func loadYAMLDoc(path string) (*yaml.Node, error) {
 	}
 	return &doc, nil
 }
-

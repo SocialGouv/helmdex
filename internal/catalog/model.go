@@ -14,10 +14,10 @@ type Entry struct {
 	Chart       Chart  `yaml:"chart"`
 	Version     string `yaml:"version"`
 	Digest      string `yaml:"digest,omitempty"`
+	DefaultSets []string `yaml:"defaultSets,omitempty"`
 }
 
 type Chart struct {
 	Repo string `yaml:"repo"`
 	Name string `yaml:"name"`
 }
-

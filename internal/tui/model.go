@@ -2,17 +2,21 @@ package tui
 
 import (
 	"context"
-	"time"
-	"os"
-	"path/filepath"
 	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"sort"
 	"strings"
+	"time"
 
 	"helmdex/internal/artifacthub"
 	"helmdex/internal/catalog"
 	"helmdex/internal/helmutil"
 	"helmdex/internal/instances"
+	"helmdex/internal/presets"
 	"helmdex/internal/semverutil"
+	"helmdex/internal/values"
 	"helmdex/internal/yamlchart"
 
 	"github.com/charmbracelet/bubbles/key"
@@ -21,6 +25,7 @@ import (
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"gopkg.in/yaml.v3"
 )
 
 type AppModel struct {
@@ -31,8 +36,15 @@ type AppModel struct {
 	// dashboard
 	instList list.Model
 	insts    []instances.Instance
-	actions    list.Model
-	actionsOpen bool
+
+	// overlays
+	helpOpen bool
+
+	paletteOpen bool
+	palette     paletteModel
+
+	statusErr   string
+	statusErrAt time.Time
 
 	// create instance
 	creating bool
@@ -47,6 +59,9 @@ type AppModel struct {
 	// deps state
 	depsList list.Model
 	chart    *yamlchart.Chart
+
+	// presets resolution (computed on demand for the Presets tab)
+	presetErr string
 
 	// add dep wizard
 	addingDep bool
@@ -118,16 +133,19 @@ type keyMap struct {
 	Back   key.Binding
 	Open   key.Binding
 	Reload key.Binding
+	Regen  key.Binding
 	TabLeft  key.Binding
 	TabRight key.Binding
 	NewInstance key.Binding
 	AddDep key.Binding
-	Backspace key.Binding
-	Actions key.Binding
+	Actions key.Binding // command palette
+	Help    key.Binding
+	EditValues key.Binding
+	Apply  key.Binding
 }
 
 func (k keyMap) ShortHelp() []key.Binding {
-	return []key.Binding{k.Open, k.Actions, k.AddDep, k.TabLeft, k.TabRight, k.Reload, k.Back, k.Quit}
+	return []key.Binding{k.Actions, k.Help, k.Open, k.AddDep, k.EditValues, k.Apply, k.Regen, k.TabLeft, k.TabRight, k.Reload, k.Back, k.Quit}
 }
 
 func (k keyMap) FullHelp() [][]key.Binding {
@@ -140,12 +158,15 @@ func NewAppModel(p Params) AppModel {
 		Back: key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "back")),
 		Open: key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "open")),
 		Reload: key.NewBinding(key.WithKeys("ctrl+r", "f5"), key.WithHelp("ctrl+r", "reload")),
+		Regen:  key.NewBinding(key.WithKeys("r"), key.WithHelp("r", "regen values")),
 		TabLeft:  key.NewBinding(key.WithKeys("left", "h"), key.WithHelp("←/h", "prev tab")),
 		TabRight: key.NewBinding(key.WithKeys("right", "l"), key.WithHelp("→/l", "next tab")),
 		NewInstance: key.NewBinding(key.WithKeys("n"), key.WithHelp("n", "new instance")),
 		AddDep: key.NewBinding(key.WithKeys("a"), key.WithHelp("a", "add dep")),
-		Backspace: key.NewBinding(key.WithKeys("backspace"), key.WithHelp("⌫", "back")),
-		Actions: key.NewBinding(key.WithKeys("m"), key.WithHelp("m", "menu")),
+		EditValues: key.NewBinding(key.WithKeys("e"), key.WithHelp("e", "edit values")),
+		Apply: key.NewBinding(key.WithKeys("p"), key.WithHelp("p", "apply")),
+		Actions: key.NewBinding(key.WithKeys("m"), key.WithHelp("m", "commands")),
+		Help:    key.NewBinding(key.WithKeys("?"), key.WithHelp("?", "help")),
 	}
 
 	l := list.New([]list.Item{}, list.NewDefaultDelegate(), 0, 0)
@@ -190,12 +211,6 @@ func NewAppModel(p Params) AppModel {
 	arbVersion := textinput.New(); arbVersion.Placeholder = "exact version"; arbVersion.Prompt = "version> "
 	arbAlias := textinput.New(); arbAlias.Placeholder = "alias (optional)"; arbAlias.Prompt = "alias> "
 
-	actions := list.New([]list.Item{}, list.NewDefaultDelegate(), 0, 0)
-	actions.Title = "Actions"
-	actions.SetShowHelp(false)
-	actions.SetFilteringEnabled(false)
-	actions.SetItems([]list.Item{actionItem(actionNewInstance), actionItem(actionReloadInstances), actionItem(actionForceRefreshAHDetail)})
-
 	tabNames := []string{"Overview", "Deps", "Values", "Presets"}
 	ahDetailTabNames := []string{"README", "Values", "Versions"}
 	vp := viewport.New(0, 0)
@@ -205,7 +220,6 @@ func NewAppModel(p Params) AppModel {
 		params: p,
 		screen: p.StartScreen,
 		instList: l,
-		actions: actions,
 		depsList: deps,
 		depSource: src,
 		catalogList: catList,
@@ -223,6 +237,7 @@ func NewAppModel(p Params) AppModel {
 		activeTab: 0,
 		tabNames:  tabNames,
 		content: vp,
+		palette: newPaletteModel(),
 		keys: keys,
 	}
 
@@ -234,6 +249,10 @@ func (m AppModel) Init() tea.Cmd {
 }
 
 type errMsg struct{ err error }
+
+type regenDoneMsg struct{}
+
+type appliedMsg struct{}
 
 type instancesMsg struct{ items []instances.Instance }
 
@@ -404,6 +423,16 @@ func (m AppModel) renderAHDetailBody() string {
 }
 
 func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	// Help overlay has highest priority.
+	if km, ok := msg.(tea.KeyMsg); ok && m.helpOpen {
+		if km.Type == tea.KeyEsc || key.Matches(km, m.keys.Help) {
+			m.helpOpen = false
+			return m, nil
+		}
+		// Consume all input while help is open.
+		return m, nil
+	}
+
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
@@ -417,7 +446,7 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.catalogList.SetSize(msg.Width-2, msg.Height-6)
 		m.ahResults.SetSize(msg.Width-2, msg.Height-6)
 		m.ahVersions.SetSize(msg.Width-2, msg.Height-6)
-		m.actions.SetSize(min(40, msg.Width-4), min(8, msg.Height-6))
+		m.palette.SetSize(min(70, msg.Width-4), min(14, msg.Height-6))
 		// Ensure the viewport never ends up with negative size.
 		if m.ahPreview.Height < 3 {
 			m.ahPreview.Height = 3
@@ -434,6 +463,7 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case chartMsg:
 		m.chart = &msg.chart
 		m.depsList.SetItems(depsToItems(msg.chart.Dependencies))
+		m.refreshInstanceView()
 		return m, nil
 	case depAppliedMsg:
 		m.chart = &msg.chart
@@ -441,6 +471,14 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.addingDep = false
 		m.depStep = depStepNone
 		m.modalErr = ""
+		m.statusErr = ""
+		m.refreshInstanceView()
+		return m, nil
+	case regenDoneMsg:
+		m.refreshInstanceView()
+		return m, nil
+	case appliedMsg:
+		m.refreshInstanceView()
 		return m, nil
 	case catalogMsg:
 		m.catalogEntries = msg.entries
@@ -509,6 +547,8 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.ahPreview.SetContent(m.renderAHDetailBody())
 		return m, nil
 	case errMsg:
+		m.statusErr = msg.err.Error()
+		m.statusErrAt = time.Now()
 		// Prefer keeping the modal open when errors happen during add-dep flows.
 		if m.addingDep {
 			m.modalErr = msg.err.Error()
@@ -525,6 +565,11 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case tea.KeyMsg:
+		// Command palette has priority over global shortcuts.
+		if m.paletteOpen {
+			return m.paletteUpdate(msg)
+		}
+
 		// If a text input is focused or a list filter is active, do not treat
 		// characters as global shortcuts.
 		if m.inputCapturesKeys() {
@@ -547,8 +592,35 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, m.reloadInstancesCmd()
 		}
+		if key.Matches(msg, m.keys.Regen) {
+			if m.screen == ScreenInstance && !m.addingDep {
+				return m, m.regenMergedValuesCmd()
+			}
+		}
+		if key.Matches(msg, m.keys.EditValues) {
+			if m.screen == ScreenInstance && !m.addingDep {
+				return m, m.editInstanceValuesCmd()
+			}
+		}
+		if key.Matches(msg, m.keys.Apply) {
+			if m.screen == ScreenInstance && !m.addingDep {
+				return m, m.applyInstanceCmd(false)
+			}
+		}
+		// Deps tab actions.
+		if m.screen == ScreenInstance && !m.addingDep && m.activeTab == 1 {
+			// Delete dependency.
+			if msg.String() == "d" || msg.String() == "D" {
+				return m, m.removeSelectedDepCmd()
+			}
+		}
 		if key.Matches(msg, m.keys.Actions) {
-			m.actionsOpen = !m.actionsOpen
+			m.paletteOpen = true
+			m.palette.Open(m)
+			return m, nil
+		}
+		if key.Matches(msg, m.keys.Help) {
+			m.helpOpen = true
 			return m, nil
 		}
 		if key.Matches(msg, m.keys.NewInstance) {
@@ -568,15 +640,45 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		if key.Matches(msg, m.keys.Back) {
+			// First: if any filter is applied, clear it.
+			if m.clearAnyAppliedFilter() {
+				return m, nil
+			}
 			if m.creating {
 				m.creating = false
 				return m, nil
 			}
 			if m.addingDep {
-				m.addingDep = false
-				m.depStep = depStepNone
-				m.modalErr = ""
-				return m, nil
+				// Step-wise back inside the wizard.
+				switch m.depStep {
+				case depStepChooseSource:
+					m.addingDep = false
+					m.depStep = depStepNone
+					m.modalErr = ""
+					return m, nil
+				case depStepCatalog, depStepAHQuery, depStepArbitrary:
+					m.depStep = depStepChooseSource
+					m.modalErr = ""
+					return m, nil
+				case depStepAHResults:
+					m.depStep = depStepAHQuery
+					m.ahQuery.Focus()
+					m.modalErr = ""
+					return m, nil
+				case depStepAHVersions:
+					m.depStep = depStepAHResults
+					m.modalErr = ""
+					return m, nil
+				case depStepAHDetail:
+					m.depStep = depStepAHResults
+					m.modalErr = ""
+					return m, nil
+				default:
+					m.addingDep = false
+					m.depStep = depStepNone
+					m.modalErr = ""
+					return m, nil
+				}
 			}
 			if m.screen == ScreenInstance {
 				m.screen = ScreenDashboard
@@ -591,7 +693,7 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.selected = &inst
 					m.screen = ScreenInstance
 					m.activeTab = 0
-					m.content.SetContent(renderInstanceOverview(inst))
+					m.refreshInstanceView()
 					return m, m.loadChartCmd(inst)
 				}
 			}
@@ -614,52 +716,15 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.screen == ScreenInstance && !m.addingDep {
 			if key.Matches(msg, m.keys.TabLeft) {
 				m.activeTab = (m.activeTab - 1 + len(m.tabNames)) % len(m.tabNames)
-				if m.selected != nil {
-					m.content.SetContent(renderInstanceTab(*m.selected, m.activeTab))
-				}
+				m.refreshInstanceView()
 				return m, nil
 			}
 			if key.Matches(msg, m.keys.TabRight) {
 				m.activeTab = (m.activeTab + 1) % len(m.tabNames)
-				if m.selected != nil {
-					m.content.SetContent(renderInstanceTab(*m.selected, m.activeTab))
-				}
+				m.refreshInstanceView()
 				return m, nil
 			}
 		}
-	}
-
-	if m.actionsOpen {
-		var cmd tea.Cmd
-		m.actions, cmd = m.actions.Update(msg)
-		if km, ok := msg.(tea.KeyMsg); ok && km.Type == tea.KeyEnter {
-			it := m.actions.SelectedItem()
-			if it != nil {
-				s := string(it.(actionItem))
-				switch s {
-				case actionNewInstance:
-					m.actionsOpen = false
-					m.creating = true
-					m.newName.SetValue("")
-					m.newName.Focus()
-				case actionReloadInstances:
-					m.actionsOpen = false
-					return m, m.reloadInstancesCmd()
-				case actionForceRefreshAHDetail:
-					m.actionsOpen = false
-					if m.addingDep && m.depStep == depStepAHDetail && m.ahSelected != nil && m.ahSelectedVersion != "" {
-						m.ahForceRefresh = true
-						m.ahLoading = true
-						m.modalErr = ""
-						m.ahPreview.SetContent(m.renderAHDetailBody())
-						cmd := m.loadHelmPreviewsCmd(m.ahSelected.RepositoryURL, m.ahSelected.Name, m.ahSelectedVersion)
-						m.ahForceRefresh = false
-						return m, cmd
-					}
-				}
-			}
-		}
-		return m, cmd
 	}
 
 	// Modal: create instance.
@@ -868,12 +933,96 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	if m.screen == ScreenInstance {
+		// Deps tab uses its own list.
+		if m.activeTab == 1 && !m.addingDep {
+			var cmd tea.Cmd
+			m.depsList, cmd = m.depsList.Update(msg)
+			return m, cmd
+		}
 		var cmd tea.Cmd
 		m.content, cmd = m.content.Update(msg)
 		return m, cmd
 	}
 
 	return m, nil
+}
+
+func (m AppModel) paletteUpdate(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	// Close.
+	if msg.Type == tea.KeyEsc {
+		m.paletteOpen = false
+		return m, nil
+	}
+	if msg.Type == tea.KeyCtrlC {
+		return m, tea.Quit
+	}
+	cmd, didEnter := m.palette.Update(msg)
+	if didEnter {
+		it, ok := m.palette.selected()
+		if ok {
+			switch it.ID {
+			case palQuit:
+				return m, tea.Quit
+			case palReload:
+				m.paletteOpen = false
+				return m, m.reloadInstancesCmd()
+			case palNewInstance:
+				m.paletteOpen = false
+				m.creating = true
+				m.newName.SetValue("")
+				m.newName.Focus()
+				return m, nil
+			case palBack:
+				m.paletteOpen = false
+				if m.screen == ScreenInstance {
+					m.screen = ScreenDashboard
+					m.selected = nil
+				}
+				return m, nil
+			case palAddDep:
+				m.paletteOpen = false
+				if m.screen == ScreenInstance && !m.addingDep {
+					m.addingDep = true
+					m.depStep = depStepChooseSource
+					m.modalErr = ""
+					return m, m.loadCatalogCmd()
+				}
+				return m, nil
+			case palRegenValues:
+				m.paletteOpen = false
+				if m.screen == ScreenInstance {
+					return m, m.regenMergedValuesCmd()
+				}
+				return m, nil
+			case palForceRefresh:
+				m.paletteOpen = false
+				if m.addingDep && m.depStep == depStepAHDetail && m.ahSelected != nil && m.ahSelectedVersion != "" {
+					m.ahForceRefresh = true
+					m.ahLoading = true
+					m.modalErr = ""
+					m.ahPreview.SetContent(m.renderAHDetailBody())
+					c := m.loadHelmPreviewsCmd(m.ahSelected.RepositoryURL, m.ahSelected.Name, m.ahSelectedVersion)
+					m.ahForceRefresh = false
+					return m, c
+				}
+				return m, nil
+			}
+		}
+	}
+	return m, cmd
+}
+
+func (m AppModel) isAnyFilterActive() bool {
+	if m.instList.FilterState() != list.Unfiltered {
+		return true
+	}
+	if m.catalogList.FilterState() != list.Unfiltered {
+		return true
+	}
+	if m.depSource.FilterState() != list.Unfiltered {
+		return true
+	}
+	return false
 }
 
 func (m AppModel) View() string {
@@ -885,27 +1034,39 @@ func (m AppModel) View() string {
 	}
 
 	var body string
+	if m.helpOpen {
+		body = renderHelpOverlay(m)
+	} else if m.paletteOpen {
+		body = renderWithModal(m, m.currentBodyView(), m.palette.View())
+	} else {
+		body = m.currentBodyView()
+	}
+
+	contextHelp := lipgloss.NewStyle().Faint(true).Render(m.contextHelpLine())
+	status := renderStatusBar(m)
+
+	return base.Render(strings.TrimRight(header+"\n\n"+body+"\n\n"+contextHelp+"\n"+status, "\n"))
+}
+
+func (m AppModel) currentBodyView() string {
 	switch m.screen {
 	case ScreenDashboard:
 		if m.creating {
-			body = lipgloss.NewStyle().Bold(true).Render("New instance") + "\n\n" + m.newName.View() + "\n\n(enter to create, esc to cancel)"
-		} else {
-			body = m.instList.View() + "\n\n" + lipgloss.NewStyle().Faint(true).Render("m: menu")
+			return lipgloss.NewStyle().Bold(true).Render("New instance") + "\n\n" + m.newName.View() + "\n\n(enter to create, esc to cancel)"
 		}
+		return m.instList.View()
 	case ScreenInstance:
 		if m.addingDep {
-			body = renderAddDepView(m)
-		} else {
-			tabsLine := renderTabs(m.tabNames, m.activeTab)
-			body = tabsLine + "\n" + m.content.View() + "\n\n" + lipgloss.NewStyle().Faint(true).Render("a: add dependency")
+			return renderAddDepView(m)
 		}
+		tabsLine := renderTabs(m.tabNames, m.activeTab)
+		if m.activeTab == 1 {
+			return tabsLine + "\n" + m.depsList.View() + "\n\n" + lipgloss.NewStyle().Faint(true).Render("d: remove selected")
+		}
+		return tabsLine + "\n" + m.content.View()
 	default:
-		body = "unknown screen"
+		return "unknown screen"
 	}
-
-	help := lipgloss.NewStyle().Faint(true).Render(shortHelp(m.keys))
-
-	return base.Render(strings.TrimRight(header+"\n\n"+body+"\n\n"+help, "\n"))
 }
 
 func renderTabs(names []string, active int) string {
@@ -930,6 +1091,28 @@ func shortHelp(k keyMap) string {
 	return strings.Join(parts, " • ")
 }
 
+func (m AppModel) contextHelpLine() string {
+	if m.helpOpen {
+		return "esc/? close help"
+	}
+	if m.paletteOpen {
+		return "type to search • ↑/↓ select • enter run • esc close"
+	}
+	if m.creating {
+		return "enter create • esc cancel"
+	}
+	if m.screen == ScreenDashboard {
+		return "/ filter • enter open • n new • m commands • q quit"
+	}
+	if m.screen == ScreenInstance {
+		if m.addingDep {
+			return "esc close • enter select • ←/→ tabs • a add"
+		}
+		return "←/→ tabs • a add dep • e edit values • p apply • r regen values • m commands • esc back • q quit"
+	}
+	return shortHelp(m.keys)
+}
+
 type instanceItem instances.Instance
 
 func (i instanceItem) FilterValue() string { return i.Name }
@@ -944,7 +1127,7 @@ func (i instanceItem) Description() string {
 }
 
 func renderInstanceOverview(inst instances.Instance) string {
-	return fmt.Sprintf("Instance: %s\nPath: %s\n\n(Detail tabs are stubbed in v0.2 skeleton.)", inst.Name, inst.Path)
+	return fmt.Sprintf("Instance: %s\nPath: %s", inst.Name, inst.Path)
 }
 
 func renderInstanceTab(inst instances.Instance, tab int) string {
@@ -952,11 +1135,11 @@ func renderInstanceTab(inst instances.Instance, tab int) string {
 	case 0:
 		return renderInstanceOverview(inst)
 	case 1:
-		return "Deps tab: (open add dependency wizard with 'a')"
+		return "Dependencies (press 'a' to add)"
 	case 2:
-		return "Values tab (stub): will preview values.*.yaml and allow opening $EDITOR for values.instance.yaml."
+		return "Values"
 	case 3:
-		return "Presets tab (stub): will preview resolved preset files per dependency."
+		return "Presets"
 	default:
 		return "unknown tab"
 	}
@@ -1082,6 +1265,9 @@ func (m AppModel) inputCapturesKeys() bool {
 	if m.creating && m.newName.Focused() {
 		return true
 	}
+	if m.paletteOpen && m.palette.QueryFocused() {
+		return true
+	}
 	if m.addingDep {
 		if m.depStep == depStepAHQuery && m.ahQuery.Focused() {
 			return true
@@ -1091,21 +1277,41 @@ func (m AppModel) inputCapturesKeys() bool {
 				return true
 			}
 		}
-		// If any list is filtering, it should capture typing.
-		if m.catalogList.FilterState() == list.Filtering {
-			return true
-		}
-		if m.ahResults.FilterState() == list.Filtering {
-			return true
-		}
-		if m.depSource.FilterState() == list.Filtering {
-			return true
-		}
+	// If any list is filtering, it should capture typing.
+	if m.catalogList.FilterState() == list.Filtering {
+		return true
+	}
+	if m.ahResults.FilterState() == list.Filtering {
+		return true
+	}
+	if m.depSource.FilterState() == list.Filtering {
+		return true
+	}
 	}
 	if m.instList.FilterState() == list.Filtering {
 		return true
 	}
+	if m.depsList.FilterState() == list.Filtering {
+		return true
+	}
 	return false
+}
+
+func (m *AppModel) clearAnyAppliedFilter() bool {
+	cleared := false
+	if m.instList.FilterState() == list.FilterApplied {
+		m.instList.ResetFilter()
+		cleared = true
+	}
+	if m.catalogList.FilterState() == list.FilterApplied {
+		m.catalogList.ResetFilter()
+		cleared = true
+	}
+	if m.depSource.FilterState() == list.FilterApplied {
+		m.depSource.ResetFilter()
+		cleared = true
+	}
+	return cleared
 }
 
 func min(a, b int) int {
@@ -1133,6 +1339,249 @@ func (m AppModel) applyDependencyDraft(dep yamlchart.Dependency) tea.Cmd {
 		}
 		// Ensure values.yaml regenerated.
 		_ = os.MkdirAll(m.selected.Path, 0o755)
+		return depAppliedMsg{chart: c}
+	}
+}
+
+func (m AppModel) regenMergedValuesCmd() tea.Cmd {
+	return func() tea.Msg {
+		if m.selected == nil {
+			return errMsg{fmt.Errorf("no instance selected")}
+		}
+		if err := values.GenerateMergedValues(m.selected.Path); err != nil {
+			return errMsg{err}
+		}
+		return regenDoneMsg{}
+	}
+}
+
+func (m AppModel) editInstanceValuesCmd() tea.Cmd {
+	return func() tea.Msg {
+		if m.selected == nil {
+			return errMsg{fmt.Errorf("no instance selected")}
+		}
+		editor := os.Getenv("EDITOR")
+		if strings.TrimSpace(editor) == "" {
+			editor = "vi"
+		}
+		path := filepath.Join(m.selected.Path, "values.instance.yaml")
+		cmd := exec.Command(editor, path)
+		cmd.Stdin = os.Stdin
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		if err := cmd.Run(); err != nil {
+			return errMsg{fmt.Errorf("editor failed: %w", err)}
+		}
+		return nil
+	}
+}
+
+func (m AppModel) applyInstanceCmd(forceRelock bool) tea.Cmd {
+	return func() tea.Msg {
+		if m.selected == nil {
+			return errMsg{fmt.Errorf("no instance selected")}
+		}
+		if m.params.Config == nil {
+			return errMsg{fmt.Errorf("no config loaded (missing helmdex.yaml?)")}
+		}
+		// Optional relock.
+		if forceRelock {
+			if err := instances.RelockDependencies(contextBG(), m.selected.Path); err != nil {
+				return errMsg{err}
+			}
+		} else {
+			if _, err := instances.RelockIfDepsChanged(contextBG(), m.selected.Path); err != nil {
+				return errMsg{err}
+			}
+		}
+		c, err := yamlchart.ReadChart(filepath.Join(m.selected.Path, "Chart.yaml"))
+		if err != nil {
+			return errMsg{err}
+		}
+		_, err = presets.Import(presets.ImportParams{RepoRoot: m.params.RepoRoot, InstancePath: m.selected.Path, Config: *m.params.Config, Dependencies: c.Dependencies})
+		if err != nil {
+			return errMsg{err}
+		}
+		if err := values.GenerateMergedValues(m.selected.Path); err != nil {
+			return errMsg{err}
+		}
+		return appliedMsg{}
+	}
+}
+
+func (m *AppModel) refreshInstanceView() {
+	if m.selected == nil {
+		return
+	}
+	switch m.activeTab {
+	case 0:
+		m.content.SetContent(m.renderOverviewTab())
+	case 2:
+		m.content.SetContent(m.renderValuesTab())
+	case 3:
+		m.content.SetContent(m.renderPresetsTab())
+	default:
+		m.content.SetContent(renderInstanceTab(*m.selected, m.activeTab))
+	}
+}
+
+func (m AppModel) renderOverviewTab() string {
+	inst := *m.selected
+	lines := []string{renderInstanceOverview(inst), ""}
+	// Chart summary.
+	if m.chart != nil {
+		lines = append(lines, fmt.Sprintf("Chart: %s (%s)\nVersion: %s", m.chart.Name, m.chart.APIVersion, m.chart.Version))
+		lines = append(lines, fmt.Sprintf("Dependencies: %d", len(m.chart.Dependencies)))
+		for _, d := range m.chart.Dependencies {
+			lines = append(lines, fmt.Sprintf("- %s: %s @ %s", yamlchart.DependencyID(d), d.Version, d.Repository))
+		}
+		lines = append(lines, "")
+	}
+	// Local set files.
+	setFiles, _ := filepath.Glob(filepath.Join(inst.Path, "values.set.*.yaml"))
+	if len(setFiles) == 0 {
+		lines = append(lines, "Sets: (none)")
+	} else {
+		s := []string{}
+		for _, f := range setFiles {
+			s = append(s, filepath.Base(f))
+		}
+		sort.Strings(s)
+		lines = append(lines, "Sets:")
+		for _, f := range s {
+			lines = append(lines, "- "+f)
+		}
+	}
+	lines = append(lines, "")
+	// Sync meta.
+	if m.params.Config != nil && len(m.params.Config.Sources) > 0 {
+		lines = append(lines, "Sources:")
+		for _, src := range m.params.Config.Sources {
+			metaPath := filepath.Join(m.params.RepoRoot, ".helmdex", "cache", src.Name, ".helmdex-meta.yaml")
+			commit := readResolvedCommit(metaPath)
+			if commit == "" {
+				commit = "(not synced)"
+			}
+			lines = append(lines, fmt.Sprintf("- %s: %s", src.Name, commit))
+		}
+	}
+	return strings.Join(lines, "\n")
+}
+
+func readResolvedCommit(metaPath string) string {
+	b, err := os.ReadFile(metaPath)
+	if err != nil {
+		return ""
+	}
+	var m map[string]any
+	if err := yaml.Unmarshal(b, &m); err != nil {
+		return ""
+	}
+	if v, ok := m["resolvedCommit"].(string); ok {
+		if len(v) > 12 {
+			return v[:12]
+		}
+		return v
+	}
+	return ""
+}
+
+func (m AppModel) renderValuesTab() string {
+	if m.selected == nil {
+		return ""
+	}
+	inst := *m.selected
+	paths := []string{
+		"values.default.yaml",
+		"values.platform.yaml",
+		"values.instance.yaml",
+		"values.yaml",
+	}
+	setFiles, _ := filepath.Glob(filepath.Join(inst.Path, "values.set.*.yaml"))
+	sort.Strings(setFiles)
+	lines := []string{"Values files:", ""}
+	for _, rel := range paths {
+		p := filepath.Join(inst.Path, rel)
+		if _, err := os.Stat(p); err == nil {
+			lines = append(lines, "- "+rel)
+		}
+	}
+	for _, p := range setFiles {
+		lines = append(lines, "- "+filepath.Base(p))
+	}
+	lines = append(lines, "", "Actions:", "- e: edit values.instance.yaml", "- r: regenerate values.yaml")
+	return strings.Join(lines, "\n")
+}
+
+func (m AppModel) renderPresetsTab() string {
+	if m.selected == nil {
+		return ""
+	}
+	if m.params.Config == nil {
+		return "No config loaded; cannot resolve presets."
+	}
+	if m.chart == nil {
+		return "Chart not loaded yet."
+	}
+	res, err := presets.Resolve(m.params.RepoRoot, *m.params.Config, m.chart.Dependencies)
+	if err != nil {
+		return "Preset resolution error: " + err.Error()
+	}
+	lines := []string{"Resolved presets:", ""}
+	ids := make([]string, 0, len(res.ByID))
+	for id := range res.ByID {
+		ids = append(ids, string(id))
+	}
+	sort.Strings(ids)
+	for _, raw := range ids {
+		rd := res.ByID[yamlchart.DepID(raw)]
+		lines = append(lines, fmt.Sprintf("%s (%s)", raw, rd.Dependency.Version))
+		if rd.DefaultPath != "" {
+			lines = append(lines, "  default:  "+rd.DefaultPath)
+		}
+		if rd.PlatformPath != "" {
+			lines = append(lines, "  platform: "+rd.PlatformPath)
+		}
+		// Sets
+		setNames := make([]string, 0, len(rd.SetPaths))
+		for s := range rd.SetPaths {
+			setNames = append(setNames, s)
+		}
+		sort.Strings(setNames)
+		for _, s := range setNames {
+			lines = append(lines, "  set "+s+": "+rd.SetPaths[s])
+		}
+		lines = append(lines, "")
+	}
+	lines = append(lines, "Actions:", "- p: apply (import preset layers + regenerate values.yaml)")
+	return strings.Join(lines, "\n")
+}
+
+func (m AppModel) removeSelectedDepCmd() tea.Cmd {
+	return func() tea.Msg {
+		if m.selected == nil {
+			return errMsg{fmt.Errorf("no instance selected")}
+		}
+		it := m.depsList.SelectedItem()
+		if it == nil {
+			return errMsg{fmt.Errorf("no dependency selected")}
+		}
+		di, ok := it.(depItem)
+		if !ok {
+			return errMsg{fmt.Errorf("unexpected dependency item type")}
+		}
+		id := yamlchart.DepID(di.Title())
+		chartPath := filepath.Join(m.selected.Path, "Chart.yaml")
+		c, err := yamlchart.ReadChart(chartPath)
+		if err != nil {
+			return errMsg{err}
+		}
+		if ok := c.RemoveDependencyByID(id); !ok {
+			return errMsg{fmt.Errorf("dependency %q not found", id)}
+		}
+		if err := yamlchart.WriteChart(chartPath, c); err != nil {
+			return errMsg{err}
+		}
 		return depAppliedMsg{chart: c}
 	}
 }

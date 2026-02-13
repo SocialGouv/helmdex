@@ -165,7 +165,6 @@ func (c *Client) GetHelmPackage(ctx context.Context, repoKey, packageName string
 	}
 
 	return PackageDetail{}, fmt.Errorf("artifacthub: unsupported available_versions shape")
-	return out, nil
 }
 
 func (c *Client) doJSON(ctx context.Context, url string, out any) error {
