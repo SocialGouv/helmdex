@@ -29,28 +29,46 @@ func RepoChartVersions(ctx context.Context, repoRoot, repoURL, chartName string,
 		return nil, err
 	}
 
-	// Best-effort update: if it fails, still try the search (index may already
-	// exist). If the search fails too, include update context.
-	updateErr := RepoUpdateIfStale(ctx, env, repoUpdateMaxAge)
-
 	ref := repoName + "/" + chartName
+
+	// Search-first: try listing versions immediately. In normal operation the
+	// repo index already exists, and this avoids doing a potentially expensive
+	// `helm repo update` on every UI interaction.
 	vs, err := searchRepoVersions(ctx, env, ref)
+	if err == nil && len(vs) > 0 {
+		return vs, nil
+	}
+
+	// If empty or failed, do a best-effort stale-aware update and retry once.
+	updateErr := RepoUpdateIfStale(ctx, env, repoUpdateMaxAge)
+	vs2, err2 := searchRepoVersions(ctx, env, ref)
+	if err2 == nil && len(vs2) > 0 {
+		return vs2, nil
+	}
+
+	// Fallback: include pre-releases. Keep the best error context.
+	vs3, err3 := searchRepoVersionsDevel(ctx, env, ref)
+	if err3 == nil {
+		return vs3, nil
+	}
+	// Prefer returning the original search error, but include update context.
 	if err != nil {
 		if updateErr != nil {
 			return nil, fmt.Errorf("%w (repo update error: %v)", err, updateErr)
 		}
 		return nil, err
 	}
-	if len(vs) > 0 {
-		return vs, nil
+	// Original search returned empty; return the most informative error.
+	if err2 != nil {
+		if updateErr != nil {
+			return nil, fmt.Errorf("%w (repo update error: %v)", err2, updateErr)
+		}
+		return nil, err2
 	}
-
-	// Fallback: include pre-releases.
-	vs, err = searchRepoVersionsDevel(ctx, env, ref)
-	if err != nil {
-		return nil, err
+	if updateErr != nil {
+		return nil, fmt.Errorf("no versions found for %s (repo update error: %v)", ref, updateErr)
 	}
-	return vs, nil
+	return nil, fmt.Errorf("no versions found for %s", ref)
 }
 
 type helmSearchRepoItem struct {
@@ -99,4 +117,3 @@ func parseSearchRepoVersions(raw string) ([]string, error) {
 	}
 	return vs, nil
 }
-

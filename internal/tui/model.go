@@ -1562,7 +1562,9 @@ func (m AppModel) openDepEditSelected() (tea.Model, tea.Cmd) {
 
 func (m AppModel) loadDepVersionsCmd(dep yamlchart.Dependency) tea.Cmd {
 	return func() tea.Msg {
-		ctx, cancel := context.WithTimeout(contextBG(), 20*time.Second)
+		// Allow enough time for a first `helm search repo` attempt, and (if needed)
+		// one stale-aware `helm repo update` + retry.
+		ctx, cancel := context.WithTimeout(contextBG(), 60*time.Second)
 		defer cancel()
 		vs, err := helmutil.RepoChartVersions(ctx, m.params.RepoRoot, dep.Repository, dep.Name, 24*time.Hour)
 		if err != nil {
@@ -1590,7 +1592,7 @@ func (m AppModel) upgradeDepToLatestCmd(dep yamlchart.Dependency) tea.Cmd {
 		if strings.HasPrefix(dep.Repository, "oci://") {
 			return errMsg{fmt.Errorf("cannot auto-upgrade OCI dependency %s; use v to set exact version", yamlchart.DependencyID(dep))}
 		}
-		ctx, cancel := context.WithTimeout(contextBG(), 25*time.Second)
+		ctx, cancel := context.WithTimeout(contextBG(), 75*time.Second)
 		defer cancel()
 		vs, err := helmutil.RepoChartVersions(ctx, m.params.RepoRoot, dep.Repository, dep.Name, 24*time.Hour)
 		if err != nil {

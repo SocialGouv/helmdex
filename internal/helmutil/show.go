@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha1"
+	"encoding/json"
 	"encoding/hex"
 	"fmt"
 	"os"
@@ -77,9 +78,38 @@ func RepoAdd(ctx context.Context, env Env, name, url string) error {
 	if err := env.EnsureDirs(); err != nil {
 		return err
 	}
-	// --force-update avoids errors if the repo exists.
-	_, err := run(ctx, env, "helm", "repo", "add", name, url, "--force-update")
-	return err
+
+	// Avoid `helm repo add --force-update` because it refreshes index data every
+	// time and can be slow/heavy in constrained environments.
+	//
+	// Instead:
+	// - if the repo already exists with the same URL: noop
+	// - if it exists but URL differs: update it (rare; RepoNameForURL is URL-hashed)
+	// - if it doesn't exist: add it
+	repos, err := repoList(ctx, env)
+	if err == nil {
+		if existingURL, ok := repos[name]; ok {
+			if strings.TrimSpace(existingURL) == strings.TrimSpace(url) {
+				return nil
+			}
+			_, err = run(ctx, env, "helm", "repo", "add", name, url, "--force-update")
+			return err
+		}
+	}
+
+	// Fallback: try to add without forcing an update.
+	_, err2 := run(ctx, env, "helm", "repo", "add", name, url)
+	if err2 != nil {
+		// If helm says the repo exists already, treat as success.
+		s := err2.Error()
+		if strings.Contains(s, "already exists") {
+			return nil
+		}
+		// If we couldn't list repos (older helm / unexpected output), returning the
+		// add error is the best we can do.
+		return err2
+	}
+	return nil
 }
 
 func RepoUpdate(ctx context.Context, env Env) error {
@@ -164,6 +194,11 @@ func run(ctx context.Context, env Env, name string, args ...string) (string, err
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
+		// If the context is done, prefer surfacing ctx.Err() over an OS-level
+		// "signal: killed" or other opaque exec error.
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return "", fmt.Errorf("helm %s failed: %v", strings.Join(args, " "), ctxErr)
+		}
 		msg := strings.TrimSpace(stderr.String())
 		if msg == "" {
 			msg = err.Error()
@@ -171,4 +206,31 @@ func run(ctx context.Context, env Env, name string, args ...string) (string, err
 		return "", fmt.Errorf("helm %s failed: %s", strings.Join(args, " "), msg)
 	}
 	return stdout.String(), nil
+}
+
+type helmRepoListItem struct {
+	Name string `json:"name"`
+	URL  string `json:"url"`
+}
+
+func repoList(ctx context.Context, env Env) (map[string]string, error) {
+	if err := env.EnsureDirs(); err != nil {
+		return nil, err
+	}
+	out, err := run(ctx, env, "helm", "repo", "list", "-o", "json")
+	if err != nil {
+		return nil, err
+	}
+	var items []helmRepoListItem
+	if err := json.Unmarshal([]byte(out), &items); err != nil {
+		return nil, fmt.Errorf("parse helm repo list json: %w", err)
+	}
+	m := make(map[string]string, len(items))
+	for _, it := range items {
+		if strings.TrimSpace(it.Name) == "" {
+			continue
+		}
+		m[it.Name] = it.URL
+	}
+	return m, nil
 }
