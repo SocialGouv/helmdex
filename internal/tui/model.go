@@ -197,7 +197,10 @@ func NewAppModel(p Params) AppModel {
 	l.SetFilteringEnabled(true)
 
 	deps := list.New([]list.Item{}, list.NewDefaultDelegate(), 0, 0)
-	deps.Title = "Dependencies"
+	// Title disabled: we render a consistent per-tab heading row in the instance view.
+	// Keeping the list title would look like the tab bar changes when switching to Deps.
+	deps.Title = ""
+	deps.SetShowTitle(false)
 	deps.SetShowHelp(false)
 
 	src := list.New([]list.Item{sourceItem("Predefined catalog"), sourceItem("Artifact Hub"), sourceItem("Arbitrary")}, list.NewDefaultDelegate(), 0, 0)
@@ -495,10 +498,13 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width, m.height = msg.Width, msg.Height
 		m.instList.SetSize(msg.Width-2, msg.Height-4)
 		m.content.Width = msg.Width - 2
-		m.content.Height = msg.Height - 6
+		// Instance view now has a tab bar + per-tab heading row above the viewport.
+		// Reduce height so the body fits within the terminal without clipping.
+		m.content.Height = msg.Height - 8
 		m.ahPreview.Width = msg.Width - 2
 		m.ahPreview.Height = msg.Height - 10
-		m.depsList.SetSize(msg.Width-2, msg.Height-6)
+		// Deps tab also has the shared tab bar + per-tab heading row.
+		m.depsList.SetSize(msg.Width-2, msg.Height-8)
 		m.depSource.SetSize(msg.Width-2, msg.Height-6)
 		m.catalogList.SetSize(msg.Width-2, msg.Height-6)
 		m.ahResults.SetSize(msg.Width-2, msg.Height-6)
@@ -1199,12 +1205,29 @@ func (m AppModel) currentBodyView() string {
 			return renderAddDepView(m)
 		}
 		tabsLine := renderTabs(m.tabNames, m.activeTab)
+		headingLine := lipgloss.NewStyle().Bold(true).Render(m.instanceTabHeading())
+		prefix := tabsLine + "\n" + headingLine + "\n\n"
 		if m.activeTab == 1 {
-			return tabsLine + "\n" + m.depsList.View() + "\n\n" + lipgloss.NewStyle().Faint(true).Render("d: remove selected")
+			return prefix + m.depsList.View()
 		}
-		return tabsLine + "\n" + m.content.View()
+		return prefix + m.content.View()
 	default:
 		return "unknown screen"
+	}
+}
+
+func (m AppModel) instanceTabHeading() string {
+	switch m.activeTab {
+	case 0:
+		return "Overview"
+	case 1:
+		return "Dependencies"
+	case 2:
+		return "Values"
+	case 3:
+		return "Presets"
+	default:
+		return ""
 	}
 }
 
