@@ -1163,11 +1163,16 @@ func (m AppModel) View() string {
 
 	var body string
 	if m.helpOpen {
+		// Help fully replaces the body.
 		body = renderHelpOverlay(m)
 	} else if m.paletteOpen {
+		// Palette currently renders as a modal stacked above the body.
 		body = renderWithModal(m, m.currentBodyView(), m.palette.View())
 	} else if m.depEditOpen {
-		body = renderWithModal(m, m.currentBodyView(), renderDepEditModal(m))
+		// The dep version editor should be unmissable. Rendering it as a stacked
+		// block above a long instance view can scroll it off-screen in AltScreen.
+		// Render it as the full body instead.
+		body = renderDepEditModal(m)
 	} else {
 		body = m.currentBodyView()
 	}
@@ -1483,6 +1488,15 @@ func (m *AppModel) clearAnyAppliedFilter() bool {
 
 func (m AppModel) depEditUpdate(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if msg.Type == tea.KeyEsc {
+		// When filtering is active, Esc should clear the filter first (rather than
+		// closing the whole modal).
+		if m.depEditMode == depEditModeList {
+			fs := m.depEditVersions.FilterState()
+			if fs == list.Filtering || fs == list.FilterApplied {
+				m.depEditVersions.ResetFilter()
+				return m, nil
+			}
+		}
 		m.depEditOpen = false
 		m.depEditLoading = false
 		m.modalErr = ""
@@ -1502,8 +1516,10 @@ func (m AppModel) depEditUpdate(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 			dep := m.depEditDep
 			dep.Version = v
-			m.depEditOpen = false
 			m.depEditVersionInput.Blur()
+			m.modalErr = ""
+			// Keep modal open; close only on successful apply. This also allows
+			// displaying errors inside the modal if apply fails.
 			return m, tea.Batch(m.beginBusy("Applying"), m.applyDependencyAndApplyInstanceCmd(dep))
 		}
 		return m, cmd
@@ -1512,6 +1528,11 @@ func (m AppModel) depEditUpdate(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
 	m.depEditVersions, cmd = m.depEditVersions.Update(msg)
 	if msg.Type == tea.KeyEnter {
+		// When the versions list is in filtering mode, Enter applies the filter.
+		// Do not treat it as selecting/applying a version.
+		if m.depEditVersions.FilterState() == list.Filtering {
+			return m, cmd
+		}
 		it := m.depEditVersions.SelectedItem()
 		if it == nil {
 			return m, cmd
@@ -1522,8 +1543,9 @@ func (m AppModel) depEditUpdate(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		dep := m.depEditDep
 		dep.Version = string(vi)
-		m.depEditOpen = false
-		return m, tea.Batch(m.beginBusy("Applying"), m.applyDependencyAndApplyInstanceCmd(dep))
+		m.modalErr = ""
+		// Keep modal open; close only on successful apply.
+		return m, tea.Batch(cmd, m.beginBusy("Applying"), m.applyDependencyAndApplyInstanceCmd(dep))
 	}
 	return m, cmd
 }
@@ -1648,6 +1670,22 @@ func (m AppModel) applyDependencyAndApplyInstanceCmd(dep yamlchart.Dependency) t
 			return errMsg{fmt.Errorf("no instance selected")}
 		}
 		chartPath := filepath.Join(m.selected.Path, "Chart.yaml")
+		// Keep a copy so we can roll back if Helm relock fails.
+		origChartYAML, _ := os.ReadFile(chartPath)
+		lockPath := filepath.Join(m.selected.Path, "Chart.lock")
+		origLockYAML, _ := os.ReadFile(lockPath)
+		hadOrigLock := origLockYAML != nil
+		rollback := func() {
+			if origChartYAML != nil {
+				_ = os.WriteFile(chartPath, origChartYAML, 0o644)
+			}
+			if hadOrigLock {
+				_ = os.WriteFile(lockPath, origLockYAML, 0o644)
+			} else {
+				_ = os.Remove(lockPath)
+			}
+		}
+
 		c, err := yamlchart.ReadChart(chartPath)
 		if err != nil {
 			return errMsg{err}
@@ -1661,6 +1699,7 @@ func (m AppModel) applyDependencyAndApplyInstanceCmd(dep yamlchart.Dependency) t
 
 		// Apply pipeline.
 		if _, err := instances.RelockIfDepsChanged(contextBG(), m.params.RepoRoot, m.selected.Path); err != nil {
+			rollback()
 			return errMsg{err}
 		}
 		if m.params.Config != nil {

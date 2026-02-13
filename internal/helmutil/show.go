@@ -184,11 +184,10 @@ func ShowValuesBestEffort(ctx context.Context, env Env, ref, version string, rep
 
 func run(ctx context.Context, env Env, name string, args ...string) (string, error) {
 	cmd := exec.CommandContext(ctx, name, args...)
-	cmd.Env = append(os.Environ(),
-		"HELM_CONFIG_HOME="+env.ConfigHome,
-		"HELM_CACHE_HOME="+env.CacheHome,
-		"HELM_DATA_HOME="+env.DataHome,
-	)
+	// IMPORTANT: set all Helm home vars *and* repo/registry vars so an ambient
+	// user env (HELM_REPOSITORY_CONFIG, HELM_REPOSITORY_CACHE, HELM_PLUGINS, ...)
+	// cannot leak global state into helmdex operations.
+	cmd.Env = append(stripEnvPrefixes(os.Environ(), []string{"HELM_"}), helmEnvVars(env)...)
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
 	cmd.Stdout = &stdout
@@ -206,6 +205,41 @@ func run(ctx context.Context, env Env, name string, args ...string) (string, err
 		return "", fmt.Errorf("helm %s failed: %s", strings.Join(args, " "), msg)
 	}
 	return stdout.String(), nil
+}
+
+func helmEnvVars(env Env) []string {
+	// Helm derives repo paths from these, but explicit overrides ensure we don't
+	// accidentally use any repo config/cache from the parent environment.
+	repoCfg := filepath.Join(env.ConfigHome, "repositories.yaml")
+	repoCache := filepath.Join(env.CacheHome, "repository")
+	regCfg := filepath.Join(env.ConfigHome, "registry", "config.json")
+	plugs := filepath.Join(env.DataHome, "plugins")
+	return []string{
+		"HELM_CONFIG_HOME=" + env.ConfigHome,
+		"HELM_CACHE_HOME=" + env.CacheHome,
+		"HELM_DATA_HOME=" + env.DataHome,
+		"HELM_REPOSITORY_CONFIG=" + repoCfg,
+		"HELM_REPOSITORY_CACHE=" + repoCache,
+		"HELM_REGISTRY_CONFIG=" + regCfg,
+		"HELM_PLUGINS=" + plugs,
+	}
+}
+
+func stripEnvPrefixes(env []string, prefixes []string) []string {
+	out := make([]string, 0, len(env))
+	for _, kv := range env {
+		keep := true
+		for _, p := range prefixes {
+			if strings.HasPrefix(kv, p) {
+				keep = false
+				break
+			}
+		}
+		if keep {
+			out = append(out, kv)
+		}
+	}
+	return out
 }
 
 type helmRepoListItem struct {

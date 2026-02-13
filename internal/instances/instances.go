@@ -97,7 +97,16 @@ func RelockDependencies(ctx context.Context, repoRoot, instancePath string) erro
 	// v0.1: prefer `helm dependency build` (uses lockfile) when lock exists, else update.
 	lockPath := filepath.Join(instancePath, "Chart.lock")
 	if _, err := os.Stat(lockPath); err == nil {
-		return helmutil.DependencyBuild(ctx, env, instancePath)
+		// If the lock exists but is out-of-sync with Chart.yaml, Helm requires an
+		// update to re-resolve and regenerate Chart.lock.
+		if err := helmutil.DependencyBuild(ctx, env, instancePath); err != nil {
+			s := err.Error()
+			if strings.Contains(s, "Chart.lock") && strings.Contains(s, "out of sync") {
+				return helmutil.DependencyUpdate(ctx, env, instancePath)
+			}
+			return err
+		}
+		return nil
 	}
 	return helmutil.DependencyUpdate(ctx, env, instancePath)
 }
