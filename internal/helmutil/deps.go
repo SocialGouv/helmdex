@@ -30,7 +30,7 @@ func DependencyBuild(ctx context.Context, env Env, chartDir string) error {
 func runQuiet(ctx context.Context, env Env, dir, name string, args ...string) (string, error) {
 	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.Dir = dir
-	cmd.Env = append(stripEnvPrefixes(cmd.Environ(), []string{"HELM_"}), helmEnvVars(env)...)
+	cmd.Env = isolatedProcessEnv(cmd.Environ(), env)
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
 	cmd.Stdout = &stdout

@@ -10,33 +10,67 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"time"
 	"strings"
 )
 
 type Env struct {
+	// RepoRoot is the helmdex repo root used to locate shared state (e.g. registry creds).
+	RepoRoot   string
 	ConfigHome string
 	CacheHome  string
 	DataHome   string
+
+	// Home is an isolated HOME directory for helm subprocesses.
+	Home string
+
+	// DockerConfig is an isolated Docker config dir, preventing Helm/ORAS from
+	// reading user-global ~/.docker/config.json.
+	DockerConfig string
+
+	// RegistryConfig is the shared Helm registry config file path.
+	// We deliberately store this once per repoRoot (not per instance) so OCI login
+	// is shared across instances.
+	RegistryConfig string
 }
 
 func EnvForRepo(repoRoot string) Env {
 	base := filepath.Join(repoRoot, ".helmdex", "helm")
-	return Env{
-		ConfigHome: filepath.Join(base, "config"),
-		CacheHome:  filepath.Join(base, "cache"),
-		DataHome:   filepath.Join(base, "data"),
-	}
+	return envForBase(repoRoot, base)
 }
 
 // EnvForRepoURL scopes helm state per repository URL so `helm repo update` only
 // touches the repo(s) for the current session/URL.
 func EnvForRepoURL(repoRoot, repoURL string) Env {
 	base := filepath.Join(repoRoot, ".helmdex", "helm", RepoNameForURL(repoURL))
+	return envForBase(repoRoot, base)
+}
+
+// EnvForInstancePath scopes Helm state for dependency operations to a single
+// instance directory. This prevents repos and caches from accumulating across a
+// monorepo when relocking different instances.
+func EnvForInstancePath(repoRoot, instancePath string) Env {
+	// Stable name: hash the instance path relative to repoRoot.
+	rel, err := filepath.Rel(repoRoot, instancePath)
+	if err != nil {
+		rel = instancePath
+	}
+	h := sha1.Sum([]byte(filepath.Clean(rel)))
+	name := "helmdex-" + hex.EncodeToString(h[:8])
+	base := filepath.Join(repoRoot, ".helmdex", "helm", "instances", name)
+	return envForBase(repoRoot, base)
+}
+
+func envForBase(repoRoot, base string) Env {
 	return Env{
-		ConfigHome: filepath.Join(base, "config"),
-		CacheHome:  filepath.Join(base, "cache"),
-		DataHome:   filepath.Join(base, "data"),
+		RepoRoot:       repoRoot,
+		ConfigHome:     filepath.Join(base, "config"),
+		CacheHome:      filepath.Join(base, "cache"),
+		DataHome:       filepath.Join(base, "data"),
+		Home:           filepath.Join(base, "home"),
+		DockerConfig:   filepath.Join(base, "docker"),
+		RegistryConfig: filepath.Join(repoRoot, ".helmdex", "helm", "registry", "config.json"),
 	}
 }
 
@@ -52,6 +86,8 @@ func RepoUpdateIfStale(ctx context.Context, env Env, maxAge time.Duration) error
 			return nil
 		}
 	}
+	// Prefer targeted updates to avoid touching unrelated repos.
+	// This fallback updates all repos *in this env*, but still passes explicit names.
 	if err := RepoUpdate(ctx, env); err != nil {
 		return err
 	}
@@ -64,7 +100,7 @@ func repoUpdateMarkerPath(env Env) string {
 }
 
 func (e Env) EnsureDirs() error {
-	for _, p := range []string{e.ConfigHome, e.CacheHome, e.DataHome} {
+	for _, p := range []string{e.ConfigHome, e.CacheHome, e.DataHome, e.Home, e.DockerConfig, filepath.Dir(e.RegistryConfig)} {
 		if err := os.MkdirAll(p, 0o755); err != nil {
 			return err
 		}
@@ -125,8 +161,65 @@ func RepoUpdate(ctx context.Context, env Env) error {
 	if err := env.EnsureDirs(); err != nil {
 		return err
 	}
-	_, err := run(ctx, env, "helm", "repo", "update")
+	repos, err := repoList(ctx, env)
+	if err != nil {
+		return err
+	}
+	names := make([]string, 0, len(repos))
+	for n := range repos {
+		n = strings.TrimSpace(n)
+		if n == "" {
+			continue
+		}
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	return RepoUpdateNames(ctx, env, names...)
+}
+
+// RepoUpdateNames runs `helm repo update <name...>`.
+// Passing explicit names avoids updating unrelated repos that may exist in the env.
+func RepoUpdateNames(ctx context.Context, env Env, names ...string) error {
+	if err := env.EnsureDirs(); err != nil {
+		return err
+	}
+	uniq := make([]string, 0, len(names))
+	seen := map[string]struct{}{}
+	for _, n := range names {
+		n = strings.TrimSpace(n)
+		if n == "" {
+			continue
+		}
+		if _, ok := seen[n]; ok {
+			continue
+		}
+		seen[n] = struct{}{}
+		uniq = append(uniq, n)
+	}
+	if len(uniq) == 0 {
+		return nil
+	}
+	args := append([]string{"repo", "update"}, uniq...)
+	_, err := run(ctx, env, "helm", args...)
 	return err
+}
+
+// RepoUpdateIfStaleNames is like RepoUpdateIfStale but updates only the given repo names.
+func RepoUpdateIfStaleNames(ctx context.Context, env Env, maxAge time.Duration, names ...string) error {
+	if err := env.EnsureDirs(); err != nil {
+		return err
+	}
+	marker := repoUpdateMarkerPath(env)
+	if st, err := os.Stat(marker); err == nil {
+		if time.Since(st.ModTime()) < maxAge {
+			return nil
+		}
+	}
+	if err := RepoUpdateNames(ctx, env, names...); err != nil {
+		return err
+	}
+	_ = os.WriteFile(marker, []byte(time.Now().UTC().Format(time.RFC3339)), 0o644)
+	return nil
 }
 
 func IsRepoUpdateWorthRetrying(err error) bool {
@@ -177,6 +270,20 @@ func ShowReadmeBestEffort(ctx context.Context, env Env, ref, version string, rep
 	if err == nil {
 		return out, nil
 	}
+	// If ref is `repoName/chart`, update only that repoName.
+	name := ""
+	if i := strings.Index(ref, "/"); i > 0 {
+		name = strings.TrimSpace(ref[:i])
+	}
+	if name != "" {
+		if err2 := RepoUpdateIfStaleNames(ctx, env, repoUpdateMaxAge, name); err2 != nil {
+			if !IsRepoUpdateWorthRetrying(err2) {
+				return "", err
+			}
+			// fall through and retry show even if update failed; sometimes repos aren't needed.
+		}
+		return ShowReadme(ctx, env, ref, version)
+	}
 	if err2 := RepoUpdateIfStale(ctx, env, repoUpdateMaxAge); err2 != nil {
 		if !IsRepoUpdateWorthRetrying(err2) {
 			return "", err
@@ -192,6 +299,18 @@ func ShowValuesBestEffort(ctx context.Context, env Env, ref, version string, rep
 	if err == nil {
 		return out, nil
 	}
+	name := ""
+	if i := strings.Index(ref, "/"); i > 0 {
+		name = strings.TrimSpace(ref[:i])
+	}
+	if name != "" {
+		if err2 := RepoUpdateIfStaleNames(ctx, env, repoUpdateMaxAge, name); err2 != nil {
+			if !IsRepoUpdateWorthRetrying(err2) {
+				return "", err
+			}
+		}
+		return ShowValues(ctx, env, ref, version)
+	}
 	if err2 := RepoUpdateIfStale(ctx, env, repoUpdateMaxAge); err2 != nil {
 		if !IsRepoUpdateWorthRetrying(err2) {
 			return "", err
@@ -205,7 +324,7 @@ func run(ctx context.Context, env Env, name string, args ...string) (string, err
 	// IMPORTANT: set all Helm home vars *and* repo/registry vars so an ambient
 	// user env (HELM_REPOSITORY_CONFIG, HELM_REPOSITORY_CACHE, HELM_PLUGINS, ...)
 	// cannot leak global state into helmdex operations.
-	cmd.Env = append(stripEnvPrefixes(os.Environ(), []string{"HELM_"}), helmEnvVars(env)...)
+	cmd.Env = isolatedProcessEnv(os.Environ(), env)
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
 	cmd.Stdout = &stdout
@@ -225,14 +344,32 @@ func run(ctx context.Context, env Env, name string, args ...string) (string, err
 	return stdout.String(), nil
 }
 
+func runInteractive(ctx context.Context, env Env, dir string, name string, args ...string) error {
+	cmd := exec.CommandContext(ctx, name, args...)
+	cmd.Dir = dir
+	cmd.Env = isolatedProcessEnv(os.Environ(), env)
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	return cmd.Run()
+}
+
 func helmEnvVars(env Env) []string {
 	// Helm derives repo paths from these, but explicit overrides ensure we don't
 	// accidentally use any repo config/cache from the parent environment.
 	repoCfg := filepath.Join(env.ConfigHome, "repositories.yaml")
 	repoCache := filepath.Join(env.CacheHome, "repository")
-	regCfg := filepath.Join(env.ConfigHome, "registry", "config.json")
 	plugs := filepath.Join(env.DataHome, "plugins")
+	regCfg := strings.TrimSpace(env.RegistryConfig)
+	if regCfg == "" {
+		regCfg = filepath.Join(env.ConfigHome, "registry", "config.json")
+	}
 	return []string{
+		"HOME=" + env.Home,
+		"XDG_CONFIG_HOME=" + env.ConfigHome,
+		"XDG_CACHE_HOME=" + env.CacheHome,
+		"XDG_DATA_HOME=" + env.DataHome,
+		"DOCKER_CONFIG=" + env.DockerConfig,
 		"HELM_CONFIG_HOME=" + env.ConfigHome,
 		"HELM_CACHE_HOME=" + env.CacheHome,
 		"HELM_DATA_HOME=" + env.DataHome,
@@ -241,6 +378,13 @@ func helmEnvVars(env Env) []string {
 		"HELM_REGISTRY_CONFIG=" + regCfg,
 		"HELM_PLUGINS=" + plugs,
 	}
+}
+
+func isolatedProcessEnv(parent []string, env Env) []string {
+	// Remove variables that could cause Helm (or its OCI stack) to read user-global state.
+	out := stripEnvPrefixes(parent, []string{"HELM_", "XDG_", "DOCKER_"})
+	out = stripEnvKeys(out, []string{"HOME"})
+	return append(out, helmEnvVars(env)...)
 }
 
 func stripEnvPrefixes(env []string, prefixes []string) []string {
@@ -258,6 +402,65 @@ func stripEnvPrefixes(env []string, prefixes []string) []string {
 		}
 	}
 	return out
+}
+
+func stripEnvKeys(env []string, keys []string) []string {
+	if len(keys) == 0 {
+		return env
+	}
+	out := make([]string, 0, len(env))
+	for _, kv := range env {
+		keep := true
+		for _, k := range keys {
+			if strings.HasPrefix(kv, k+"=") {
+				keep = false
+				break
+			}
+		}
+		if keep {
+			out = append(out, kv)
+		}
+	}
+	return out
+}
+
+// RepoRemove removes a repo by name from the env.
+func RepoRemove(ctx context.Context, env Env, name string) error {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return nil
+	}
+	_, err := run(ctx, env, "helm", "repo", "remove", name)
+	return err
+}
+
+// EnsureReposOnly prunes repos not in allowed, then adds any missing allowed repos.
+// Keys of allowed are repo names, values are URLs.
+func EnsureReposOnly(ctx context.Context, env Env, allowed map[string]string) error {
+	if err := env.EnsureDirs(); err != nil {
+		return err
+	}
+
+	repos, err := repoList(ctx, env)
+	if err == nil {
+		for name := range repos {
+			if _, ok := allowed[name]; ok {
+				continue
+			}
+			// Best-effort prune; if remove fails, bubble up because leftover repos
+			// would reintroduce global update/perf issues.
+			if err := RepoRemove(ctx, env, name); err != nil {
+				return err
+			}
+		}
+	}
+
+	for name, url := range allowed {
+		if err := RepoAdd(ctx, env, name, url); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 type helmRepoListItem struct {

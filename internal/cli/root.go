@@ -53,6 +53,7 @@ func NewRootCmd() *cobra.Command {
 	cmd.AddCommand(newInitCmd(&f))
 	cmd.AddCommand(newCatalogCmd(&f))
 	cmd.AddCommand(newCacheCmd(&f))
+	cmd.AddCommand(newRegistryCmd(&f))
 	cmd.AddCommand(newInstanceCmd(&f))
 	cmd.AddCommand(newTUICmd(&f))
 

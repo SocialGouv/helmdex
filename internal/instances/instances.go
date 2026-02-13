@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"helmdex/internal/helmutil"
 	"helmdex/internal/yamlchart"
@@ -93,7 +94,20 @@ func Remove(repoRoot, appsDir, name string) error {
 }
 
 func RelockDependencies(ctx context.Context, repoRoot, instancePath string) error {
-	env := helmutil.EnvForRepo(repoRoot)
+	// Per-instance Helm env: prevents repo/cache accumulation across a monorepo.
+	env := helmutil.EnvForInstancePath(repoRoot, instancePath)
+	// Ensure this env contains only repos referenced by this instance's Chart.yaml.
+	// This prevents `helm repo update` and dependency resolution from touching
+	// unrelated repos.
+	allowed, err := helmutil.PrepareDependencyEnv(ctx, env, helmutil.ChartPathForInstance(instancePath))
+	if err != nil {
+		return err
+	}
+	// Stale-aware, targeted update. Even if an env contains multiple repos, this
+	// updates only the ones referenced by the current instance.
+	if err := helmutil.EnsureAllowedRepoUpdateStale(ctx, env, 24*time.Hour, allowed); err != nil {
+		return err
+	}
 	// v0.1: prefer `helm dependency build` (uses lockfile) when lock exists, else update.
 	lockPath := filepath.Join(instancePath, "Chart.lock")
 	if _, err := os.Stat(lockPath); err == nil {

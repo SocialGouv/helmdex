@@ -49,7 +49,7 @@ func RepoChartVersions(ctx context.Context, repoRoot, repoURL, chartName string,
 	if err == nil && len(vs) == 0 {
 		updateMaxAge = 0
 	}
-	updateErr := RepoUpdateIfStale(ctx, env, updateMaxAge)
+	updateErr := RepoUpdateIfStaleNames(ctx, env, updateMaxAge, repoName)
 	vs2, err2 := searchRepoVersions(ctx, env, ref)
 	if err2 == nil && len(vs2) > 0 {
 		return vs2, nil

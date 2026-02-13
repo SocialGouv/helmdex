@@ -366,7 +366,7 @@ func (m AppModel) loadHelmPreviewsCmd(repoURL, chartName, version string) tea.Cm
 		// Best-effort show with minimal side effects.
 		// If user requested force refresh, run repo update explicitly.
 		if force {
-			if err := helmutil.RepoUpdate(ctx, env); err != nil {
+			if err := helmutil.RepoUpdateNames(ctx, env, repoName); err != nil {
 				// If update was killed, do not keep the UI stuck in LOADING; fall back to show attempt.
 				if helmutil.IsRepoUpdateWorthRetrying(err) {
 					return errMsg{err}
