@@ -45,23 +45,23 @@ func renderHelpOverlay(m AppModel) string {
 // which instance we're looking at, regardless of the active tab.
 func renderBreadcrumbBar(m AppModel) string {
 	// Content
-	parts := []string{"Dashboard"}
+	parts := []string{withIcon(iconDashboard, "Dashboard")}
 	if m.screen == ScreenInstance {
-		parts = append(parts, "Instance")
+		parts = append(parts, withIcon(iconInstance, "Instance"))
 		if m.selected != nil && strings.TrimSpace(m.selected.Name) != "" {
-			parts = append(parts, m.selected.Name)
+			// Instance names are user content; keep them readable and unstyled.
+			parts = append(parts, withIcon(iconFolder, m.selected.Name))
 		}
 		if m.addingDep {
-			parts = append(parts, "Add dep")
+			parts = append(parts, withIcon(iconAdd, "Add dep"))
 		}
 	}
 
 	// Styling: subtle pill background, with the last crumb emphasized.
-	bg := lipgloss.Color("236")
-	sepStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
-	soft := lipgloss.NewStyle().Foreground(lipgloss.Color("252"))
-	strong := lipgloss.NewStyle().Foreground(lipgloss.Color("231")).Bold(true)
-	bar := lipgloss.NewStyle().Background(bg).Padding(0, 1)
+	sepStyle := styleCrumbSep
+	soft := styleCrumbSoft
+	strong := styleCrumbStrong
+	bar := styleCrumbBar
 
 	sep := " " + sepStyle.Render("›") + " "
 	out := ""
@@ -83,43 +83,44 @@ func renderBreadcrumbBar(m AppModel) string {
 func renderFooterStatusLine(m AppModel) string {
 	flags := []string{}
 	if m.paletteOpen {
-		flags = append(flags, "CMD")
+		flags = append(flags, styleInfo.Render(withIcon(iconCmd, "CMD")))
 	}
 	if m.creating || m.palette.QueryFocused() || (m.addingDep && m.depStep == depStepAHQuery) {
-		flags = append(flags, "INSERT")
+		flags = append(flags, styleInfo.Render(withIcon(iconInsert, "INSERT")))
 	}
 	if m.isAnyFilterActive() {
-		flags = append(flags, "FILTER")
+		flags = append(flags, styleInfo.Render(withIcon(iconFilter, "FILTER")))
 	}
 	if m.busy > 0 {
 		label := strings.TrimSpace(m.busyLabel)
 		if label == "" {
 			label = "Loading"
 		}
-		flags = append(flags, m.spin.View()+" "+label)
+		flags = append(flags, withIcon(iconBusy, m.spin.View()+" "+label))
 	}
 
 	err := ""
 	if m.statusErr != "" && time.Since(m.statusErrAt) < 6*time.Second {
-		err = "ERR " + m.statusErr
+		err = withIcon(iconErr, "ERR") + " " + m.statusErr
 	}
 
 	left := ""
 	if err != "" {
-		left = lipgloss.NewStyle().Foreground(lipgloss.Color("9")).Bold(true).Render(err)
+		left = styleErrStrong.Render(err)
 	} else {
-		left = lipgloss.NewStyle().Faint(true).Render(" ")
+		left = styleMuted.Render(" ")
 	}
 
 	right := strings.Join(flags, " ")
 	if right == "" {
-		right = " "
+		right = styleMuted.Render(" ")
 	}
-	right = lipgloss.NewStyle().Faint(true).Render(right)
+	// Note: flags already carry their own ANSI styling; do not wrap them again
+	// (it can override colors and reduce readability).
 
 	// Render as a single line.
 	line := fmt.Sprintf("%s  %s", left, right)
-	return lipgloss.NewStyle().Faint(true).Render(line)
+	return line
 }
 
 func renderDepEditModal(m AppModel) string {
@@ -128,12 +129,12 @@ func renderDepEditModal(m AppModel) string {
 		return ""
 	}
 
-	header := lipgloss.NewStyle().Bold(true).Render("Change dependency version")
+	header := lipgloss.NewStyle().Bold(true).Render(withIcon(iconVersions, "Change dependency version"))
 	if m.depEditDep.Name != "" {
-		header += "\n" + lipgloss.NewStyle().Faint(true).Render(fmt.Sprintf("%s @ %s", m.depEditDep.Name, m.depEditDep.Repository))
+		header += "\n" + styleMuted.Render(fmt.Sprintf("%s @ %s", m.depEditDep.Name, m.depEditDep.Repository))
 	}
 	if m.modalErr != "" {
-		header += "\n" + lipgloss.NewStyle().Foreground(lipgloss.Color("9")).Render("Error: "+m.modalErr)
+		header += "\n" + styleErrStrong.Render(withIcon(iconErr, "Error:") + " " + m.modalErr)
 	}
 
 	var body string
@@ -142,11 +143,11 @@ func renderDepEditModal(m AppModel) string {
 		body = "Enter an exact version:\n\n" + m.depEditVersionInput.View() + "\n\n(enter: apply • esc: cancel)"
 	default:
 		if m.depEditLoading {
-			body = lipgloss.NewStyle().Faint(true).Render("Loading versions…")
+			body = styleMuted.Render("Loading versions…")
 		} else if len(m.depEditVersionsData) == 0 {
-			body = lipgloss.NewStyle().Faint(true).Render("No versions found.")
+			body = styleMuted.Render("No versions found.")
 		} else {
-			body = m.depEditVersions.View() + "\n" + lipgloss.NewStyle().Faint(true).Render("/: filter • enter: apply • esc: cancel")
+			body = m.depEditVersions.View() + "\n" + styleMuted.Render(withIcon(iconFilter, "/: filter")+" • enter: apply • esc: cancel")
 		}
 	}
 

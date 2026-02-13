@@ -23,11 +23,12 @@ const (
 
 type paletteItem struct {
 	ID   paletteCmdID
+	Icon string
 	Name string
 	Desc string
 }
 
-func (p paletteItem) Title() string       { return p.Name }
+func (p paletteItem) Title() string       { return withIcon(p.Icon, p.Name) }
 func (p paletteItem) Description() string { return p.Desc }
 func (p paletteItem) FilterValue() string { return p.Name + " " + p.Desc }
 
@@ -45,7 +46,7 @@ func newPaletteModel() paletteModel {
 	q.Focus()
 
 	l := list.New([]list.Item{}, list.NewDefaultDelegate(), 0, 0)
-	l.Title = "Commands"
+	l.Title = withIcon(iconCmd, "Commands")
 	l.SetFilteringEnabled(false)
 	l.SetShowHelp(false)
 
@@ -68,7 +69,7 @@ func (p *paletteModel) QueryFocused() bool { return p.query.Focused() }
 
 func (p *paletteModel) View() string {
 	box := lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).Padding(1, 2)
-	content := lipgloss.NewStyle().Bold(true).Render("Command palette") + "\n\n" + p.query.View() + "\n\n" + p.list.View() + "\n" + lipgloss.NewStyle().Faint(true).Render("esc: close • enter: run")
+	content := lipgloss.NewStyle().Bold(true).Render(withIcon(iconCmd, "Command palette")) + "\n\n" + p.query.View() + "\n\n" + p.list.View() + "\n" + styleMuted.Render("esc: close • enter: run")
 	return box.Render(content)
 }
 
@@ -104,23 +105,23 @@ func paletteItemsFor(m AppModel) []paletteItem {
 
 	// Always available.
 	items = append(items,
-		paletteItem{ID: palReload, Name: "Reload instances", Desc: "Refresh instances list"},
-		paletteItem{ID: palNewInstance, Name: "New instance", Desc: "Create a new instance"},
+		paletteItem{ID: palReload, Icon: iconReload, Name: "Reload instances", Desc: "Refresh instances list"},
+		paletteItem{ID: palNewInstance, Icon: iconAdd, Name: "New instance", Desc: "Create a new instance"},
 	)
 
 	if m.screen == ScreenInstance {
 		items = append(items,
-			paletteItem{ID: palAddDep, Name: "Add dependency", Desc: "Open add-dependency wizard"},
-			paletteItem{ID: palRegenValues, Name: "Regenerate values.yaml", Desc: "Rebuild merged values.yaml"},
-			paletteItem{ID: palBack, Name: "Back", Desc: "Return to dashboard"},
+			paletteItem{ID: palAddDep, Icon: iconAdd, Name: "Add dependency", Desc: "Open add-dependency wizard"},
+			paletteItem{ID: palRegenValues, Icon: iconRegen, Name: "Regenerate values.yaml", Desc: "Rebuild merged values.yaml"},
+			paletteItem{ID: palBack, Icon: iconBack, Name: "Back", Desc: "Return to dashboard"},
 		)
 	}
 
 	if m.addingDep && m.depStep == depStepAHDetail && m.ahSelected != nil && m.ahSelectedVersion != "" {
-		items = append(items, paletteItem{ID: palForceRefresh, Name: "Force refresh chart detail", Desc: "Re-run helm show and bypass cache"})
+		items = append(items, paletteItem{ID: palForceRefresh, Icon: iconForce, Name: "Force refresh chart detail", Desc: "Re-run helm show and bypass cache"})
 	}
 
-	items = append(items, paletteItem{ID: palQuit, Name: "Quit", Desc: "Exit helmdex"})
+	items = append(items, paletteItem{ID: palQuit, Icon: iconQuit, Name: "Quit", Desc: "Exit helmdex"})
 	return items
 }
 
@@ -152,4 +153,3 @@ func max(a, b int) int {
 	}
 	return b
 }
-

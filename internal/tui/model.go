@@ -204,27 +204,27 @@ func NewAppModel(p Params) AppModel {
 	deps.SetShowHelp(false)
 
 	src := list.New([]list.Item{sourceItem("Predefined catalog"), sourceItem("Artifact Hub"), sourceItem("Arbitrary")}, list.NewDefaultDelegate(), 0, 0)
-	src.Title = "Select source"
+	src.Title = withIcon(iconWizard, "Select source")
 	src.SetShowHelp(false)
 
 	catList := list.New([]list.Item{}, list.NewDefaultDelegate(), 0, 0)
-	catList.Title = "Catalog"
+	catList.Title = withIcon(iconCatalog, "Catalog")
 	catList.SetFilteringEnabled(true)
 	catList.SetShowHelp(false)
 
 	ahRes := list.New([]list.Item{}, list.NewDefaultDelegate(), 0, 0)
-	ahRes.Title = "Artifact Hub results"
+	ahRes.Title = withIcon(iconAH, "Artifact Hub results")
 	// Filtering here makes Enter ambiguous (it can apply filter instead of selecting).
 	// We rely on the dedicated query input instead.
 	ahRes.SetFilteringEnabled(false)
 	ahRes.SetShowHelp(false)
 
 	ahVers := list.New([]list.Item{}, list.NewDefaultDelegate(), 0, 0)
-	ahVers.Title = "Select version"
+	ahVers.Title = withIcon(iconVersions, "Select version")
 	ahVers.SetShowHelp(false)
 
 	depVers := list.New([]list.Item{}, list.NewDefaultDelegate(), 0, 0)
-	depVers.Title = "Versions"
+	depVers.Title = withIcon(iconVersions, "Versions")
 	depVers.SetFilteringEnabled(true)
 	depVers.SetShowHelp(false)
 
@@ -245,8 +245,17 @@ func NewAppModel(p Params) AppModel {
 	arbVersion := textinput.New(); arbVersion.Placeholder = "exact version"; arbVersion.Prompt = "version> "
 	arbAlias := textinput.New(); arbAlias.Placeholder = "alias (optional)"; arbAlias.Prompt = "alias> "
 
-	tabNames := []string{"Overview", "Deps", "Values", "Presets"}
-	ahDetailTabNames := []string{"README", "Values", "Versions"}
+	tabNames := []string{
+		withIcon(iconOverview, "Overview"),
+		withIcon(iconDeps, "Deps"),
+		withIcon(iconValues, "Values"),
+		withIcon(iconPresets, "Presets"),
+	}
+	ahDetailTabNames := []string{
+		withIcon(iconReadme, "README"),
+		withIcon(iconAHValues, "Values"),
+		withIcon(iconVersions, "Versions"),
+	}
 	vp := viewport.New(0, 0)
 	ahvp := viewport.New(0, 0)
 
@@ -1225,13 +1234,13 @@ func (m AppModel) currentBodyView() string {
 func (m AppModel) instanceTabHeading() string {
 	switch m.activeTab {
 	case 0:
-		return "Overview"
+		return withIcon(iconOverview, "Overview")
 	case 1:
-		return "Dependencies"
+		return withIcon(iconDeps, "Dependencies")
 	case 2:
-		return "Values"
+		return withIcon(iconValues, "Values")
 	case 3:
-		return "Presets"
+		return withIcon(iconPresets, "Presets")
 	default:
 		return ""
 	}
@@ -1289,7 +1298,7 @@ type instanceItem instances.Instance
 func (i instanceItem) FilterValue() string { return i.Name }
 
 // Implement list.DefaultItem so bubbles/list default delegate can render it.
-func (i instanceItem) Title() string { return i.Name }
+func (i instanceItem) Title() string { return withIcon(iconInstance, i.Name) }
 func (i instanceItem) Description() string {
 	if i.Path == "" {
 		return ""
@@ -1321,7 +1330,19 @@ type sourceItem string
 func (s sourceItem) FilterValue() string { return string(s) }
 
 // Implement list.DefaultItem so bubbles/list default delegate can render it.
-func (s sourceItem) Title() string { return string(s) }
+func (s sourceItem) Title() string {
+	// Keep filter value plain; decorate title only.
+	switch string(s) {
+	case "Predefined catalog":
+		return withIcon(iconCatalog, string(s))
+	case "Artifact Hub":
+		return withIcon(iconAH, string(s))
+	case "Arbitrary":
+		return withIcon(iconCustom, string(s))
+	default:
+		return string(s)
+	}
+}
 func (s sourceItem) Description() string { return "" }
 
 type catalogItem catalog.Entry
@@ -1329,7 +1350,7 @@ type catalogItem catalog.Entry
 // Wrap catalog.Entry (which has a `Description` field) to avoid method/field name collisions.
 type catalogListItem struct{ E catalog.Entry }
 
-func (c catalogListItem) Title() string { return c.E.ID }
+func (c catalogListItem) Title() string { return withIcon(iconCatalog, c.E.ID) }
 func (c catalogListItem) Description() string {
 	return c.E.Chart.Repo + "@" + c.E.Version
 }
@@ -1342,9 +1363,9 @@ type ahResultItem struct{ P artifacthub.PackageSummary }
 
 func (a ahResultItem) Title() string {
 	if a.P.DisplayName != "" {
-		return a.P.DisplayName
+		return withIcon(iconAH, a.P.DisplayName)
 	}
-	return a.P.Name
+	return withIcon(iconAH, a.P.Name)
 }
 func (a ahResultItem) Description() string {
 	parts := []string{}
@@ -1366,7 +1387,7 @@ func (a ahResultItem) FilterValue() string { return a.P.Name + " " + a.P.Display
 
 type ahVersionItem artifacthub.Version
 
-func (v ahVersionItem) Title() string { return v.Version }
+func (v ahVersionItem) Title() string { return withIcon(iconVersions, v.Version) }
 func (v ahVersionItem) Description() string { return "" }
 func (v ahVersionItem) FilterValue() string { return v.Version }
 
@@ -1382,7 +1403,7 @@ type depItem yamlchart.Dependency
 
 func (d depItem) Title() string {
 	id := yamlchart.DependencyID(yamlchart.Dependency(d))
-	return string(id)
+	return withIcon(iconDeps, string(id))
 }
 
 func (d depItem) Description() string {
@@ -1399,10 +1420,10 @@ func (v versionItem) Description() string { return "" }
 func (v versionItem) FilterValue() string { return string(v) }
 
 func renderAddDepView(m AppModel) string {
-	header := lipgloss.NewStyle().Bold(true).Render("Add dependency")
+	header := lipgloss.NewStyle().Bold(true).Render(withIcon(iconAdd, "Add dependency"))
 
 	if m.modalErr != "" {
-		errLine := lipgloss.NewStyle().Foreground(lipgloss.Color("9")).Render("Error: " + m.modalErr)
+		errLine := styleErrStrong.Render(withIcon(iconErr, "Error:") + " " + m.modalErr)
 		header = header + "\n" + errLine
 	}
 
@@ -1411,23 +1432,23 @@ func renderAddDepView(m AppModel) string {
 		return header + "\n\n" + m.depSource.View()
 	case depStepCatalog:
 		if len(m.catalogEntries) == 0 {
-			msg := lipgloss.NewStyle().Faint(true).Render("No local catalog entries. Run `helmdex catalog sync` then retry.")
+			msg := styleMuted.Render("No local catalog entries. Run `helmdex catalog sync` then retry.")
 			return header + "\n\n" + msg
 		}
 		return header + "\n\n" + m.catalogList.View()
 	case depStepAHQuery:
-		return header + "\n\n" + "Artifact Hub search" + "\n\n" + m.ahQuery.View() + "\n\n(enter to search)"
+		return header + "\n\n" + withIcon(iconAH, "Artifact Hub search") + "\n\n" + m.ahQuery.View() + "\n\n(enter to search)"
 	case depStepAHResults:
-		return header + "\n\n" + m.ahResults.View() + "\n\n" + lipgloss.NewStyle().Faint(true).Render("enter: open details")
+		return header + "\n\n" + m.ahResults.View() + "\n\n" + styleMuted.Render("enter: open details")
 	case depStepAHVersions:
 		return header + "\n\n" + m.ahVersions.View()
 	case depStepAHDetail:
 		body := renderTabs(m.ahDetailTabNames, m.ahDetailTab) + "\n"
 		switch m.ahDetailTab {
 		case 2:
-			body += m.ahVersions.View() + "\n\n" + lipgloss.NewStyle().Faint(true).Render("enter: load README/values • a: add")
+			body += m.ahVersions.View() + "\n\n" + styleMuted.Render("enter: load README/values • a: add")
 		default:
-			body += m.ahPreview.View() + "\n\n" + lipgloss.NewStyle().Faint(true).Render("a: add")
+			body += m.ahPreview.View() + "\n\n" + styleMuted.Render("a: add")
 		}
 		return header + "\n\n" + body
 	case depStepArbitrary:
