@@ -90,6 +90,19 @@ func RepoUpdate(ctx context.Context, env Env) error {
 	return err
 }
 
+func IsRepoUpdateWorthRetrying(err error) bool {
+	if err == nil {
+		return false
+	}
+	s := err.Error()
+	// If the process was killed (OOM or user kill), retrying immediately is
+	// unlikely to help.
+	if strings.Contains(s, "signal: killed") {
+		return false
+	}
+	return true
+}
+
 func ShowReadme(ctx context.Context, env Env, ref, version string) (string, error) {
 	args := []string{"show", "readme", ref}
 	if version != "" {
@@ -106,6 +119,37 @@ func ShowValues(ctx context.Context, env Env, ref, version string) (string, erro
 	}
 	out, err := run(ctx, env, "helm", args...)
 	return out, err
+}
+
+// ShowReadmeBestEffort tries `helm show readme` with minimal side effects:
+// - attempt directly (no repo update)
+// - if it fails, try a stale-aware update and retry once
+func ShowReadmeBestEffort(ctx context.Context, env Env, ref, version string, repoUpdateMaxAge time.Duration) (string, error) {
+	out, err := ShowReadme(ctx, env, ref, version)
+	if err == nil {
+		return out, nil
+	}
+	if err2 := RepoUpdateIfStale(ctx, env, repoUpdateMaxAge); err2 != nil {
+		if !IsRepoUpdateWorthRetrying(err2) {
+			return "", err
+		}
+		// fall through and retry show even if update failed; sometimes repos aren't needed.
+	}
+	return ShowReadme(ctx, env, ref, version)
+}
+
+// ShowValuesBestEffort is like ShowReadmeBestEffort, for default values.
+func ShowValuesBestEffort(ctx context.Context, env Env, ref, version string, repoUpdateMaxAge time.Duration) (string, error) {
+	out, err := ShowValues(ctx, env, ref, version)
+	if err == nil {
+		return out, nil
+	}
+	if err2 := RepoUpdateIfStale(ctx, env, repoUpdateMaxAge); err2 != nil {
+		if !IsRepoUpdateWorthRetrying(err2) {
+			return "", err
+		}
+	}
+	return ShowValues(ctx, env, ref, version)
 }
 
 func run(ctx context.Context, env Env, name string, args ...string) (string, error) {

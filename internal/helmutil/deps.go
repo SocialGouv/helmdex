@@ -2,26 +2,42 @@ package helmutil
 
 import (
 	"context"
+	"bytes"
 	"fmt"
-	"os"
 	"os/exec"
+	"strings"
 )
 
-func DependencyUpdate(ctx context.Context, chartDir string) error {
-	return runCmd(ctx, chartDir, "helm", "dependency", "update")
+func DependencyUpdate(ctx context.Context, env Env, chartDir string) error {
+	_, err := runQuiet(ctx, env, chartDir, "helm", "dependency", "update")
+	return err
 }
 
-func DependencyBuild(ctx context.Context, chartDir string) error {
-	return runCmd(ctx, chartDir, "helm", "dependency", "build")
+func DependencyBuild(ctx context.Context, env Env, chartDir string) error {
+	_, err := runQuiet(ctx, env, chartDir, "helm", "dependency", "build")
+	return err
 }
 
-func runCmd(ctx context.Context, dir, name string, args ...string) error {
+
+func runQuiet(ctx context.Context, env Env, dir, name string, args ...string) (string, error) {
 	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.Dir = dir
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
+	cmd.Env = append(cmd.Environ(),
+		"HELM_CONFIG_HOME="+env.ConfigHome,
+		"HELM_CACHE_HOME="+env.CacheHome,
+		"HELM_DATA_HOME="+env.DataHome,
+	)
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	tcmdStderr := &stderr
+	cmd.Stderr = tcmdStderr
 	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("%s %v failed: %w", name, args, err)
+		msg := strings.TrimSpace(stderr.String())
+		if msg == "" {
+			msg = err.Error()
+		}
+		return "", fmt.Errorf("%s %v failed: %s", name, args, msg)
 	}
-	return nil
+	return stdout.String(), nil
 }

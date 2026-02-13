@@ -213,11 +213,11 @@ func newInstanceApplyCmd(f *rootFlags) *cobra.Command {
 
 			// Relock.
 			if relock {
-				if err := instances.RelockDependencies(cmd.Context(), inst.Path); err != nil {
+				if err := instances.RelockDependencies(cmd.Context(), repoRoot, inst.Path); err != nil {
 					return err
 				}
 			} else {
-				if _, err := instances.RelockIfDepsChanged(cmd.Context(), inst.Path); err != nil {
+				if _, err := instances.RelockIfDepsChanged(cmd.Context(), repoRoot, inst.Path); err != nil {
 					return err
 				}
 			}
@@ -341,11 +341,11 @@ func newInstanceUpdateCmd(f *rootFlags) *cobra.Command {
 			// Default: only re-lock when Chart.yaml differs from Chart.lock.
 			// --relock forces a relock.
 			if relock {
-				if err := instances.RelockDependencies(cmd.Context(), inst.Path); err != nil {
+				if err := instances.RelockDependencies(cmd.Context(), repoRoot, inst.Path); err != nil {
 					return err
 				}
 			} else {
-				if _, err := instances.RelockIfDepsChanged(cmd.Context(), inst.Path); err != nil {
+				if _, err := instances.RelockIfDepsChanged(cmd.Context(), repoRoot, inst.Path); err != nil {
 					return err
 				}
 			}

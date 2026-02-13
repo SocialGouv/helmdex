@@ -21,6 +21,7 @@ import (
 
 	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/list"
+	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
@@ -90,6 +91,20 @@ type AppModel struct {
 	ahPreview viewport.Model
 	ahForceRefresh bool
 
+	// global loading indicator (status bar spinner)
+	busy      int
+	busyLabel string
+	spin      spinner.Model
+
+	// dependency version editor (Deps tab)
+	depEditOpen         bool
+	depEditDep          yamlchart.Dependency
+	depEditMode         depEditMode
+	depEditLoading      bool
+	depEditVersions     list.Model
+	depEditVersionsData []string
+	depEditVersionInput textinput.Model
+
 	// arbitrary
 	arbRepo textinput.Model
 	arbName textinput.Model
@@ -102,6 +117,13 @@ type AppModel struct {
 
 	keys keyMap
 }
+
+type depEditMode int
+
+const (
+	depEditModeList depEditMode = iota
+	depEditModeManual
+)
 
 type actionItem string
 
@@ -198,6 +220,11 @@ func NewAppModel(p Params) AppModel {
 	ahVers.Title = "Select version"
 	ahVers.SetShowHelp(false)
 
+	depVers := list.New([]list.Item{}, list.NewDefaultDelegate(), 0, 0)
+	depVers.Title = "Versions"
+	depVers.SetFilteringEnabled(true)
+	depVers.SetShowHelp(false)
+
 	newName := textinput.New()
 	newName.Placeholder = "instance name"
 	newName.Prompt = "> "
@@ -205,6 +232,10 @@ func NewAppModel(p Params) AppModel {
 	q := textinput.New()
 	q.Placeholder = "search charts (e.g. postgresql)"
 	q.Prompt = "? "
+
+	depVerInput := textinput.New()
+	depVerInput.Placeholder = "exact version"
+	depVerInput.Prompt = "version> "
 
 	arbRepo := textinput.New(); arbRepo.Placeholder = "repo URL (https://... or oci://...)"; arbRepo.Prompt = "repo> "
 	arbName := textinput.New(); arbName.Placeholder = "chart name"; arbName.Prompt = "name> "
@@ -215,6 +246,10 @@ func NewAppModel(p Params) AppModel {
 	ahDetailTabNames := []string{"README", "Values", "Versions"}
 	vp := viewport.New(0, 0)
 	ahvp := viewport.New(0, 0)
+
+	sp := spinner.New()
+	sp.Spinner = spinner.Dot
+	sp.Style = lipgloss.NewStyle().Faint(true)
 
 	m := AppModel{
 		params: p,
@@ -227,8 +262,11 @@ func NewAppModel(p Params) AppModel {
 		ahQuery: q,
 		ahResults: ahRes,
 		ahVersions: ahVers,
+		depEditVersions: depVers,
+		depEditVersionInput: depVerInput,
 		ahDetailTabNames: ahDetailTabNames,
 		ahPreview: ahvp,
+		spin: sp,
 		newName: newName,
 		arbRepo: arbRepo,
 		arbName: arbName,
@@ -245,7 +283,7 @@ func NewAppModel(p Params) AppModel {
 }
 
 func (m AppModel) Init() tea.Cmd {
-	return m.reloadInstancesCmd()
+	return tea.Batch(m.beginBusy("Reloading"), m.reloadInstancesCmd())
 }
 
 type errMsg struct{ err error }
@@ -266,9 +304,20 @@ type ahVersionsMsg struct{ versions []artifacthub.Version }
 
 type ahDetailMsg struct{ readme, values string }
 
+type depVersionsMsg struct {
+	ID       yamlchart.DepID
+	Versions []string
+}
+
+// noopMsg is used by background cmds to signal "success but no UI change",
+// so the busy indicator can stop cleanly.
+type noopMsg struct{}
+
 // depAppliedMsg indicates a dependency draft was applied (Chart.yaml written)
 // and the modal can be closed.
 type depAppliedMsg struct{ chart yamlchart.Chart }
+
+type depAppliedAndAppliedMsg struct{ chart yamlchart.Chart }
 
 func (m AppModel) loadHelmPreviewsCmd(repoURL, chartName, version string) tea.Cmd {
 	return func() tea.Msg {
@@ -313,21 +362,22 @@ func (m AppModel) loadHelmPreviewsCmd(repoURL, chartName, version string) tea.Cm
 		if err := helmutil.RepoAdd(ctx, env, repoName, repoURL); err != nil {
 			return errMsg{err}
 		}
+		ref := repoName + "/" + chartName
+		// Best-effort show with minimal side effects.
+		// If user requested force refresh, run repo update explicitly.
 		if force {
 			if err := helmutil.RepoUpdate(ctx, env); err != nil {
-				return errMsg{err}
-			}
-		} else {
-			if err := helmutil.RepoUpdateIfStale(ctx, env, 24*time.Hour); err != nil {
-				return errMsg{err}
+				// If update was killed, do not keep the UI stuck in LOADING; fall back to show attempt.
+				if helmutil.IsRepoUpdateWorthRetrying(err) {
+					return errMsg{err}
+				}
 			}
 		}
-		ref := repoName + "/" + chartName
-		readme, err := helmutil.ShowReadme(ctx, env, ref, version)
+		readme, err := helmutil.ShowReadmeBestEffort(ctx, env, ref, version, 24*time.Hour)
 		if err != nil {
 			return errMsg{err}
 		}
-		values, err := helmutil.ShowValues(ctx, env, ref, version)
+		values, err := helmutil.ShowValuesBestEffort(ctx, env, ref, version, 24*time.Hour)
 		if err != nil {
 			return errMsg{err}
 		}
@@ -434,6 +484,13 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	switch msg := msg.(type) {
+	case spinner.TickMsg:
+		var cmd tea.Cmd
+		m.spin, cmd = m.spin.Update(msg)
+		if m.busy > 0 {
+			return m, cmd
+		}
+		return m, nil
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
 		m.instList.SetSize(msg.Width-2, msg.Height-4)
@@ -446,6 +503,7 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.catalogList.SetSize(msg.Width-2, msg.Height-6)
 		m.ahResults.SetSize(msg.Width-2, msg.Height-6)
 		m.ahVersions.SetSize(msg.Width-2, msg.Height-6)
+		m.depEditVersions.SetSize(max(10, msg.Width-6), max(5, msg.Height-12))
 		m.palette.SetSize(min(70, msg.Width-4), min(14, msg.Height-6))
 		// Ensure the viewport never ends up with negative size.
 		if m.ahPreview.Height < 3 {
@@ -453,6 +511,7 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case instancesMsg:
+		m.endBusy()
 		m.insts = msg.items
 		items := make([]list.Item, 0, len(msg.items))
 		for _, inst := range msg.items {
@@ -461,26 +520,43 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.instList.SetItems(items)
 		return m, nil
 	case chartMsg:
+		m.endBusy()
 		m.chart = &msg.chart
 		m.depsList.SetItems(depsToItems(msg.chart.Dependencies))
 		m.refreshInstanceView()
 		return m, nil
 	case depAppliedMsg:
+		m.endBusy()
 		m.chart = &msg.chart
 		m.depsList.SetItems(depsToItems(msg.chart.Dependencies))
 		m.addingDep = false
+		m.depEditOpen = false
+		m.depStep = depStepNone
+		m.modalErr = ""
+		m.statusErr = ""
+		m.refreshInstanceView()
+		return m, nil
+	case depAppliedAndAppliedMsg:
+		m.endBusy()
+		m.chart = &msg.chart
+		m.depsList.SetItems(depsToItems(msg.chart.Dependencies))
+		m.addingDep = false
+		m.depEditOpen = false
 		m.depStep = depStepNone
 		m.modalErr = ""
 		m.statusErr = ""
 		m.refreshInstanceView()
 		return m, nil
 	case regenDoneMsg:
+		m.endBusy()
 		m.refreshInstanceView()
 		return m, nil
 	case appliedMsg:
+		m.endBusy()
 		m.refreshInstanceView()
 		return m, nil
 	case catalogMsg:
+		m.endBusy()
 		m.catalogEntries = msg.entries
 		items := make([]list.Item, 0, len(msg.entries))
 		for _, e := range msg.entries {
@@ -489,6 +565,7 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.catalogList.SetItems(items)
 		return m, nil
 	case ahSearchMsg:
+		m.endBusy()
 		m.ahResultsData = msg.results
 		items := make([]list.Item, 0, len(msg.results))
 		for _, r := range msg.results {
@@ -498,6 +575,7 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.depStep = depStepAHResults
 		return m, nil
 	case ahVersionsMsg:
+		m.endBusy()
 		m.ahVersionsData = msg.versions
 		items := make([]list.Item, 0, len(msg.versions))
 		for _, v := range msg.versions {
@@ -532,7 +610,7 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.ahLoading = true
 				m.ahPreview.SetContent(m.renderAHDetailBody())
 				if m.ahSelected.RepositoryURL != "" {
-					return m, m.loadHelmPreviewsCmd(m.ahSelected.RepositoryURL, m.ahSelected.Name, m.ahSelectedVersion)
+					return m, tea.Batch(m.beginBusy("Fetching chart"), m.loadHelmPreviewsCmd(m.ahSelected.RepositoryURL, m.ahSelected.Name, m.ahSelectedVersion))
 				}
 				m.ahLoading = false
 				m.modalErr = "selected chart has no repository URL; cannot run helm show"
@@ -541,12 +619,41 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.ahPreview.SetContent(m.renderAHDetailBody())
 		return m, nil
 	case ahDetailMsg:
+		m.endBusy()
 		m.ahReadme = msg.readme
 		m.ahValues = msg.values
 		m.ahLoading = false
 		m.ahPreview.SetContent(m.renderAHDetailBody())
 		return m, nil
+	case depVersionsMsg:
+		m.endBusy()
+		if !m.depEditOpen {
+			return m, nil
+		}
+		if yamlchart.DependencyID(m.depEditDep) != msg.ID {
+			return m, nil
+		}
+		m.depEditLoading = false
+		m.depEditVersionsData = msg.Versions
+		items := make([]list.Item, 0, len(msg.Versions))
+		for _, v := range msg.Versions {
+			items = append(items, versionItem(v))
+		}
+		m.depEditVersions.SetItems(items)
+		// Try to keep selection on current version.
+		m.depEditVersions.Select(0)
+		for i := range msg.Versions {
+			if strings.TrimSpace(msg.Versions[i]) == strings.TrimSpace(m.depEditDep.Version) {
+				m.depEditVersions.Select(i)
+				break
+			}
+		}
+		return m, nil
+	case noopMsg:
+		m.endBusy()
+		return m, nil
 	case errMsg:
+		m.endBusy()
 		m.statusErr = msg.err.Error()
 		m.statusErrAt = time.Now()
 		// Prefer keeping the modal open when errors happen during add-dep flows.
@@ -554,6 +661,11 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.modalErr = msg.err.Error()
 			m.ahLoading = false
 			m.ahPreview.SetContent(m.renderAHDetailBody())
+			return m, nil
+		}
+		if m.depEditOpen {
+			m.modalErr = msg.err.Error()
+			m.depEditLoading = false
 			return m, nil
 		}
 		// Otherwise show error in the instance viewport for now.
@@ -565,6 +677,10 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case tea.KeyMsg:
+		// Dep version editor modal has priority over global shortcuts.
+		if m.depEditOpen {
+			return m.depEditUpdate(msg)
+		}
 		// Command palette has priority over global shortcuts.
 		if m.paletteOpen {
 			return m.paletteUpdate(msg)
@@ -588,13 +704,13 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.ahPreview.SetContent(m.renderAHDetailBody())
 				cmd := m.loadHelmPreviewsCmd(m.ahSelected.RepositoryURL, m.ahSelected.Name, m.ahSelectedVersion)
 				m.ahForceRefresh = false
-				return m, cmd
+				return m, tea.Batch(m.beginBusy("Refreshing"), cmd)
 			}
-			return m, m.reloadInstancesCmd()
+			return m, tea.Batch(m.beginBusy("Reloading"), m.reloadInstancesCmd())
 		}
 		if key.Matches(msg, m.keys.Regen) {
 			if m.screen == ScreenInstance && !m.addingDep {
-				return m, m.regenMergedValuesCmd()
+				return m, tea.Batch(m.beginBusy("Regenerating values"), m.regenMergedValuesCmd())
 			}
 		}
 		if key.Matches(msg, m.keys.EditValues) {
@@ -604,14 +720,22 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if key.Matches(msg, m.keys.Apply) {
 			if m.screen == ScreenInstance && !m.addingDep {
-				return m, m.applyInstanceCmd(false)
+				return m, tea.Batch(m.beginBusy("Applying"), m.applyInstanceCmd(false))
 			}
 		}
 		// Deps tab actions.
 		if m.screen == ScreenInstance && !m.addingDep && m.activeTab == 1 {
 			// Delete dependency.
 			if msg.String() == "d" || msg.String() == "D" {
-				return m, m.removeSelectedDepCmd()
+				return m, tea.Batch(m.beginBusy("Updating"), m.removeSelectedDepCmd())
+			}
+			// Change version.
+			if msg.String() == "v" || msg.String() == "V" {
+				return m.openDepEditSelected()
+			}
+			// Upgrade to latest.
+			if msg.String() == "u" || msg.String() == "U" {
+				return m.upgradeSelectedDepCmd()
 			}
 		}
 		if key.Matches(msg, m.keys.Actions) {
@@ -636,7 +760,7 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.addingDep = true
 				m.depStep = depStepChooseSource
 				m.modalErr = ""
-				return m, m.loadCatalogCmd()
+				return m, tea.Batch(m.beginBusy("Loading catalog"), m.loadCatalogCmd())
 			}
 		}
 		if key.Matches(msg, m.keys.Back) {
@@ -694,7 +818,7 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.screen = ScreenInstance
 					m.activeTab = 0
 					m.refreshInstanceView()
-					return m, m.loadChartCmd(inst)
+					return m, tea.Batch(m.beginBusy("Loading chart"), m.loadChartCmd(inst))
 				}
 			}
 		}
@@ -746,7 +870,12 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.screen = ScreenInstance
 			m.activeTab = 0
 			m.content.SetContent(renderInstanceOverview(inst))
-			return m, tea.Batch(m.reloadInstancesCmd(), m.loadChartCmd(inst))
+			return m, tea.Batch(
+				m.beginBusy("Reloading"),
+				m.reloadInstancesCmd(),
+				m.beginBusy("Loading chart"),
+				m.loadChartCmd(inst),
+			)
 		}
 		return m, cmd
 	}
@@ -862,7 +991,7 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					}
 					if km.String() == "a" || km.String() == "A" {
 						if m.ahSelected != nil && m.ahSelectedVersion != "" {
-							return m, m.applyDependencyDraft(yamlchart.Dependency{Name: m.ahSelected.Name, Repository: m.ahSelected.RepositoryURL, Version: m.ahSelectedVersion})
+							return m, m.applyDependencyAndApplyInstanceCmd(yamlchart.Dependency{Name: m.ahSelected.Name, Repository: m.ahSelected.RepositoryURL, Version: m.ahSelectedVersion})
 						}
 					}
 				}
@@ -873,7 +1002,7 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if km, ok := msg.(tea.KeyMsg); ok {
 				if km.String() == "a" || km.String() == "A" {
 					if m.ahSelected != nil && m.ahSelectedVersion != "" {
-						return m, m.applyDependencyDraft(yamlchart.Dependency{Name: m.ahSelected.Name, Repository: m.ahSelected.RepositoryURL, Version: m.ahSelectedVersion})
+						return m, m.applyDependencyAndApplyInstanceCmd(yamlchart.Dependency{Name: m.ahSelected.Name, Repository: m.ahSelected.RepositoryURL, Version: m.ahSelectedVersion})
 					}
 				}
 			}
@@ -924,7 +1053,6 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Batch(cmds...)
 		}
 	}
-
 	// Delegate to focused widget.
 	if m.screen == ScreenDashboard {
 		var cmd tea.Cmd
@@ -965,7 +1093,7 @@ func (m AppModel) paletteUpdate(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				return m, tea.Quit
 			case palReload:
 				m.paletteOpen = false
-				return m, m.reloadInstancesCmd()
+				return m, tea.Batch(m.beginBusy("Reloading"), m.reloadInstancesCmd())
 			case palNewInstance:
 				m.paletteOpen = false
 				m.creating = true
@@ -991,7 +1119,7 @@ func (m AppModel) paletteUpdate(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			case palRegenValues:
 				m.paletteOpen = false
 				if m.screen == ScreenInstance {
-					return m, m.regenMergedValuesCmd()
+					return m, tea.Batch(m.beginBusy("Regenerating values"), m.regenMergedValuesCmd())
 				}
 				return m, nil
 			case palForceRefresh:
@@ -1003,7 +1131,7 @@ func (m AppModel) paletteUpdate(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 					m.ahPreview.SetContent(m.renderAHDetailBody())
 					c := m.loadHelmPreviewsCmd(m.ahSelected.RepositoryURL, m.ahSelected.Name, m.ahSelectedVersion)
 					m.ahForceRefresh = false
-					return m, c
+					return m, tea.Batch(m.beginBusy("Refreshing"), c)
 				}
 				return m, nil
 			}
@@ -1038,6 +1166,8 @@ func (m AppModel) View() string {
 		body = renderHelpOverlay(m)
 	} else if m.paletteOpen {
 		body = renderWithModal(m, m.currentBodyView(), m.palette.View())
+	} else if m.depEditOpen {
+		body = renderWithModal(m, m.currentBodyView(), renderDepEditModal(m))
 	} else {
 		body = m.currentBodyView()
 	}
@@ -1107,6 +1237,9 @@ func (m AppModel) contextHelpLine() string {
 	if m.screen == ScreenInstance {
 		if m.addingDep {
 			return "esc close • enter select • ←/→ tabs • a add"
+		}
+		if m.activeTab == 1 {
+			return "←/→ tabs • d remove • v version • u upgrade • a add dep • m commands • esc back • q quit"
 		}
 		return "←/→ tabs • a add dep • e edit values • p apply • r regen values • m commands • esc back • q quit"
 	}
@@ -1221,6 +1354,12 @@ func (d depItem) Description() string {
 
 func (d depItem) FilterValue() string { return d.Title() + " " + d.Description() }
 
+type versionItem string
+
+func (v versionItem) Title() string       { return string(v) }
+func (v versionItem) Description() string { return "" }
+func (v versionItem) FilterValue() string { return string(v) }
+
 func renderAddDepView(m AppModel) string {
 	header := lipgloss.NewStyle().Bold(true).Render("Add dependency")
 
@@ -1276,7 +1415,15 @@ func (m AppModel) inputCapturesKeys() bool {
 			if m.arbRepo.Focused() || m.arbName.Focused() || m.arbVersion.Focused() || m.arbAlias.Focused() {
 				return true
 			}
+	}
+	if m.depEditOpen {
+		if m.depEditMode == depEditModeManual && m.depEditVersionInput.Focused() {
+			return true
 		}
+		if m.depEditMode == depEditModeList && m.depEditVersions.FilterState() == list.Filtering {
+			return true
+		}
+	}
 	// If any list is filtering, it should capture typing.
 	if m.catalogList.FilterState() == list.Filtering {
 		return true
@@ -1297,6 +1444,26 @@ func (m AppModel) inputCapturesKeys() bool {
 	return false
 }
 
+func (m *AppModel) beginBusy(label string) tea.Cmd {
+	m.busy++
+	if strings.TrimSpace(label) != "" {
+		m.busyLabel = label
+	}
+	if m.busy == 1 {
+		return m.spin.Tick
+	}
+	return nil
+}
+
+func (m *AppModel) endBusy() {
+	if m.busy > 0 {
+		m.busy--
+	}
+	if m.busy == 0 {
+		m.busyLabel = ""
+	}
+}
+
 func (m *AppModel) clearAnyAppliedFilter() bool {
 	cleared := false
 	if m.instList.FilterState() == list.FilterApplied {
@@ -1312,6 +1479,133 @@ func (m *AppModel) clearAnyAppliedFilter() bool {
 		cleared = true
 	}
 	return cleared
+}
+
+func (m AppModel) depEditUpdate(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if msg.Type == tea.KeyEsc {
+		m.depEditOpen = false
+		m.depEditLoading = false
+		m.modalErr = ""
+		m.depEditDep = yamlchart.Dependency{}
+		m.depEditVersionInput.Blur()
+		return m, nil
+	}
+
+	if m.depEditMode == depEditModeManual {
+		var cmd tea.Cmd
+		m.depEditVersionInput, cmd = m.depEditVersionInput.Update(msg)
+		if msg.Type == tea.KeyEnter {
+			v := strings.TrimSpace(m.depEditVersionInput.Value())
+			if v == "" {
+				m.modalErr = "version is required"
+				return m, nil
+			}
+			dep := m.depEditDep
+			dep.Version = v
+			m.depEditOpen = false
+			m.depEditVersionInput.Blur()
+			return m, tea.Batch(m.beginBusy("Applying"), m.applyDependencyAndApplyInstanceCmd(dep))
+		}
+		return m, cmd
+	}
+
+	var cmd tea.Cmd
+	m.depEditVersions, cmd = m.depEditVersions.Update(msg)
+	if msg.Type == tea.KeyEnter {
+		it := m.depEditVersions.SelectedItem()
+		if it == nil {
+			return m, cmd
+		}
+		vi, ok := it.(versionItem)
+		if !ok {
+			return m, func() tea.Msg { return errMsg{fmt.Errorf("unexpected version item type")} }
+		}
+		dep := m.depEditDep
+		dep.Version = string(vi)
+		m.depEditOpen = false
+		return m, tea.Batch(m.beginBusy("Applying"), m.applyDependencyAndApplyInstanceCmd(dep))
+	}
+	return m, cmd
+}
+
+func (m AppModel) openDepEditSelected() (tea.Model, tea.Cmd) {
+	it := m.depsList.SelectedItem()
+	if it == nil {
+		return m, nil
+	}
+	di, ok := it.(depItem)
+	if !ok {
+		return m, func() tea.Msg { return errMsg{fmt.Errorf("unexpected dependency item type")} }
+	}
+	dep := yamlchart.Dependency(di)
+
+	m.depEditOpen = true
+	m.depEditDep = dep
+	m.depEditLoading = false
+	m.modalErr = ""
+	m.depEditVersionsData = nil
+	m.depEditVersions.SetItems(nil)
+	m.depEditVersions.Title = fmt.Sprintf("Versions (%s)", yamlchart.DependencyID(dep))
+
+	// OCI: cannot query versions; use manual exact version input.
+	if strings.HasPrefix(dep.Repository, "oci://") {
+		m.depEditMode = depEditModeManual
+		m.depEditVersionInput.SetValue(dep.Version)
+		m.depEditVersionInput.Focus()
+		return m, nil
+	}
+
+	m.depEditMode = depEditModeList
+	m.depEditLoading = true
+	return m, tea.Batch(m.beginBusy("Loading versions"), m.loadDepVersionsCmd(dep))
+}
+
+func (m AppModel) loadDepVersionsCmd(dep yamlchart.Dependency) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(contextBG(), 20*time.Second)
+		defer cancel()
+		vs, err := helmutil.RepoChartVersions(ctx, m.params.RepoRoot, dep.Repository, dep.Name, 24*time.Hour)
+		if err != nil {
+			return errMsg{err}
+		}
+		return depVersionsMsg{ID: yamlchart.DependencyID(dep), Versions: vs}
+	}
+}
+
+func (m AppModel) upgradeSelectedDepCmd() (tea.Model, tea.Cmd) {
+	it := m.depsList.SelectedItem()
+	if it == nil {
+		return m, nil
+	}
+	di, ok := it.(depItem)
+	if !ok {
+		return m, func() tea.Msg { return errMsg{fmt.Errorf("unexpected dependency item type")} }
+	}
+	dep := yamlchart.Dependency(di)
+	return m, tea.Batch(m.beginBusy("Upgrading"), m.upgradeDepToLatestCmd(dep))
+}
+
+func (m AppModel) upgradeDepToLatestCmd(dep yamlchart.Dependency) tea.Cmd {
+	return func() tea.Msg {
+		if strings.HasPrefix(dep.Repository, "oci://") {
+			return errMsg{fmt.Errorf("cannot auto-upgrade OCI dependency %s; use v to set exact version", yamlchart.DependencyID(dep))}
+		}
+		ctx, cancel := context.WithTimeout(contextBG(), 25*time.Second)
+		defer cancel()
+		vs, err := helmutil.RepoChartVersions(ctx, m.params.RepoRoot, dep.Repository, dep.Name, 24*time.Hour)
+		if err != nil {
+			return errMsg{err}
+		}
+		best, ok := semverutil.BestStable(vs)
+		if !ok {
+			return errMsg{fmt.Errorf("no stable SemVer versions found for %s", yamlchart.DependencyID(dep))}
+		}
+		if strings.TrimSpace(best) == strings.TrimSpace(dep.Version) {
+			return noopMsg{}
+		}
+		dep.Version = best
+		return m.applyDependencyAndApplyInstanceCmd(dep)()
+	}
 }
 
 func min(a, b int) int {
@@ -1340,6 +1634,43 @@ func (m AppModel) applyDependencyDraft(dep yamlchart.Dependency) tea.Cmd {
 		// Ensure values.yaml regenerated.
 		_ = os.MkdirAll(m.selected.Path, 0o755)
 		return depAppliedMsg{chart: c}
+	}
+}
+
+// applyDependencyAndApplyInstanceCmd writes Chart.yaml and then immediately
+// applies the instance (relock + presets import + values regen) so Chart.lock
+// is generated right away.
+func (m AppModel) applyDependencyAndApplyInstanceCmd(dep yamlchart.Dependency) tea.Cmd {
+	return func() tea.Msg {
+		if m.selected == nil {
+			return errMsg{fmt.Errorf("no instance selected")}
+		}
+		chartPath := filepath.Join(m.selected.Path, "Chart.yaml")
+		c, err := yamlchart.ReadChart(chartPath)
+		if err != nil {
+			return errMsg{err}
+		}
+		if err := c.UpsertDependency(dep); err != nil {
+			return errMsg{err}
+		}
+		if err := yamlchart.WriteChart(chartPath, c); err != nil {
+			return errMsg{err}
+		}
+
+		// Apply pipeline.
+		if _, err := instances.RelockIfDepsChanged(contextBG(), m.params.RepoRoot, m.selected.Path); err != nil {
+			return errMsg{err}
+		}
+		if m.params.Config != nil {
+			_, err = presets.Import(presets.ImportParams{RepoRoot: m.params.RepoRoot, InstancePath: m.selected.Path, Config: *m.params.Config, Dependencies: c.Dependencies})
+			if err != nil {
+				return errMsg{err}
+			}
+		}
+		if err := values.GenerateMergedValues(m.selected.Path); err != nil {
+			return errMsg{err}
+		}
+		return depAppliedAndAppliedMsg{chart: c}
 	}
 }
 
@@ -1381,16 +1712,13 @@ func (m AppModel) applyInstanceCmd(forceRelock bool) tea.Cmd {
 		if m.selected == nil {
 			return errMsg{fmt.Errorf("no instance selected")}
 		}
-		if m.params.Config == nil {
-			return errMsg{fmt.Errorf("no config loaded (missing helmdex.yaml?)")}
-		}
 		// Optional relock.
 		if forceRelock {
-			if err := instances.RelockDependencies(contextBG(), m.selected.Path); err != nil {
+			if err := instances.RelockDependencies(contextBG(), m.params.RepoRoot, m.selected.Path); err != nil {
 				return errMsg{err}
 			}
 		} else {
-			if _, err := instances.RelockIfDepsChanged(contextBG(), m.selected.Path); err != nil {
+			if _, err := instances.RelockIfDepsChanged(contextBG(), m.params.RepoRoot, m.selected.Path); err != nil {
 				return errMsg{err}
 			}
 		}
@@ -1398,9 +1726,11 @@ func (m AppModel) applyInstanceCmd(forceRelock bool) tea.Cmd {
 		if err != nil {
 			return errMsg{err}
 		}
-		_, err = presets.Import(presets.ImportParams{RepoRoot: m.params.RepoRoot, InstancePath: m.selected.Path, Config: *m.params.Config, Dependencies: c.Dependencies})
-		if err != nil {
-			return errMsg{err}
+		if m.params.Config != nil {
+			_, err = presets.Import(presets.ImportParams{RepoRoot: m.params.RepoRoot, InstancePath: m.selected.Path, Config: *m.params.Config, Dependencies: c.Dependencies})
+			if err != nil {
+				return errMsg{err}
+			}
 		}
 		if err := values.GenerateMergedValues(m.selected.Path); err != nil {
 			return errMsg{err}

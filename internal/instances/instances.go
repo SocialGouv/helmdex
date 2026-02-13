@@ -92,13 +92,14 @@ func Remove(repoRoot, appsDir, name string) error {
 	return os.RemoveAll(dir)
 }
 
-func RelockDependencies(ctx context.Context, instancePath string) error {
+func RelockDependencies(ctx context.Context, repoRoot, instancePath string) error {
+	env := helmutil.EnvForRepo(repoRoot)
 	// v0.1: prefer `helm dependency build` (uses lockfile) when lock exists, else update.
 	lockPath := filepath.Join(instancePath, "Chart.lock")
 	if _, err := os.Stat(lockPath); err == nil {
-		return helmutil.DependencyBuild(ctx, instancePath)
+		return helmutil.DependencyBuild(ctx, env, instancePath)
 	}
-	return helmutil.DependencyUpdate(ctx, instancePath)
+	return helmutil.DependencyUpdate(ctx, env, instancePath)
 }
 
 // RelockIfDepsChanged re-locks dependencies only when the instance's declared
@@ -106,7 +107,7 @@ func RelockDependencies(ctx context.Context, instancePath string) error {
 //
 // If Chart.lock does not exist, this will relock only when Chart.yaml declares
 // any dependencies.
-func RelockIfDepsChanged(ctx context.Context, instancePath string) (bool, error) {
+func RelockIfDepsChanged(ctx context.Context, repoRoot, instancePath string) (bool, error) {
 	changed, err := DepsChanged(instancePath)
 	if err != nil {
 		return false, err
@@ -114,5 +115,5 @@ func RelockIfDepsChanged(ctx context.Context, instancePath string) (bool, error)
 	if !changed {
 		return false, nil
 	}
-	return true, RelockDependencies(ctx, instancePath)
+	return true, RelockDependencies(ctx, repoRoot, instancePath)
 }

@@ -65,8 +65,12 @@ func renderStatusBar(m AppModel) string {
 	if m.isAnyFilterActive() {
 		flags = append(flags, "FILTER")
 	}
-	if m.ahLoading {
-		flags = append(flags, "LOADING")
+	if m.busy > 0 {
+		label := strings.TrimSpace(m.busyLabel)
+		if label == "" {
+			label = "Loading"
+		}
+		flags = append(flags, m.spin.View()+" "+label)
 	}
 
 	err := ""
@@ -88,3 +92,33 @@ func renderStatusBar(m AppModel) string {
 	return lipgloss.NewStyle().Faint(true).Render(line)
 }
 
+func renderDepEditModal(m AppModel) string {
+	box := lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).Padding(1, 2)
+	if !m.depEditOpen {
+		return ""
+	}
+
+	header := lipgloss.NewStyle().Bold(true).Render("Change dependency version")
+	if m.depEditDep.Name != "" {
+		header += "\n" + lipgloss.NewStyle().Faint(true).Render(fmt.Sprintf("%s @ %s", m.depEditDep.Name, m.depEditDep.Repository))
+	}
+	if m.modalErr != "" {
+		header += "\n" + lipgloss.NewStyle().Foreground(lipgloss.Color("9")).Render("Error: "+m.modalErr)
+	}
+
+	var body string
+	switch m.depEditMode {
+	case depEditModeManual:
+		body = "Enter an exact version:\n\n" + m.depEditVersionInput.View() + "\n\n(enter: apply • esc: cancel)"
+	default:
+		if m.depEditLoading {
+			body = lipgloss.NewStyle().Faint(true).Render("Loading versions…")
+		} else if len(m.depEditVersionsData) == 0 {
+			body = lipgloss.NewStyle().Faint(true).Render("No versions found.")
+		} else {
+			body = m.depEditVersions.View() + "\n" + lipgloss.NewStyle().Faint(true).Render("/: filter • enter: apply • esc: cancel")
+		}
+	}
+
+	return box.Render(header + "\n\n" + body)
+}
