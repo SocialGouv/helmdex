@@ -46,7 +46,7 @@ func RepoUpdateIfStale(ctx context.Context, env Env, maxAge time.Duration) error
 	if err := env.EnsureDirs(); err != nil {
 		return err
 	}
-	marker := filepath.Join(env.CacheHome, "helmdex-repo-update.stamp")
+	marker := repoUpdateMarkerPath(env)
 	if st, err := os.Stat(marker); err == nil {
 		if time.Since(st.ModTime()) < maxAge {
 			return nil
@@ -57,6 +57,10 @@ func RepoUpdateIfStale(ctx context.Context, env Env, maxAge time.Duration) error
 	}
 	_ = os.WriteFile(marker, []byte(time.Now().UTC().Format(time.RFC3339)), 0o644)
 	return nil
+}
+
+func repoUpdateMarkerPath(env Env) string {
+	return filepath.Join(env.CacheHome, "helmdex-repo-update.stamp")
 }
 
 func (e Env) EnsureDirs() error {
@@ -103,12 +107,17 @@ func RepoAdd(ctx context.Context, env Env, name, url string) error {
 		// If helm says the repo exists already, treat as success.
 		s := err2.Error()
 		if strings.Contains(s, "already exists") {
+			// Ensure a fresh marker exists so stale logic doesn't think we never updated.
+			_ = os.WriteFile(repoUpdateMarkerPath(env), []byte(time.Now().UTC().Format(time.RFC3339)), 0o644)
 			return nil
 		}
 		// If we couldn't list repos (older helm / unexpected output), returning the
 		// add error is the best we can do.
 		return err2
 	}
+	// Adding a repo typically populates the index; write a marker so stale-update
+	// logic has a baseline even if we never explicitly run `helm repo update`.
+	_ = os.WriteFile(repoUpdateMarkerPath(env), []byte(time.Now().UTC().Format(time.RFC3339)), 0o644)
 	return nil
 }
 
@@ -135,6 +144,15 @@ func IsRepoUpdateWorthRetrying(err error) bool {
 
 func ShowReadme(ctx context.Context, env Env, ref, version string) (string, error) {
 	args := []string{"show", "readme", ref}
+	if version != "" {
+		args = append(args, "--version", version)
+	}
+	out, err := run(ctx, env, "helm", args...)
+	return out, err
+}
+
+func ShowChart(ctx context.Context, env Env, ref, version string) (string, error) {
+	args := []string{"show", "chart", ref}
 	if version != "" {
 		args = append(args, "--version", version)
 	}

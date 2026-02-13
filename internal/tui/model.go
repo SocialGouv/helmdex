@@ -547,6 +547,10 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.statusErr = ""
 		m.refreshInstanceView()
 		return m, nil
+	case depVersionValidatedMsg:
+		m.endBusy()
+		// Keep modal open; close only after apply succeeds.
+		return m, tea.Batch(m.beginBusy("Applying"), m.applyDependencyAndApplyInstanceCmd(msg.dep))
 	case regenDoneMsg:
 		m.endBusy()
 		m.refreshInstanceView()
@@ -1518,9 +1522,9 @@ func (m AppModel) depEditUpdate(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			dep.Version = v
 			m.depEditVersionInput.Blur()
 			m.modalErr = ""
-			// Keep modal open; close only on successful apply. This also allows
-			// displaying errors inside the modal if apply fails.
-			return m, tea.Batch(m.beginBusy("Applying"), m.applyDependencyAndApplyInstanceCmd(dep))
+			// Keep modal open; close only on successful apply.
+			// Validate chosen version before writing Chart.yaml.
+			return m, tea.Batch(m.beginBusy("Validating"), m.validateDependencyVersionCmd(dep))
 		}
 		return m, cmd
 	}
@@ -1544,10 +1548,38 @@ func (m AppModel) depEditUpdate(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		dep := m.depEditDep
 		dep.Version = string(vi)
 		m.modalErr = ""
-		// Keep modal open; close only on successful apply.
-		return m, tea.Batch(cmd, m.beginBusy("Applying"), m.applyDependencyAndApplyInstanceCmd(dep))
+		// Validate the chosen version before writing Chart.yaml. This prevents UI
+		// state from being corrupted by versions that appear in `helm search repo`
+		// output but cannot be resolved by Helm.
+		return m, tea.Batch(cmd, m.beginBusy("Validating"), m.validateDependencyVersionCmd(dep))
 	}
 	return m, cmd
+}
+
+func (m AppModel) validateDependencyVersionCmd(dep yamlchart.Dependency) tea.Cmd {
+	return func() tea.Msg {
+		if strings.HasPrefix(dep.Repository, "oci://") {
+			return depVersionValidatedMsg{dep: dep}
+		}
+		ctx, cancel := context.WithTimeout(contextBG(), 20*time.Second)
+		defer cancel()
+		env := helmutil.EnvForRepoURL(m.params.RepoRoot, dep.Repository)
+		repoName := helmutil.RepoNameForURL(dep.Repository)
+		ref := repoName + "/" + dep.Name
+		// best-effort add; RepoAdd is cheap and ensures repo is present.
+		if err := helmutil.RepoAdd(ctx, env, repoName, dep.Repository); err != nil {
+			return errMsg{err}
+		}
+		// `helm show chart` fails fast if the version doesn't exist.
+		if _, err := helmutil.ShowChart(ctx, env, ref, dep.Version); err != nil {
+			return errMsg{fmt.Errorf("invalid version %q for %s: %w", dep.Version, yamlchart.DependencyID(dep), err)}
+		}
+		return depVersionValidatedMsg{dep: dep}
+	}
+}
+
+type depVersionValidatedMsg struct {
+	dep yamlchart.Dependency
 }
 
 func (m AppModel) openDepEditSelected() (tea.Model, tea.Cmd) {

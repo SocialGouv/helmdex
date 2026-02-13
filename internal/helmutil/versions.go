@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	semver "github.com/Masterminds/semver/v3"
 	"sort"
 	"strings"
 	"time"
@@ -39,8 +40,16 @@ func RepoChartVersions(ctx context.Context, repoRoot, repoURL, chartName string,
 		return vs, nil
 	}
 
-	// If empty or failed, do a best-effort stale-aware update and retry once.
-	updateErr := RepoUpdateIfStale(ctx, env, repoUpdateMaxAge)
+	// If empty or failed, retry after a repo update.
+	//
+	// Important: if the search returned *empty*, we force a repo update even if
+	// the stale marker is fresh. This handles cases where `helm repo add` did not
+	// actually populate the index cache, or the cache was cleared.
+	updateMaxAge := repoUpdateMaxAge
+	if err == nil && len(vs) == 0 {
+		updateMaxAge = 0
+	}
+	updateErr := RepoUpdateIfStale(ctx, env, updateMaxAge)
 	vs2, err2 := searchRepoVersions(ctx, env, ref)
 	if err2 == nil && len(vs2) > 0 {
 		return vs2, nil
@@ -77,11 +86,18 @@ type helmSearchRepoItem struct {
 }
 
 func searchRepoVersions(ctx context.Context, env Env, ref string) ([]string, error) {
+	// Helm search uses substring matching by default, so searching for
+	// `repo/postgresql` can also return `repo/postgresql-ha`.
+	//
+	// We avoid `--regexp` here because Helm's regexp matching semantics vary
+	// across versions (sometimes it matches just the chart name, sometimes it
+	// includes the repo prefix). Instead we always filter the JSON results by an
+	// exact chart match.
 	out, err := run(ctx, env, "helm", "search", "repo", ref, "--versions", "-o", "json")
 	if err != nil {
 		return nil, err
 	}
-	return parseSearchRepoVersions(out)
+	return parseSearchRepoVersionsForRef(out, ref)
 }
 
 func searchRepoVersionsDevel(ctx context.Context, env Env, ref string) ([]string, error) {
@@ -89,17 +105,27 @@ func searchRepoVersionsDevel(ctx context.Context, env Env, ref string) ([]string
 	if err != nil {
 		return nil, err
 	}
-	return parseSearchRepoVersions(out)
+	return parseSearchRepoVersionsForRef(out, ref)
 }
 
-func parseSearchRepoVersions(raw string) ([]string, error) {
+func parseSearchRepoVersionsForRef(raw, ref string) ([]string, error) {
 	var items []helmSearchRepoItem
 	if err := json.Unmarshal([]byte(raw), &items); err != nil {
 		return nil, fmt.Errorf("parse helm search repo json: %w", err)
 	}
+	// Helm typically returns names like `repo/chart`, but for safety accept
+	// `chart` too.
+	chartOnly := ref
+	if i := strings.LastIndex(ref, "/"); i >= 0 {
+		chartOnly = ref[i+1:]
+	}
 	seen := map[string]struct{}{}
 	vs := make([]string, 0, len(items))
 	for _, it := range items {
+		name := strings.TrimSpace(it.Name)
+		if name != strings.TrimSpace(ref) && name != strings.TrimSpace(chartOnly) {
+			continue
+		}
 		v := strings.TrimSpace(it.Version)
 		if v == "" {
 			continue
@@ -110,10 +136,25 @@ func parseSearchRepoVersions(raw string) ([]string, error) {
 		seen[v] = struct{}{}
 		vs = append(vs, v)
 	}
-	// Stable ordering: descending for UI.
-	sort.Strings(vs)
-	for i, j := 0, len(vs)-1; i < j; i, j = i+1, j-1 {
-		vs[i], vs[j] = vs[j], vs[i]
-	}
+	// Stable ordering for UI:
+	// 1) SemVer descending when parseable
+	// 2) otherwise lexical descending as a fallback
+	sort.Slice(vs, func(i, j int) bool {
+		vi := strings.TrimSpace(vs[i])
+		vj := strings.TrimSpace(vs[j])
+		ai, ei := semver.NewVersion(vi)
+		aj, ej := semver.NewVersion(vj)
+		if ei == nil && ej == nil {
+			return ai.GreaterThan(aj)
+		}
+		if ei == nil && ej != nil {
+			return true
+		}
+		if ei != nil && ej == nil {
+			return false
+		}
+		// Neither is SemVer: lexical desc.
+		return vi > vj
+	})
 	return vs, nil
 }
