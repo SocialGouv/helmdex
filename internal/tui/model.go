@@ -496,19 +496,22 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
-		m.instList.SetSize(msg.Width-2, msg.Height-4)
+		// Layout has: header + breadcrumb + body + context help + footer status,
+		// all wrapped in a padded base style. Keep list/viewports slightly smaller
+		// to avoid clipping in smaller terminals.
+		m.instList.SetSize(msg.Width-2, msg.Height-5)
 		m.content.Width = msg.Width - 2
 		// Instance view now has a tab bar + per-tab heading row above the viewport.
 		// Reduce height so the body fits within the terminal without clipping.
-		m.content.Height = msg.Height - 8
+		m.content.Height = msg.Height - 9
 		m.ahPreview.Width = msg.Width - 2
-		m.ahPreview.Height = msg.Height - 10
+		m.ahPreview.Height = msg.Height - 11
 		// Deps tab also has the shared tab bar + per-tab heading row.
-		m.depsList.SetSize(msg.Width-2, msg.Height-8)
-		m.depSource.SetSize(msg.Width-2, msg.Height-6)
-		m.catalogList.SetSize(msg.Width-2, msg.Height-6)
-		m.ahResults.SetSize(msg.Width-2, msg.Height-6)
-		m.ahVersions.SetSize(msg.Width-2, msg.Height-6)
+		m.depsList.SetSize(msg.Width-2, msg.Height-9)
+		m.depSource.SetSize(msg.Width-2, msg.Height-7)
+		m.catalogList.SetSize(msg.Width-2, msg.Height-7)
+		m.ahResults.SetSize(msg.Width-2, msg.Height-7)
+		m.ahVersions.SetSize(msg.Width-2, msg.Height-7)
 		m.depEditVersions.SetSize(max(10, msg.Width-6), max(5, msg.Height-12))
 		m.palette.SetSize(min(70, msg.Width-4), min(14, msg.Height-6))
 		// Ensure the viewport never ends up with negative size.
@@ -1171,6 +1174,9 @@ func (m AppModel) View() string {
 		header += "  " + lipgloss.NewStyle().Faint(true).Render(m.params.RepoRoot)
 	}
 
+	// Persistent navigation context (instance breadcrumbs) under the header.
+	breadcrumb := renderBreadcrumbBar(m)
+
 	var body string
 	if m.helpOpen {
 		// Help fully replaces the body.
@@ -1188,9 +1194,9 @@ func (m AppModel) View() string {
 	}
 
 	contextHelp := lipgloss.NewStyle().Faint(true).Render(m.contextHelpLine())
-	status := renderStatusBar(m)
+	status := renderFooterStatusLine(m)
 
-	return base.Render(strings.TrimRight(header+"\n\n"+body+"\n\n"+contextHelp+"\n"+status, "\n"))
+	return base.Render(strings.TrimRight(header+"\n"+breadcrumb+"\n\n"+body+"\n\n"+contextHelp+"\n"+status, "\n"))
 }
 
 func (m AppModel) currentBodyView() string {

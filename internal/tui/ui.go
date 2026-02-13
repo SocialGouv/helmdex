@@ -41,20 +41,46 @@ func renderHelpOverlay(m AppModel) string {
 	return panel.Render(strings.Join(lines, "\n"))
 }
 
-func renderStatusBar(m AppModel) string {
-	// Breadcrumb
-	b := "Dashboard"
+// renderBreadcrumbBar renders a persistent top breadcrumb so it's always clear
+// which instance we're looking at, regardless of the active tab.
+func renderBreadcrumbBar(m AppModel) string {
+	// Content
+	parts := []string{"Dashboard"}
 	if m.screen == ScreenInstance {
-		if m.selected != nil {
-			b = "Instance / " + m.selected.Name
-		} else {
-			b = "Instance"
+		parts = append(parts, "Instance")
+		if m.selected != nil && strings.TrimSpace(m.selected.Name) != "" {
+			parts = append(parts, m.selected.Name)
 		}
 		if m.addingDep {
-			b += " / Add dep"
+			parts = append(parts, "Add dep")
 		}
 	}
 
+	// Styling: subtle pill background, with the last crumb emphasized.
+	bg := lipgloss.Color("236")
+	sepStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
+	soft := lipgloss.NewStyle().Foreground(lipgloss.Color("252"))
+	strong := lipgloss.NewStyle().Foreground(lipgloss.Color("231")).Bold(true)
+	bar := lipgloss.NewStyle().Background(bg).Padding(0, 1)
+
+	sep := " " + sepStyle.Render("›") + " "
+	out := ""
+	for i, p := range parts {
+		if i > 0 {
+			out += sep
+		}
+		if i == len(parts)-1 {
+			out += strong.Render(p)
+		} else {
+			out += soft.Render(p)
+		}
+	}
+	return bar.Render(out)
+}
+
+// renderFooterStatusLine renders transient state (errors, modes, spinners) at
+// the bottom. Errors never replace the top breadcrumb.
+func renderFooterStatusLine(m AppModel) string {
 	flags := []string{}
 	if m.paletteOpen {
 		flags = append(flags, "CMD")
@@ -78,14 +104,18 @@ func renderStatusBar(m AppModel) string {
 		err = "ERR " + m.statusErr
 	}
 
-	left := b
+	left := ""
 	if err != "" {
-		left = err
+		left = lipgloss.NewStyle().Foreground(lipgloss.Color("9")).Bold(true).Render(err)
+	} else {
+		left = lipgloss.NewStyle().Faint(true).Render(" ")
 	}
+
 	right := strings.Join(flags, " ")
 	if right == "" {
 		right = " "
 	}
+	right = lipgloss.NewStyle().Faint(true).Render(right)
 
 	// Render as a single line.
 	line := fmt.Sprintf("%s  %s", left, right)
