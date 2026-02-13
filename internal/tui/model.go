@@ -105,6 +105,21 @@ type AppModel struct {
 	depEditVersionsData []string
 	depEditVersionInput textinput.Model
 
+	// dependency detail modal (Deps tab)
+	depDetailOpen           bool
+	depDetailDep            yamlchart.Dependency
+	depDetailTab            int
+	depDetailTabNames       []string
+	depDetailLoading        bool
+	depDetailMode           depEditMode // reuse enum: list vs manual
+	depDetailVersions       list.Model
+	depDetailVersionsData   []string
+	depDetailVersionInput   textinput.Model // OCI/manual fallback
+	depDetailReadme         string
+	depDetailDefaultValues  string
+	depDetailPreview        viewport.Model
+	depDetailPendingVersion string
+
 	// arbitrary
 	arbRepo textinput.Model
 	arbName textinput.Model
@@ -240,6 +255,16 @@ func NewAppModel(p Params) AppModel {
 	depVerInput.Placeholder = "exact version"
 	depVerInput.Prompt = "version> "
 
+	depDetailVersions := list.New([]list.Item{}, list.NewDefaultDelegate(), 0, 0)
+	depDetailVersions.Title = ""
+	depDetailVersions.SetShowTitle(false)
+	depDetailVersions.SetFilteringEnabled(true)
+	depDetailVersions.SetShowHelp(false)
+
+	depDetailVerInput := textinput.New()
+	depDetailVerInput.Placeholder = "exact version"
+	depDetailVerInput.Prompt = "version> "
+
 	arbRepo := textinput.New(); arbRepo.Placeholder = "repo URL (https://... or oci://...)"; arbRepo.Prompt = "repo> "
 	arbName := textinput.New(); arbName.Placeholder = "chart name"; arbName.Prompt = "name> "
 	arbVersion := textinput.New(); arbVersion.Placeholder = "exact version"; arbVersion.Prompt = "version> "
@@ -256,8 +281,15 @@ func NewAppModel(p Params) AppModel {
 		withIcon(iconAHValues, "Values"),
 		withIcon(iconVersions, "Versions"),
 	}
+	depDetailTabNames := []string{
+		withIcon(iconReadme, "README"),
+		withIcon(iconAHValues, "Default"),
+		withIcon(iconValues, "Local"),
+		withIcon(iconVersions, "Versions"),
+	}
 	vp := viewport.New(0, 0)
 	ahvp := viewport.New(0, 0)
+	depDetailVP := viewport.New(0, 0)
 
 	sp := spinner.New()
 	sp.Spinner = spinner.Dot
@@ -278,6 +310,10 @@ func NewAppModel(p Params) AppModel {
 		depEditVersionInput: depVerInput,
 		ahDetailTabNames: ahDetailTabNames,
 		ahPreview: ahvp,
+		depDetailTabNames: depDetailTabNames,
+		depDetailVersions: depDetailVersions,
+		depDetailVersionInput: depDetailVerInput,
+		depDetailPreview: depDetailVP,
 		spin: sp,
 		newName: newName,
 		arbRepo: arbRepo,
@@ -316,6 +352,19 @@ type ahVersionsMsg struct{ versions []artifacthub.Version }
 
 type ahDetailMsg struct{ readme, values string }
 
+// depDetailPreviewsMsg carries readme + default values previews for the selected dependency.
+type depDetailPreviewsMsg struct {
+	ID            yamlchart.DepID
+	readme        string
+	defaultValues string
+}
+
+// depDetailVersionsMsg carries the available versions list for the selected dependency.
+type depDetailVersionsMsg struct {
+	ID       yamlchart.DepID
+	Versions []string
+}
+
 type depVersionsMsg struct {
 	ID       yamlchart.DepID
 	Versions []string
@@ -350,13 +399,38 @@ func (m AppModel) loadHelmPreviewsCmd(repoURL, chartName, version string) tea.Cm
 			}
 		}
 
+		// Offline: read from cached chart archive (.tgz) if present.
+		if tgzPath, ok := helmutil.FindCachedChartArchive(m.params.RepoRoot, repoURL, chartName, version); ok {
+			readme, values, err := helmutil.ReadChartArchiveFiles(tgzPath)
+			if err != nil {
+				return errMsg{err}
+			}
+			if strings.TrimSpace(readme) != "" {
+				_ = helmutil.WriteShowCache(m.params.RepoRoot, repoURL, chartName, version, helmutil.ShowKindReadme, readme)
+			}
+			if strings.TrimSpace(values) != "" {
+				_ = helmutil.WriteShowCache(m.params.RepoRoot, repoURL, chartName, version, helmutil.ShowKindValues, values)
+			}
+			if strings.TrimSpace(readme) != "" || strings.TrimSpace(values) != "" {
+				return ahDetailMsg{readme: readme, values: values}
+			}
+		}
+
 		// Per-repoURL isolated Helm env so repo update touches only this repo.
 		env := helmutil.EnvForRepoURL(m.params.RepoRoot, repoURL)
-		ctx, cancel := context.WithTimeout(contextBG(), 20*time.Second)
+		ctx, cancel := context.WithTimeout(contextBG(), 60*time.Second)
 		defer cancel()
 		// OCI refs can be used directly.
 		if strings.HasPrefix(repoURL, "oci://") {
 			ref := strings.TrimRight(repoURL, "/") + "/" + chartName
+			// Try pulling archive first (reduces network calls and avoids show timeouts).
+			if tgzPath, err := helmutil.PullChartArchive(ctx, env, repoURL, chartName, version); err == nil {
+				if readme, values, err2 := helmutil.ReadChartArchiveFiles(tgzPath); err2 == nil {
+					_ = helmutil.WriteShowCache(m.params.RepoRoot, repoURL, chartName, version, helmutil.ShowKindReadme, readme)
+					_ = helmutil.WriteShowCache(m.params.RepoRoot, repoURL, chartName, version, helmutil.ShowKindValues, values)
+					return ahDetailMsg{readme: readme, values: values}
+				}
+			}
 			readme, err := helmutil.ShowReadme(ctx, env, ref, version)
 			if err != nil {
 				return errMsg{err}
@@ -375,6 +449,14 @@ func (m AppModel) loadHelmPreviewsCmd(repoURL, chartName, version string) tea.Cm
 			return errMsg{err}
 		}
 		ref := repoName + "/" + chartName
+		// If archive isn't present, try pulling it first (prefer offline extraction).
+		if tgzPath, err := helmutil.PullChartArchive(ctx, env, repoURL, chartName, version); err == nil {
+			if readme, values, err2 := helmutil.ReadChartArchiveFiles(tgzPath); err2 == nil {
+				_ = helmutil.WriteShowCache(m.params.RepoRoot, repoURL, chartName, version, helmutil.ShowKindReadme, readme)
+				_ = helmutil.WriteShowCache(m.params.RepoRoot, repoURL, chartName, version, helmutil.ShowKindValues, values)
+				return ahDetailMsg{readme: readme, values: values}
+			}
+		}
 		// Best-effort show with minimal side effects.
 		// If user requested force refresh, run repo update explicitly.
 		if force {
@@ -397,6 +479,146 @@ func (m AppModel) loadHelmPreviewsCmd(repoURL, chartName, version string) tea.Cm
 		_ = helmutil.WriteShowCache(m.params.RepoRoot, repoURL, chartName, version, helmutil.ShowKindValues, values)
 		return ahDetailMsg{readme: readme, values: values}
 	}
+}
+
+func (m AppModel) loadDepDetailPreviewsCmd(dep yamlchart.Dependency) tea.Cmd {
+	return func() tea.Msg {
+		id := yamlchart.DependencyID(dep)
+		ctx, cancel := context.WithTimeout(contextBG(), 60*time.Second)
+		defer cancel()
+
+		// 0) Instance-local vendor dir (if present): charts/<name>/values.yaml, charts/<name>/README.md.
+		// This is the most reliable and requires zero network.
+		if m.selected != nil {
+			readme, values, ok, err := readInstanceVendoredChartFiles(m.selected.Path, dep)
+			if err != nil {
+				return errMsg{err}
+			}
+			if ok {
+				if strings.TrimSpace(readme) != "" {
+					_ = helmutil.WriteShowCache(m.params.RepoRoot, dep.Repository, dep.Name, dep.Version, helmutil.ShowKindReadme, readme)
+				}
+				if strings.TrimSpace(values) != "" {
+					_ = helmutil.WriteShowCache(m.params.RepoRoot, dep.Repository, dep.Name, dep.Version, helmutil.ShowKindValues, values)
+				}
+				return depDetailPreviewsMsg{ID: id, readme: readme, defaultValues: values}
+			}
+		}
+
+		// 1) Offline: read from cached chart archive (.tgz) if present.
+		if tgzPath, ok := helmutil.FindCachedChartArchive(m.params.RepoRoot, dep.Repository, dep.Name, dep.Version); ok {
+			readme, values, err := helmutil.ReadChartArchiveFiles(tgzPath)
+			if err != nil {
+				return errMsg{err}
+			}
+			if strings.TrimSpace(readme) != "" {
+				_ = helmutil.WriteShowCache(m.params.RepoRoot, dep.Repository, dep.Name, dep.Version, helmutil.ShowKindReadme, readme)
+			}
+			if strings.TrimSpace(values) != "" {
+				_ = helmutil.WriteShowCache(m.params.RepoRoot, dep.Repository, dep.Name, dep.Version, helmutil.ShowKindValues, values)
+			}
+			if strings.TrimSpace(readme) != "" || strings.TrimSpace(values) != "" {
+				return depDetailPreviewsMsg{ID: id, readme: readme, defaultValues: values}
+			}
+		}
+
+		// 2) helmdex show cache (can be stale across versions of extraction logic, so keep after tgz reads).
+		if readme, ok, err := helmutil.ReadShowCache(m.params.RepoRoot, dep.Repository, dep.Name, dep.Version, helmutil.ShowKindReadme); err != nil {
+			return errMsg{err}
+		} else if ok {
+			if values, ok2, err := helmutil.ReadShowCache(m.params.RepoRoot, dep.Repository, dep.Name, dep.Version, helmutil.ShowKindValues); err != nil {
+				return errMsg{err}
+			} else if ok2 {
+				return depDetailPreviewsMsg{ID: id, readme: readme, defaultValues: values}
+			}
+		}
+
+		// 3) If missing: pull chart archive and read from it.
+		env := helmutil.EnvForRepoURL(m.params.RepoRoot, dep.Repository)
+		if tgzPath, err := helmutil.PullChartArchive(ctx, env, dep.Repository, dep.Name, dep.Version); err == nil {
+			readme, values, err2 := helmutil.ReadChartArchiveFiles(tgzPath)
+			if err2 == nil {
+				if strings.TrimSpace(readme) != "" {
+					_ = helmutil.WriteShowCache(m.params.RepoRoot, dep.Repository, dep.Name, dep.Version, helmutil.ShowKindReadme, readme)
+				}
+				if strings.TrimSpace(values) != "" {
+					_ = helmutil.WriteShowCache(m.params.RepoRoot, dep.Repository, dep.Name, dep.Version, helmutil.ShowKindValues, values)
+				}
+				return depDetailPreviewsMsg{ID: id, readme: readme, defaultValues: values}
+			}
+		} else {
+			// Preserve pull error for the final error message if we also fail helm show.
+		}
+
+		// 4) Last resort: helm show.
+		if strings.HasPrefix(dep.Repository, "oci://") {
+			ref := strings.TrimRight(dep.Repository, "/") + "/" + dep.Name
+			readme, err := helmutil.ShowReadme(ctx, env, ref, dep.Version)
+			if err != nil {
+				return errMsg{err}
+			}
+			values, err := helmutil.ShowValues(ctx, env, ref, dep.Version)
+			if err != nil {
+				return errMsg{err}
+			}
+			_ = helmutil.WriteShowCache(m.params.RepoRoot, dep.Repository, dep.Name, dep.Version, helmutil.ShowKindReadme, readme)
+			_ = helmutil.WriteShowCache(m.params.RepoRoot, dep.Repository, dep.Name, dep.Version, helmutil.ShowKindValues, values)
+			return depDetailPreviewsMsg{ID: id, readme: readme, defaultValues: values}
+		}
+		repoName := helmutil.RepoNameForURL(dep.Repository)
+		_ = helmutil.RepoAdd(ctx, env, repoName, dep.Repository)
+		ref := repoName + "/" + dep.Name
+		readme, err := helmutil.ShowReadmeBestEffort(ctx, env, ref, dep.Version, 24*time.Hour)
+		if err != nil {
+			return errMsg{err}
+		}
+		values, err := helmutil.ShowValuesBestEffort(ctx, env, ref, dep.Version, 24*time.Hour)
+		if err != nil {
+			return errMsg{err}
+		}
+		_ = helmutil.WriteShowCache(m.params.RepoRoot, dep.Repository, dep.Name, dep.Version, helmutil.ShowKindReadme, readme)
+		_ = helmutil.WriteShowCache(m.params.RepoRoot, dep.Repository, dep.Name, dep.Version, helmutil.ShowKindValues, values)
+		return depDetailPreviewsMsg{ID: id, readme: readme, defaultValues: values}
+	}
+}
+
+func (m AppModel) loadDepDetailVersionsCmd(dep yamlchart.Dependency) tea.Cmd {
+	return func() tea.Msg {
+		id := yamlchart.DependencyID(dep)
+		if strings.HasPrefix(dep.Repository, "oci://") {
+			return depDetailVersionsMsg{ID: id, Versions: nil}
+		}
+		ctx, cancel := context.WithTimeout(contextBG(), 60*time.Second)
+		defer cancel()
+		vs, err := helmutil.RepoChartVersions(ctx, m.params.RepoRoot, dep.Repository, dep.Name, 24*time.Hour)
+		if err != nil {
+			return errMsg{err}
+		}
+		return depDetailVersionsMsg{ID: id, Versions: vs}
+	}
+}
+
+func readInstanceVendoredChartFiles(instancePath string, dep yamlchart.Dependency) (readme string, values string, ok bool, err error) {
+	// Helm vendor layout: <instance>/charts/<dep.Name>/values.yaml
+	base := filepath.Join(instancePath, "charts", dep.Name)
+	st, err := os.Stat(base)
+	if err != nil || !st.IsDir() {
+		return "", "", false, nil
+	}
+	// Prefer values.yaml and README.md from the vendored chart dir.
+	readmePath := filepath.Join(base, "README.md")
+	valuesPath := filepath.Join(base, "values.yaml")
+
+	if b, err := os.ReadFile(readmePath); err == nil {
+		readme = string(b)
+	}
+	if b, err := os.ReadFile(valuesPath); err == nil {
+		values = string(b)
+	}
+	if strings.TrimSpace(readme) == "" && strings.TrimSpace(values) == "" {
+		return "", "", false, nil
+	}
+	return readme, values, true, nil
 }
 
 func (m AppModel) reloadInstancesCmd() tea.Cmd {
@@ -522,7 +744,10 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.ahResults.SetSize(msg.Width-2, msg.Height-7)
 		m.ahVersions.SetSize(msg.Width-2, msg.Height-7)
 		m.depEditVersions.SetSize(max(10, msg.Width-6), max(5, msg.Height-12))
+		m.depDetailVersions.SetSize(max(10, msg.Width-6), max(5, msg.Height-12))
 		m.palette.SetSize(min(70, msg.Width-4), min(14, msg.Height-6))
+		m.depDetailPreview.Width = max(10, msg.Width-6)
+		m.depDetailPreview.Height = max(5, msg.Height-14)
 		// Ensure the viewport never ends up with negative size.
 		if m.ahPreview.Height < 3 {
 			m.ahPreview.Height = 3
@@ -549,6 +774,7 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.depsList.SetItems(depsToItems(msg.chart.Dependencies))
 		m.addingDep = false
 		m.depEditOpen = false
+		m.depDetailOpen = false
 		m.depStep = depStepNone
 		m.modalErr = ""
 		m.statusErr = ""
@@ -560,6 +786,26 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.depsList.SetItems(depsToItems(msg.chart.Dependencies))
 		m.addingDep = false
 		m.depEditOpen = false
+		if m.depDetailOpen {
+			// Keep modal open and refresh its data using the updated chart.
+			for _, d := range msg.chart.Dependencies {
+				if d.Name == m.depDetailDep.Name {
+					m.depDetailDep = d
+					break
+				}
+			}
+			m.depDetailLoading = true
+			m.modalErr = ""
+			m.depDetailPreview.SetContent(m.renderDepDetailBody())
+			cmds := []tea.Cmd{m.beginBusy("Loading"), m.loadDepDetailPreviewsCmd(m.depDetailDep)}
+			if !strings.HasPrefix(m.depDetailDep.Repository, "oci://") {
+				cmds = append(cmds, m.loadDepDetailVersionsCmd(m.depDetailDep))
+			}
+			m.depStep = depStepNone
+			m.statusErr = ""
+			m.refreshInstanceView()
+			return m, tea.Batch(cmds...)
+		}
 		m.depStep = depStepNone
 		m.modalErr = ""
 		m.statusErr = ""
@@ -671,6 +917,44 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		return m, nil
+	case depDetailPreviewsMsg:
+		m.endBusy()
+		if !m.depDetailOpen {
+			return m, nil
+		}
+		if yamlchart.DependencyID(m.depDetailDep) != msg.ID {
+			return m, nil
+		}
+		m.depDetailReadme = msg.readme
+		m.depDetailDefaultValues = msg.defaultValues
+		m.depDetailLoading = false
+		m.depDetailPreview.SetContent(m.renderDepDetailBody())
+		return m, nil
+	case depDetailVersionsMsg:
+		m.endBusy()
+		if !m.depDetailOpen {
+			return m, nil
+		}
+		if yamlchart.DependencyID(m.depDetailDep) != msg.ID {
+			return m, nil
+		}
+		m.depDetailVersionsData = msg.Versions
+		items := make([]list.Item, 0, len(msg.Versions))
+		for _, v := range msg.Versions {
+			items = append(items, versionItem(v))
+		}
+		m.depDetailVersions.SetItems(items)
+		// Keep selection on current version.
+		m.depDetailVersions.Select(0)
+		for i := range msg.Versions {
+			if strings.TrimSpace(msg.Versions[i]) == strings.TrimSpace(m.depDetailDep.Version) {
+				m.depDetailVersions.Select(i)
+				break
+			}
+		}
+		m.depDetailLoading = false
+		m.depDetailPreview.SetContent(m.renderDepDetailBody())
+		return m, nil
 	case noopMsg:
 		m.endBusy()
 		return m, nil
@@ -678,6 +962,12 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.endBusy()
 		m.statusErr = msg.err.Error()
 		m.statusErrAt = time.Now()
+		if m.depDetailOpen {
+			m.modalErr = msg.err.Error()
+			m.depDetailLoading = false
+			m.depDetailPreview.SetContent(m.renderDepDetailBody())
+			return m, nil
+		}
 		// Prefer keeping the modal open when errors happen during add-dep flows.
 		if m.addingDep {
 			m.modalErr = msg.err.Error()
@@ -699,6 +989,10 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case tea.KeyMsg:
+		// Dep detail modal has the highest priority while open.
+		if m.depDetailOpen {
+			return m.depDetailUpdate(msg)
+		}
 		// Dep version editor modal has priority over global shortcuts.
 		if m.depEditOpen {
 			return m.depEditUpdate(msg)
@@ -1087,6 +1381,12 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.activeTab == 1 && !m.addingDep {
 			var cmd tea.Cmd
 			m.depsList, cmd = m.depsList.Update(msg)
+			if km, ok := msg.(tea.KeyMsg); ok && km.Type == tea.KeyEnter {
+				// When the deps list is filtering, Enter applies the filter.
+				if m.depsList.FilterState() != list.Filtering {
+					return m.openDepDetailSelected()
+				}
+			}
 			return m, cmd
 		}
 		var cmd tea.Cmd
@@ -1193,6 +1493,9 @@ func (m AppModel) View() string {
 	} else if m.paletteOpen {
 		// Palette currently renders as a modal stacked above the body.
 		body = renderWithModal(m, m.currentBodyView(), m.palette.View())
+	} else if m.depDetailOpen {
+		// Dependency detail modal should be full-screen (like dep version editor).
+		body = renderDepDetailModal(m)
 	} else if m.depEditOpen {
 		// The dep version editor should be unmissable. Rendering it as a stacked
 		// block above a long instance view can scroll it off-screen in AltScreen.
@@ -1284,6 +1587,9 @@ func (m AppModel) contextHelpLine() string {
 	if m.screen == ScreenInstance {
 		if m.addingDep {
 			return "esc close • enter select • ←/→ tabs • a add"
+		}
+		if m.depDetailOpen {
+			return "esc close • ←/→ tabs • / filter • enter apply"
 		}
 		if m.activeTab == 1 {
 			return "←/→ tabs • d remove • v version • u upgrade • a add dep • m commands • esc back • q quit"
@@ -1474,6 +1780,15 @@ func (m AppModel) inputCapturesKeys() bool {
 			if m.arbRepo.Focused() || m.arbName.Focused() || m.arbVersion.Focused() || m.arbAlias.Focused() {
 				return true
 			}
+		}
+	}
+	if m.depDetailOpen {
+		if m.depDetailMode == depEditModeManual && m.depDetailVersionInput.Focused() {
+			return true
+		}
+		if m.depDetailMode == depEditModeList && m.depDetailVersions.FilterState() == list.Filtering {
+			return true
+		}
 	}
 	if m.depEditOpen {
 		if m.depEditMode == depEditModeManual && m.depEditVersionInput.Focused() {
@@ -1492,7 +1807,6 @@ func (m AppModel) inputCapturesKeys() bool {
 	}
 	if m.depSource.FilterState() == list.Filtering {
 		return true
-	}
 	}
 	if m.instList.FilterState() == list.Filtering {
 		return true
@@ -1604,6 +1918,231 @@ func (m AppModel) depEditUpdate(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(cmd, m.beginBusy("Validating"), m.validateDependencyVersionCmd(dep))
 	}
 	return m, cmd
+}
+
+func (m AppModel) openDepDetailSelected() (tea.Model, tea.Cmd) {
+	it := m.depsList.SelectedItem()
+	if it == nil {
+		return m, nil
+	}
+	di, ok := it.(depItem)
+	if !ok {
+		return m, func() tea.Msg { return errMsg{fmt.Errorf("unexpected dependency item type")} }
+	}
+	dep := yamlchart.Dependency(di)
+
+	m.depDetailOpen = true
+	m.depDetailDep = dep
+	m.depDetailTab = 0
+	m.depDetailLoading = true
+	m.modalErr = ""
+	m.depDetailReadme = ""
+	m.depDetailDefaultValues = ""
+	m.depDetailPendingVersion = ""
+	m.depDetailVersionsData = nil
+	m.depDetailVersions.SetItems(nil)
+	m.depDetailPreview.SetContent(m.renderDepDetailBody())
+
+	// Decide mode.
+	if strings.HasPrefix(dep.Repository, "oci://") {
+		m.depDetailMode = depEditModeManual
+		m.depDetailVersionInput.SetValue(dep.Version)
+		// Only focus when user opens the Versions tab.
+		m.depDetailVersionInput.Blur()
+	} else {
+		m.depDetailMode = depEditModeList
+		m.depDetailVersionInput.Blur()
+	}
+
+	// Kick off loads.
+	cmds := []tea.Cmd{m.beginBusy("Loading"), m.loadDepDetailPreviewsCmd(dep)}
+	if m.depDetailMode == depEditModeList {
+		cmds = append(cmds, m.loadDepDetailVersionsCmd(dep))
+	}
+	return m, tea.Batch(cmds...)
+}
+
+func (m AppModel) depDetailUpdate(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	// Close.
+	if msg.Type == tea.KeyEsc {
+		if m.depDetailMode == depEditModeList {
+			fs := m.depDetailVersions.FilterState()
+			if fs == list.Filtering || fs == list.FilterApplied {
+				m.depDetailVersions.ResetFilter()
+				return m, nil
+			}
+		}
+		m.depDetailOpen = false
+		m.depDetailLoading = false
+		m.modalErr = ""
+		m.depDetailDep = yamlchart.Dependency{}
+		m.depDetailVersionInput.Blur()
+		return m, nil
+	}
+
+	// Switch tabs.
+	if key.Matches(msg, m.keys.TabLeft) {
+		m.depDetailTab = (m.depDetailTab - 1 + len(m.depDetailTabNames)) % len(m.depDetailTabNames)
+		if m.depDetailTab == 3 && m.depDetailMode == depEditModeManual {
+			m.depDetailVersionInput.Focus()
+		} else {
+			m.depDetailVersionInput.Blur()
+		}
+		m.depDetailPreview.SetContent(m.renderDepDetailBody())
+		return m, nil
+	}
+	if key.Matches(msg, m.keys.TabRight) {
+		m.depDetailTab = (m.depDetailTab + 1) % len(m.depDetailTabNames)
+		if m.depDetailTab == 3 && m.depDetailMode == depEditModeManual {
+			m.depDetailVersionInput.Focus()
+		} else {
+			m.depDetailVersionInput.Blur()
+		}
+		m.depDetailPreview.SetContent(m.renderDepDetailBody())
+		return m, nil
+	}
+
+	// Tab-specific interaction.
+	// Versions tab index is last.
+	if m.depDetailTab == 3 {
+		if m.depDetailMode == depEditModeManual {
+			var cmd tea.Cmd
+			m.depDetailVersionInput, cmd = m.depDetailVersionInput.Update(msg)
+			if msg.Type == tea.KeyEnter {
+				v := strings.TrimSpace(m.depDetailVersionInput.Value())
+				if v == "" {
+					m.modalErr = "version is required"
+					return m, nil
+				}
+				dep := m.depDetailDep
+				dep.Version = v
+				m.modalErr = ""
+				m.depDetailPendingVersion = v
+				m.depDetailVersionInput.Blur()
+				return m, tea.Batch(m.beginBusy("Validating"), m.validateDependencyVersionCmd(dep))
+			}
+			return m, cmd
+		}
+
+		var cmd tea.Cmd
+		m.depDetailVersions, cmd = m.depDetailVersions.Update(msg)
+		if msg.Type == tea.KeyEnter {
+			if m.depDetailVersions.FilterState() == list.Filtering {
+				return m, cmd
+			}
+			it := m.depDetailVersions.SelectedItem()
+			if it == nil {
+				return m, cmd
+			}
+			vi, ok := it.(versionItem)
+			if !ok {
+				return m, func() tea.Msg { return errMsg{fmt.Errorf("unexpected version item type")} }
+			}
+			v := strings.TrimSpace(string(vi))
+			dep := m.depDetailDep
+			dep.Version = v
+			m.modalErr = ""
+			m.depDetailPendingVersion = v
+			return m, tea.Batch(cmd, m.beginBusy("Validating"), m.validateDependencyVersionCmd(dep))
+		}
+		return m, cmd
+	}
+
+	// Non-Versions tabs: allow scrolling in the preview viewport.
+	var cmd tea.Cmd
+	m.depDetailPreview, cmd = m.depDetailPreview.Update(msg)
+	return m, cmd
+}
+
+func (m AppModel) renderDepDetailBody() string {
+	dep := m.depDetailDep
+	if dep.Name == "" {
+		return "No dependency selected"
+	}
+	if m.depDetailLoading {
+		return "Loading…"
+	}
+	switch m.depDetailTab {
+	case 0:
+		if m.depDetailReadme == "" {
+			return "README not loaded."
+		}
+		return m.depDetailReadme
+	case 1:
+		if m.depDetailDefaultValues == "" {
+			return "Default values not loaded."
+		}
+		return m.depDetailDefaultValues
+	case 2:
+		return m.renderDepLocalValuesBody(dep)
+	case 3:
+		// Versions are rendered by the modal renderer.
+		return ""
+	default:
+		return ""
+	}
+}
+
+func (m AppModel) renderDepLocalValuesBody(dep yamlchart.Dependency) string {
+	lines := []string{}
+	// Left: resolved preset files for this dep.
+	lines = append(lines, "Resolved presets (cache):")
+	if m.params.Config == nil || m.chart == nil {
+		lines = append(lines, styleMuted.Render("(no config/chart loaded; cannot resolve presets)"))
+	} else {
+		res, err := presets.Resolve(m.params.RepoRoot, *m.params.Config, m.chart.Dependencies)
+		if err != nil {
+			lines = append(lines, styleErrStrong.Render("preset resolution error: "+err.Error()))
+		} else {
+			id := yamlchart.DependencyID(dep)
+			rd, ok := res.ByID[id]
+			if !ok {
+				lines = append(lines, styleMuted.Render("(no preset files found for this dependency)"))
+			} else {
+				if rd.DefaultPath != "" {
+					lines = append(lines, "- default:  "+rd.DefaultPath)
+				}
+				if rd.PlatformPath != "" {
+					lines = append(lines, "- platform: "+rd.PlatformPath)
+				}
+				if len(rd.SetPaths) > 0 {
+					setNames := make([]string, 0, len(rd.SetPaths))
+					for s := range rd.SetPaths {
+						setNames = append(setNames, s)
+					}
+					sort.Strings(setNames)
+					for _, s := range setNames {
+						lines = append(lines, fmt.Sprintf("- set %s: %s", s, rd.SetPaths[s]))
+					}
+				}
+			}
+		}
+	}
+
+	lines = append(lines, "", "Instance-local values files:")
+	if m.selected == nil {
+		lines = append(lines, styleMuted.Render("(no instance selected)"))
+		return strings.Join(lines, "\n")
+	}
+	inst := *m.selected
+	paths := []string{
+		"values.default.yaml",
+		"values.platform.yaml",
+		"values.instance.yaml",
+		"values.yaml",
+	}
+	for _, rel := range paths {
+		p := filepath.Join(inst.Path, rel)
+		if _, err := os.Stat(p); err == nil {
+			lines = append(lines, "- "+rel)
+		}
+	}
+	setFiles, _ := filepath.Glob(filepath.Join(inst.Path, "values.set.*.yaml"))
+	sort.Strings(setFiles)
+	for _, p := range setFiles {
+		lines = append(lines, "- "+filepath.Base(p))
+	}
+	return strings.Join(lines, "\n")
 }
 
 func (m AppModel) validateDependencyVersionCmd(dep yamlchart.Dependency) tea.Cmd {

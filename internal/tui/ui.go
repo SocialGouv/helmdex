@@ -153,3 +153,55 @@ func renderDepEditModal(m AppModel) string {
 
 	return box.Render(header + "\n\n" + body)
 }
+
+func renderDepDetailModal(m AppModel) string {
+	box := lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).Padding(1, 2)
+	if !m.depDetailOpen {
+		return ""
+	}
+	dep := m.depDetailDep
+	depLabel := ""
+	if strings.TrimSpace(dep.Name) != "" {
+		depLabel = fmt.Sprintf("%s @ %s", dep.Name, dep.Repository)
+		if strings.TrimSpace(dep.Version) != "" {
+			depLabel += "  (" + dep.Version + ")"
+		}
+	}
+
+	header := lipgloss.NewStyle().Bold(true).Render(withIcon(iconDeps, "Dependency"))
+	if depLabel != "" {
+		header += "\n" + styleMuted.Render(depLabel)
+	}
+	if m.modalErr != "" {
+		header += "\n" + styleErrStrong.Render(withIcon(iconErr, "Error:")+" "+m.modalErr)
+	}
+
+	// Tabs
+	tabsLine := renderTabs(m.depDetailTabNames, m.depDetailTab)
+
+	var body string
+	// Versions tab is last.
+	if m.depDetailTab == 3 {
+		switch m.depDetailMode {
+		case depEditModeManual:
+			body = "Enter an exact version:\n\n" + m.depDetailVersionInput.View() + "\n\n(enter: apply • esc: cancel)"
+		default:
+			if m.depDetailLoading {
+				body = styleMuted.Render("Loading versions…")
+			} else if len(m.depDetailVersionsData) == 0 {
+				body = styleMuted.Render("No versions found.")
+			} else {
+				body = m.depDetailVersions.View() + "\n" + styleMuted.Render(withIcon(iconFilter, "/: filter")+" • enter: apply • esc: cancel")
+			}
+		}
+	} else {
+		if m.depDetailLoading {
+			body = styleMuted.Render("Loading…")
+		} else {
+			body = m.depDetailPreview.View()
+		}
+	}
+
+	footer := styleMuted.Render("←/→ tabs • esc close")
+	return box.Render(header + "\n\n" + tabsLine + "\n\n" + body + "\n\n" + footer)
+}
