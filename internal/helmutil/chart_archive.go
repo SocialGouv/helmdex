@@ -15,28 +15,41 @@ import (
 // (a .tgz produced by `helm pull`). It returns empty strings when the files
 // aren't present.
 func ReadChartArchiveFiles(tgzPath string) (readme string, values string, err error) {
+	readme, values, _, err = ReadChartArchiveFilesWithSchema(tgzPath)
+	return readme, values, err
+}
+
+// ReadChartArchiveFilesWithSchema reads README, values.yaml, and values.schema.json
+// from a Helm chart archive (a .tgz produced by `helm pull`).
+//
+// It prefers top-level chart files (<chartname>/...) and will not accidentally
+// return a subchart's files from <chartname>/charts/<subchart>/...
+//
+// It returns empty strings when files aren't present.
+func ReadChartArchiveFilesWithSchema(tgzPath string) (readme string, values string, schema string, err error) {
 	f, err := os.Open(tgzPath)
 	if err != nil {
-		return "", "", err
+		return "", "", "", err
 	}
 	defer f.Close()
 
 	gz, err := gzip.NewReader(f)
 	if err != nil {
-		return "", "", fmt.Errorf("gzip reader: %w", err)
+		return "", "", "", fmt.Errorf("gzip reader: %w", err)
 	}
 	defer gz.Close()
 
 	tr := tar.NewReader(gz)
 	var readmeFallback string
 	var valuesFallback string
+	var schemaFallback string
 	for {
 		h, err := tr.Next()
 		if err == io.EOF {
 			break
 		}
 		if err != nil {
-			return "", "", fmt.Errorf("tar read: %w", err)
+			return "", "", "", fmt.Errorf("tar read: %w", err)
 		}
 		name := filepath.ToSlash(strings.TrimLeft(h.Name, "/"))
 		if strings.HasSuffix(name, "/") {
@@ -50,7 +63,8 @@ func ReadChartArchiveFiles(tgzPath string) (readme string, values string, err er
 		// (e.g. bitnami/common). Those must NOT override the parent chart's values.
 		isReadme := strings.EqualFold(base, "README.md") || strings.EqualFold(base, "readme.md")
 		isValues := strings.EqualFold(base, "values.yaml")
-		if !isReadme && !isValues {
+		isSchema := strings.EqualFold(base, "values.schema.json")
+		if !isReadme && !isValues && !isSchema {
 			continue
 		}
 		b, _ := io.ReadAll(tr)
@@ -60,8 +74,10 @@ func ReadChartArchiveFiles(tgzPath string) (readme string, values string, err er
 		if depth == 2 {
 			if isReadme {
 				readme = content
-			} else {
+			} else if isValues {
 				values = content
+			} else {
+				schema = content
 			}
 		} else {
 			// Keep as a fallback only.
@@ -71,9 +87,12 @@ func ReadChartArchiveFiles(tgzPath string) (readme string, values string, err er
 			if isValues && valuesFallback == "" {
 				valuesFallback = content
 			}
+			if isSchema && schemaFallback == "" {
+				schemaFallback = content
+			}
 		}
 
-		if readme != "" && values != "" {
+		if readme != "" && values != "" && schema != "" {
 			break
 		}
 	}
@@ -83,7 +102,10 @@ func ReadChartArchiveFiles(tgzPath string) (readme string, values string, err er
 	if values == "" {
 		values = valuesFallback
 	}
-	return readme, values, nil
+	if schema == "" {
+		schema = schemaFallback
+	}
+	return readme, values, schema, nil
 }
 
 // FindCachedChartArchive tries to locate a previously-downloaded chart archive

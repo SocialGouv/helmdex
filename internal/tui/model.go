@@ -52,10 +52,10 @@ type AppModel struct {
 	newName  textinput.Model
 
 	// instance detail
-	selected *instances.Instance
+	selected  *instances.Instance
 	activeTab int
 	tabNames  []string
-	content  viewport.Model
+	content   viewport.Model
 
 	// values tab (file list + preview modal)
 	valuesList        list.Model
@@ -77,25 +77,25 @@ type AppModel struct {
 	modalErr  string
 
 	// catalog picker
-	catalogList list.Model
+	catalogList    list.Model
 	catalogEntries []catalog.Entry
 
 	// artifacthub picker
-	ahClient *artifacthub.Client
-	ahQuery  textinput.Model
-	ahResults list.Model
-	ahResultsData []artifacthub.PackageSummary
-	ahVersions list.Model
-	ahVersionsData []artifacthub.Version
-	ahSelected *artifacthub.PackageSummary
+	ahClient          *artifacthub.Client
+	ahQuery           textinput.Model
+	ahResults         list.Model
+	ahResultsData     []artifacthub.PackageSummary
+	ahVersions        list.Model
+	ahVersionsData    []artifacthub.Version
+	ahSelected        *artifacthub.PackageSummary
 	ahSelectedVersion string
-	ahDetailTab int
-	ahDetailTabNames []string
-	ahReadme string
-	ahValues string
-	ahLoading bool
-	ahPreview viewport.Model
-	ahForceRefresh bool
+	ahDetailTab       int
+	ahDetailTabNames  []string
+	ahReadme          string
+	ahValues          string
+	ahLoading         bool
+	ahPreview         viewport.Model
+	ahForceRefresh    bool
 
 	// global loading indicator (status bar spinner)
 	busy      int
@@ -103,9 +103,9 @@ type AppModel struct {
 	spin      spinner.Model
 
 	// dependency version editor (Deps tab)
-	depEditOpen         bool
-	depEditDep          yamlchart.Dependency
-	depEditMode         depEditMode
+	depEditOpen bool
+	depEditDep  yamlchart.Dependency
+	depEditMode depEditMode
 	// depEditLoading indicates a background refresh is running; the list may still
 	// be usable if we have cached versions.
 	depEditLoading      bool
@@ -114,38 +114,78 @@ type AppModel struct {
 	depEditVersionInput textinput.Model
 
 	// dependency detail modal (Deps tab)
-	depDetailOpen           bool
-	depDetailDep            yamlchart.Dependency
-	depDetailTab            int
-	depDetailTabNames       []string
-	depDetailLoading        bool
-	depDetailMode           depEditMode // reuse enum: list vs manual
+	depDetailOpen     bool
+	depDetailDep      yamlchart.Dependency
+	depDetailTab      int
+	depDetailTabNames []string
+	depDetailLoading  bool
+	depDetailMode     depEditMode // reuse enum: list vs manual
 	// depDetailVersionsLoading is specific to the Versions tab, so other tabs can
 	// remain interactive while versions refreshes.
 	depDetailVersionsLoading bool
-	depDetailVersions       list.Model
-	depDetailVersionsData   []string
-	depDetailVersionInput   textinput.Model // OCI/manual fallback
-	depDetailReadme         string
-	depDetailDefaultValues  string
-	depDetailPreview        viewport.Model
-	depDetailPendingVersion string
+	depDetailVersions        list.Model
+	depDetailVersionsData    []string
+	depDetailVersionInput    textinput.Model // OCI/manual fallback
+	depDetailReadme          string
+	depDetailDefaultValues   string
+	depDetailSchemaRaw       string
+	depDetailPreview         viewport.Model
+	depDetailPendingVersion  string
+	depConfigure             depConfigureModel
 
 	// versions refresh (disk cache + periodic background refresh)
 	versionsWatched  map[string]versionsWatch
 	versionsInFlight map[string]bool
 
 	// arbitrary
-	arbRepo textinput.Model
-	arbName textinput.Model
+	arbRepo    textinput.Model
+	arbName    textinput.Model
 	arbVersion textinput.Model
-	arbAlias textinput.Model
-	arbFocus int
+	arbAlias   textinput.Model
+	arbFocus   int
 
 	width  int
 	height int
 
 	keys keyMap
+}
+
+// Instance tabs (ScreenInstance).
+const (
+	InstanceTabDeps = iota
+	InstanceTabOverview
+	InstanceTabValues
+	InstanceTabPresets
+)
+
+func instanceTabNames() []string {
+	// Centralized tab order definition.
+	return []string{
+		withIcon(iconDeps, "Dependencies"),
+		withIcon(iconOverview, "Overview"),
+		withIcon(iconValues, "Values"),
+		withIcon(iconPresets, "Presets"),
+	}
+}
+
+// Dependency detail modal tabs (Deps tab -> enter on a dependency).
+const (
+	DepDetailTabConfigure = iota
+	DepDetailTabReadme
+	DepDetailTabDefault
+	DepDetailTabLocal
+	DepDetailTabVersions
+)
+
+func depDetailTabNames() []string {
+	// Centralized tab order definition.
+	return []string{
+		withIcon(iconSchema, "Configure"),
+		withIcon(iconReadme, "README"),
+		withIcon(iconAHValues, "Default"),
+		withIcon(iconValues, "Local"),
+		withIcon(iconVersions, "Versions"),
+	}
 }
 
 type depEditMode int
@@ -181,19 +221,19 @@ const (
 )
 
 type keyMap struct {
-	Quit   key.Binding
-	Back   key.Binding
-	Open   key.Binding
-	Reload key.Binding
-	Regen  key.Binding
-	TabLeft  key.Binding
-	TabRight key.Binding
+	Quit        key.Binding
+	Back        key.Binding
+	Open        key.Binding
+	Reload      key.Binding
+	Regen       key.Binding
+	TabLeft     key.Binding
+	TabRight    key.Binding
 	NewInstance key.Binding
-	AddDep key.Binding
-	Actions key.Binding // command palette
-	Help    key.Binding
-	EditValues key.Binding
-	Apply  key.Binding
+	AddDep      key.Binding
+	Actions     key.Binding // command palette
+	Help        key.Binding
+	EditValues  key.Binding
+	Apply       key.Binding
 }
 
 func (k keyMap) ShortHelp() []key.Binding {
@@ -206,19 +246,19 @@ func (k keyMap) FullHelp() [][]key.Binding {
 
 func NewAppModel(p Params) AppModel {
 	keys := keyMap{
-		Quit: key.NewBinding(key.WithKeys("q", "ctrl+c"), key.WithHelp("q", "quit")),
-		Back: key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "back")),
-		Open: key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "open")),
-		Reload: key.NewBinding(key.WithKeys("ctrl+r", "f5"), key.WithHelp("ctrl+r", "reload")),
-		Regen:  key.NewBinding(key.WithKeys("r"), key.WithHelp("r", "regen values")),
-		TabLeft:  key.NewBinding(key.WithKeys("left", "h"), key.WithHelp("←/h", "prev tab")),
-		TabRight: key.NewBinding(key.WithKeys("right", "l"), key.WithHelp("→/l", "next tab")),
+		Quit:        key.NewBinding(key.WithKeys("q", "ctrl+c"), key.WithHelp("q", "quit")),
+		Back:        key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "back")),
+		Open:        key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "open")),
+		Reload:      key.NewBinding(key.WithKeys("ctrl+r", "f5"), key.WithHelp("ctrl+r", "reload")),
+		Regen:       key.NewBinding(key.WithKeys("r"), key.WithHelp("r", "regen values")),
+		TabLeft:     key.NewBinding(key.WithKeys("left", "h"), key.WithHelp("←/h", "prev tab")),
+		TabRight:    key.NewBinding(key.WithKeys("right", "l"), key.WithHelp("→/l", "next tab")),
 		NewInstance: key.NewBinding(key.WithKeys("n"), key.WithHelp("n", "new instance")),
-		AddDep: key.NewBinding(key.WithKeys("a"), key.WithHelp("a", "add dep")),
-		EditValues: key.NewBinding(key.WithKeys("e"), key.WithHelp("e", "edit values")),
-		Apply: key.NewBinding(key.WithKeys("p"), key.WithHelp("p", "apply")),
-		Actions: key.NewBinding(key.WithKeys("m"), key.WithHelp("m", "commands")),
-		Help:    key.NewBinding(key.WithKeys("?"), key.WithHelp("?", "help")),
+		AddDep:      key.NewBinding(key.WithKeys("a"), key.WithHelp("a", "add dep")),
+		EditValues:  key.NewBinding(key.WithKeys("e"), key.WithHelp("e", "edit values")),
+		Apply:       key.NewBinding(key.WithKeys("p"), key.WithHelp("p", "apply")),
+		Actions:     key.NewBinding(key.WithKeys("m"), key.WithHelp("m", "commands")),
+		Help:        key.NewBinding(key.WithKeys("?"), key.WithHelp("?", "help")),
 	}
 
 	l := list.New([]list.Item{}, list.NewDefaultDelegate(), 0, 0)
@@ -286,28 +326,26 @@ func NewAppModel(p Params) AppModel {
 	depDetailVerInput.Placeholder = "exact version"
 	depDetailVerInput.Prompt = "version> "
 
-	arbRepo := textinput.New(); arbRepo.Placeholder = "repo URL (https://... or oci://...)"; arbRepo.Prompt = "repo> "
-	arbName := textinput.New(); arbName.Placeholder = "chart name"; arbName.Prompt = "name> "
-	arbVersion := textinput.New(); arbVersion.Placeholder = "exact version"; arbVersion.Prompt = "version> "
-	arbAlias := textinput.New(); arbAlias.Placeholder = "alias (optional)"; arbAlias.Prompt = "alias> "
+	arbRepo := textinput.New()
+	arbRepo.Placeholder = "repo URL (https://... or oci://...)"
+	arbRepo.Prompt = "repo> "
+	arbName := textinput.New()
+	arbName.Placeholder = "chart name"
+	arbName.Prompt = "name> "
+	arbVersion := textinput.New()
+	arbVersion.Placeholder = "exact version"
+	arbVersion.Prompt = "version> "
+	arbAlias := textinput.New()
+	arbAlias.Placeholder = "alias (optional)"
+	arbAlias.Prompt = "alias> "
 
-	tabNames := []string{
-		withIcon(iconOverview, "Overview"),
-		withIcon(iconDeps, "Deps"),
-		withIcon(iconValues, "Values"),
-		withIcon(iconPresets, "Presets"),
-	}
+	tabNames := instanceTabNames()
 	ahDetailTabNames := []string{
 		withIcon(iconReadme, "README"),
 		withIcon(iconAHValues, "Values"),
 		withIcon(iconVersions, "Versions"),
 	}
-	depDetailTabNames := []string{
-		withIcon(iconReadme, "README"),
-		withIcon(iconAHValues, "Default"),
-		withIcon(iconValues, "Local"),
-		withIcon(iconVersions, "Versions"),
-	}
+	depDetailTabNames := depDetailTabNames()
 	vp := viewport.New(0, 0)
 	ahvp := viewport.New(0, 0)
 	depDetailVP := viewport.New(0, 0)
@@ -319,39 +357,39 @@ func NewAppModel(p Params) AppModel {
 	sp.Style = lipgloss.NewStyle().Faint(true)
 
 	m := AppModel{
-		params: p,
-		screen: p.StartScreen,
-		instList: l,
-		depsList: deps,
-		depSource: src,
-		catalogList: catList,
-		ahClient: artifacthub.NewClient(),
-		ahQuery: q,
-		ahResults: ahRes,
-		ahVersions: ahVers,
-		depEditVersions: depVers,
-		depEditVersionInput: depVerInput,
-		ahDetailTabNames: ahDetailTabNames,
-		ahPreview: ahvp,
-		depDetailTabNames: depDetailTabNames,
-		depDetailVersions: depDetailVersions,
+		params:                p,
+		screen:                p.StartScreen,
+		instList:              l,
+		depsList:              deps,
+		depSource:             src,
+		catalogList:           catList,
+		ahClient:              artifacthub.NewClient(),
+		ahQuery:               q,
+		ahResults:             ahRes,
+		ahVersions:            ahVers,
+		depEditVersions:       depVers,
+		depEditVersionInput:   depVerInput,
+		ahDetailTabNames:      ahDetailTabNames,
+		ahPreview:             ahvp,
+		depDetailTabNames:     depDetailTabNames,
+		depDetailVersions:     depDetailVersions,
 		depDetailVersionInput: depDetailVerInput,
-		depDetailPreview: depDetailVP,
-		spin: sp,
-		newName: newName,
-		arbRepo: arbRepo,
-		arbName: arbName,
-		arbVersion: arbVersion,
-		arbAlias: arbAlias,
-		activeTab: 0,
-		tabNames:  tabNames,
-		content: vp,
-		valuesList: vals,
-		valuesPreview: valsPrev,
-		palette: newPaletteModel(),
-		keys: keys,
-		versionsWatched:  map[string]versionsWatch{},
-		versionsInFlight: map[string]bool{},
+		depDetailPreview:      depDetailVP,
+		spin:                  sp,
+		newName:               newName,
+		arbRepo:               arbRepo,
+		arbName:               arbName,
+		arbVersion:            arbVersion,
+		arbAlias:              arbAlias,
+		activeTab:             0,
+		tabNames:              tabNames,
+		content:               vp,
+		valuesList:            vals,
+		valuesPreview:         valsPrev,
+		palette:               newPaletteModel(),
+		keys:                  keys,
+		versionsWatched:       map[string]versionsWatch{},
+		versionsInFlight:      map[string]bool{},
 	}
 
 	return m
@@ -392,6 +430,7 @@ type depDetailPreviewsMsg struct {
 	ID            yamlchart.DepID
 	readme        string
 	defaultValues string
+	schema        string
 }
 
 // depDetailVersionsMsg carries the available versions list for the selected dependency.
@@ -414,7 +453,7 @@ const (
 )
 
 type versionsRefreshResultMsg struct {
-	key      string
+	key       string
 	repoURL   string
 	chartName string
 	depID     yamlchart.DepID
@@ -557,13 +596,13 @@ func (m *AppModel) refreshVersionsCmd(dep yamlchart.Dependency, target versionsT
 			_, _ = helmutil.WriteVersionsCache(m.params.RepoRoot, dep.Repository, dep.Name, vs)
 		}
 		return versionsRefreshResultMsg{
-			key: key,
-			repoURL: dep.Repository,
+			key:       key,
+			repoURL:   dep.Repository,
 			chartName: dep.Name,
-			depID: yamlchart.DependencyID(dep),
-			target: target,
-			versions: vs,
-			err: err,
+			depID:     yamlchart.DependencyID(dep),
+			target:    target,
+			versions:  vs,
+			err:       err,
 		}
 	}
 }
@@ -694,10 +733,10 @@ func (m AppModel) loadDepDetailPreviewsCmd(dep yamlchart.Dependency) tea.Cmd {
 		ctx, cancel := context.WithTimeout(contextBG(), 60*time.Second)
 		defer cancel()
 
-		// 0) Instance-local vendor dir (if present): charts/<name>/values.yaml, charts/<name>/README.md.
+		// 0) Instance-local vendor dir (if present): charts/<name>/values.yaml, charts/<name>/README.md, charts/<name>/values.schema.json.
 		// This is the most reliable and requires zero network.
 		if m.selected != nil {
-			readme, values, ok, err := readInstanceVendoredChartFiles(m.selected.Path, dep)
+			readme, values, schema, ok, err := readInstanceVendoredChartFiles(m.selected.Path, dep)
 			if err != nil {
 				return errMsg{err}
 			}
@@ -708,13 +747,16 @@ func (m AppModel) loadDepDetailPreviewsCmd(dep yamlchart.Dependency) tea.Cmd {
 				if strings.TrimSpace(values) != "" {
 					_ = helmutil.WriteShowCache(m.params.RepoRoot, dep.Repository, dep.Name, dep.Version, helmutil.ShowKindValues, values)
 				}
-				return depDetailPreviewsMsg{ID: id, readme: readme, defaultValues: values}
+				if strings.TrimSpace(schema) != "" {
+					_ = helmutil.WriteShowCache(m.params.RepoRoot, dep.Repository, dep.Name, dep.Version, helmutil.ShowKindSchema, schema)
+				}
+				return depDetailPreviewsMsg{ID: id, readme: readme, defaultValues: values, schema: schema}
 			}
 		}
 
 		// 1) Offline: read from cached chart archive (.tgz) if present.
 		if tgzPath, ok := helmutil.FindCachedChartArchive(m.params.RepoRoot, dep.Repository, dep.Name, dep.Version); ok {
-			readme, values, err := helmutil.ReadChartArchiveFiles(tgzPath)
+			readme, values, schema, err := helmutil.ReadChartArchiveFilesWithSchema(tgzPath)
 			if err != nil {
 				return errMsg{err}
 			}
@@ -724,26 +766,35 @@ func (m AppModel) loadDepDetailPreviewsCmd(dep yamlchart.Dependency) tea.Cmd {
 			if strings.TrimSpace(values) != "" {
 				_ = helmutil.WriteShowCache(m.params.RepoRoot, dep.Repository, dep.Name, dep.Version, helmutil.ShowKindValues, values)
 			}
-			if strings.TrimSpace(readme) != "" || strings.TrimSpace(values) != "" {
-				return depDetailPreviewsMsg{ID: id, readme: readme, defaultValues: values}
+			if strings.TrimSpace(schema) != "" {
+				_ = helmutil.WriteShowCache(m.params.RepoRoot, dep.Repository, dep.Name, dep.Version, helmutil.ShowKindSchema, schema)
+			}
+			if strings.TrimSpace(readme) != "" || strings.TrimSpace(values) != "" || strings.TrimSpace(schema) != "" {
+				return depDetailPreviewsMsg{ID: id, readme: readme, defaultValues: values, schema: schema}
 			}
 		}
 
 		// 2) helmdex show cache (can be stale across versions of extraction logic, so keep after tgz reads).
-		if readme, ok, err := helmutil.ReadShowCache(m.params.RepoRoot, dep.Repository, dep.Name, dep.Version, helmutil.ShowKindReadme); err != nil {
+		readme, okReadme, err := helmutil.ReadShowCache(m.params.RepoRoot, dep.Repository, dep.Name, dep.Version, helmutil.ShowKindReadme)
+		if err != nil {
 			return errMsg{err}
-		} else if ok {
-			if values, ok2, err := helmutil.ReadShowCache(m.params.RepoRoot, dep.Repository, dep.Name, dep.Version, helmutil.ShowKindValues); err != nil {
-				return errMsg{err}
-			} else if ok2 {
-				return depDetailPreviewsMsg{ID: id, readme: readme, defaultValues: values}
-			}
+		}
+		values, okValues, err := helmutil.ReadShowCache(m.params.RepoRoot, dep.Repository, dep.Name, dep.Version, helmutil.ShowKindValues)
+		if err != nil {
+			return errMsg{err}
+		}
+		schema, okSchema, err := helmutil.ReadShowCache(m.params.RepoRoot, dep.Repository, dep.Name, dep.Version, helmutil.ShowKindSchema)
+		if err != nil {
+			return errMsg{err}
+		}
+		if okReadme || okValues || okSchema {
+			return depDetailPreviewsMsg{ID: id, readme: readme, defaultValues: values, schema: schema}
 		}
 
 		// 3) If missing: pull chart archive and read from it.
 		env := helmutil.EnvForRepoURL(m.params.RepoRoot, dep.Repository)
 		if tgzPath, err := helmutil.PullChartArchive(ctx, env, dep.Repository, dep.Name, dep.Version); err == nil {
-			readme, values, err2 := helmutil.ReadChartArchiveFiles(tgzPath)
+			readme, values, schema, err2 := helmutil.ReadChartArchiveFilesWithSchema(tgzPath)
 			if err2 == nil {
 				if strings.TrimSpace(readme) != "" {
 					_ = helmutil.WriteShowCache(m.params.RepoRoot, dep.Repository, dep.Name, dep.Version, helmutil.ShowKindReadme, readme)
@@ -751,7 +802,10 @@ func (m AppModel) loadDepDetailPreviewsCmd(dep yamlchart.Dependency) tea.Cmd {
 				if strings.TrimSpace(values) != "" {
 					_ = helmutil.WriteShowCache(m.params.RepoRoot, dep.Repository, dep.Name, dep.Version, helmutil.ShowKindValues, values)
 				}
-				return depDetailPreviewsMsg{ID: id, readme: readme, defaultValues: values}
+				if strings.TrimSpace(schema) != "" {
+					_ = helmutil.WriteShowCache(m.params.RepoRoot, dep.Repository, dep.Name, dep.Version, helmutil.ShowKindSchema, schema)
+				}
+				return depDetailPreviewsMsg{ID: id, readme: readme, defaultValues: values, schema: schema}
 			}
 		} else {
 			// Preserve pull error for the final error message if we also fail helm show.
@@ -770,22 +824,23 @@ func (m AppModel) loadDepDetailPreviewsCmd(dep yamlchart.Dependency) tea.Cmd {
 			}
 			_ = helmutil.WriteShowCache(m.params.RepoRoot, dep.Repository, dep.Name, dep.Version, helmutil.ShowKindReadme, readme)
 			_ = helmutil.WriteShowCache(m.params.RepoRoot, dep.Repository, dep.Name, dep.Version, helmutil.ShowKindValues, values)
-			return depDetailPreviewsMsg{ID: id, readme: readme, defaultValues: values}
+			// Schema is not available via `helm show values`; prefer tgz extraction.
+			return depDetailPreviewsMsg{ID: id, readme: readme, defaultValues: values, schema: ""}
 		}
 		repoName := helmutil.RepoNameForURL(dep.Repository)
 		_ = helmutil.RepoAdd(ctx, env, repoName, dep.Repository)
 		ref := repoName + "/" + dep.Name
-		readme, err := helmutil.ShowReadmeBestEffort(ctx, env, ref, dep.Version, 24*time.Hour)
+		readme, err = helmutil.ShowReadmeBestEffort(ctx, env, ref, dep.Version, 24*time.Hour)
 		if err != nil {
 			return errMsg{err}
 		}
-		values, err := helmutil.ShowValuesBestEffort(ctx, env, ref, dep.Version, 24*time.Hour)
+		values, err = helmutil.ShowValuesBestEffort(ctx, env, ref, dep.Version, 24*time.Hour)
 		if err != nil {
 			return errMsg{err}
 		}
 		_ = helmutil.WriteShowCache(m.params.RepoRoot, dep.Repository, dep.Name, dep.Version, helmutil.ShowKindReadme, readme)
 		_ = helmutil.WriteShowCache(m.params.RepoRoot, dep.Repository, dep.Name, dep.Version, helmutil.ShowKindValues, values)
-		return depDetailPreviewsMsg{ID: id, readme: readme, defaultValues: values}
+		return depDetailPreviewsMsg{ID: id, readme: readme, defaultValues: values, schema: ""}
 	}
 }
 
@@ -812,16 +867,17 @@ func (m AppModel) loadDepDetailVersionsCmd(dep yamlchart.Dependency) tea.Cmd {
 	}
 }
 
-func readInstanceVendoredChartFiles(instancePath string, dep yamlchart.Dependency) (readme string, values string, ok bool, err error) {
+func readInstanceVendoredChartFiles(instancePath string, dep yamlchart.Dependency) (readme string, values string, schema string, ok bool, err error) {
 	// Helm vendor layout: <instance>/charts/<dep.Name>/values.yaml
 	base := filepath.Join(instancePath, "charts", dep.Name)
 	st, err := os.Stat(base)
 	if err != nil || !st.IsDir() {
-		return "", "", false, nil
+		return "", "", "", false, nil
 	}
-	// Prefer values.yaml and README.md from the vendored chart dir.
+	// Prefer values.yaml, values.schema.json and README.md from the vendored chart dir.
 	readmePath := filepath.Join(base, "README.md")
 	valuesPath := filepath.Join(base, "values.yaml")
+	schemaPath := filepath.Join(base, "values.schema.json")
 
 	if b, err := os.ReadFile(readmePath); err == nil {
 		readme = string(b)
@@ -829,10 +885,13 @@ func readInstanceVendoredChartFiles(instancePath string, dep yamlchart.Dependenc
 	if b, err := os.ReadFile(valuesPath); err == nil {
 		values = string(b)
 	}
-	if strings.TrimSpace(readme) == "" && strings.TrimSpace(values) == "" {
-		return "", "", false, nil
+	if b, err := os.ReadFile(schemaPath); err == nil {
+		schema = string(b)
 	}
-	return readme, values, true, nil
+	if strings.TrimSpace(readme) == "" && strings.TrimSpace(values) == "" && strings.TrimSpace(schema) == "" {
+		return "", "", "", false, nil
+	}
+	return readme, values, schema, true, nil
 }
 
 func (m AppModel) reloadInstancesCmd() tea.Cmd {
@@ -966,10 +1025,22 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.ahResults.SetSize(msg.Width-2, msg.Height-7)
 		m.ahVersions.SetSize(msg.Width-2, msg.Height-7)
 		m.depEditVersions.SetSize(max(10, msg.Width-6), max(5, msg.Height-12))
-		m.depDetailVersions.SetSize(max(10, msg.Width-6), max(5, msg.Height-12))
 		m.palette.SetSize(min(70, msg.Width-4), min(14, msg.Height-6))
 		m.depDetailPreview.Width = max(10, msg.Width-6)
-		m.depDetailPreview.Height = max(5, msg.Height-14)
+		// Dep detail is rendered as a full-body modal, but the overall app View()
+		// still includes the global header/breadcrumb and footer lines.
+		// Additionally, the modal itself has a header, tab bar, footer, border and padding.
+		// If the preview viewport is too tall, the terminal will scroll and the modal
+		// top border (and tabs/header) appear cut.
+		modalMaxH := max(8, msg.Height-10)
+		// Conservative "chrome" height inside the dep detail modal (border+padding + header/tabs/footer + blank separators).
+		depDetailChromeH := 12
+		m.depDetailPreview.Height = max(5, modalMaxH-depDetailChromeH)
+		// Dep detail modal has a header + tab bar + footer around its body.
+		// Keep the versions list height aligned with the preview viewport height
+		// (minus a couple of lines for the versions hint line) so the modal header
+		// stays visible and the output does not exceed the terminal height.
+		m.depDetailVersions.SetSize(m.depDetailPreview.Width, max(5, m.depDetailPreview.Height-2))
 		m.valuesPreview.Width = max(10, msg.Width-6)
 		m.valuesPreview.Height = max(5, msg.Height-14)
 		// Ensure the viewport never ends up with negative size.
@@ -1013,6 +1084,7 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.depDetailOpen = false
 		m.depStep = depStepNone
 		m.modalErr = ""
+		m.depConfigure = depConfigureModel{}
 		m.statusErr = ""
 		m.refreshInstanceView()
 		return m, nil
@@ -1168,6 +1240,15 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.depDetailReadme = msg.readme
 		m.depDetailDefaultValues = highlightYAMLForDisplay(msg.defaultValues)
+		m.depDetailSchemaRaw = msg.schema
+
+		// Initialize Configure form model.
+		if m.selected != nil {
+			m.depConfigure.Reset(string(msg.ID), m.selected.Path)
+			// Load existing overrides from values.instance.yaml under depID.
+			existing := readDepOverrideFromInstance(m.selected.Path, string(msg.ID))
+			m.depConfigure.Load(msg.schema, existing)
+		}
 		m.depDetailLoading = false
 		m.depDetailPreview.SetContent(m.renderDepDetailBody())
 		return m, nil
@@ -1353,15 +1434,15 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if key.Matches(msg, m.keys.EditValues) {
 			if m.screen == ScreenInstance && !m.addingDep {
-				// Values tab: only allow editing values.instance.yaml.
-				if m.activeTab == 2 {
-					if it := m.valuesList.SelectedItem(); it != nil {
-						if vf, ok := it.(valuesFileItem); ok && string(vf) == "values.instance.yaml" {
-							return m, m.editInstanceValuesCmd()
+					// Values tab: only allow editing values.instance.yaml.
+					if m.activeTab == InstanceTabValues {
+						if it := m.valuesList.SelectedItem(); it != nil {
+							if vf, ok := it.(valuesFileItem); ok && string(vf) == "values.instance.yaml" {
+								return m, m.editInstanceValuesCmd()
+							}
 						}
+						return m, nil
 					}
-					return m, nil
-				}
 				return m, m.editInstanceValuesCmd()
 			}
 		}
@@ -1371,7 +1452,7 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		// Deps tab actions.
-		if m.screen == ScreenInstance && !m.addingDep && m.activeTab == 1 {
+		if m.screen == ScreenInstance && !m.addingDep && m.activeTab == InstanceTabDeps {
 			// Delete dependency.
 			if msg.String() == "d" || msg.String() == "D" {
 				return m, tea.Batch(m.beginBusy("Updating"), m.removeSelectedDepCmd())
@@ -1416,11 +1497,11 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if it, ok := m.instList.SelectedItem().(instanceItem); ok {
 					inst := instances.Instance(it)
 					m.selected = &inst
-					m.screen = ScreenInstance
-					m.activeTab = 0
-					m.refreshInstanceView()
-					return m, tea.Batch(m.beginBusy("Loading chart"), m.loadChartCmd(inst))
-				}
+						m.screen = ScreenInstance
+						m.activeTab = 0 // Dependencies is first tab
+						m.refreshInstanceView()
+						return m, tea.Batch(m.beginBusy("Loading chart"), m.loadChartCmd(inst))
+					}
 			}
 		}
 		// When the add-dependency wizard is open, left/right should switch the wizard
@@ -1439,23 +1520,23 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 		if m.screen == ScreenInstance && !m.addingDep {
-		if key.Matches(msg, m.keys.TabLeft) {
-			m.activeTab = (m.activeTab - 1 + len(m.tabNames)) % len(m.tabNames)
-			if m.activeTab == 2 {
-				m.refreshValuesList()
+			if key.Matches(msg, m.keys.TabLeft) {
+				m.activeTab = (m.activeTab - 1 + len(m.tabNames)) % len(m.tabNames)
+				if m.activeTab == InstanceTabValues {
+					m.refreshValuesList()
+				}
+				m.refreshInstanceView()
+				return m, nil
 			}
-			m.refreshInstanceView()
-			return m, nil
-		}
-		if key.Matches(msg, m.keys.TabRight) {
-			m.activeTab = (m.activeTab + 1) % len(m.tabNames)
-			if m.activeTab == 2 {
-				m.refreshValuesList()
+			if key.Matches(msg, m.keys.TabRight) {
+				m.activeTab = (m.activeTab + 1) % len(m.tabNames)
+				if m.activeTab == InstanceTabValues {
+					m.refreshValuesList()
+				}
+				m.refreshInstanceView()
+				return m, nil
 			}
-			m.refreshInstanceView()
-			return m, nil
 		}
-	}
 	}
 
 	// Modal: create instance.
@@ -1475,7 +1556,7 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.creating = false
 			m.selected = &inst
 			m.screen = ScreenInstance
-			m.activeTab = 0
+			m.activeTab = 0 // Dependencies is first tab
 			m.content.SetContent(renderInstanceOverview(inst))
 			return m, tea.Batch(
 				m.beginBusy("Reloading"),
@@ -1523,7 +1604,7 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				ci, ok := it.(catalogListItem)
 				if !ok {
-					return m, func() tea.Msg { return errMsg{fmt.Errorf("unexpected catalog item type")}} 
+					return m, func() tea.Msg { return errMsg{fmt.Errorf("unexpected catalog item type")} }
 				}
 				e := ci.E
 				return m, m.applyDependencyDraft(yamlchart.Dependency{Name: e.Chart.Name, Repository: e.Chart.Repo, Version: e.Version})
@@ -1549,7 +1630,7 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				ai, ok := it.(ahResultItem)
 				if !ok {
-					return m, func() tea.Msg { return errMsg{fmt.Errorf("unexpected Artifact Hub item type")}} 
+					return m, func() tea.Msg { return errMsg{fmt.Errorf("unexpected Artifact Hub item type")} }
 				}
 				sel := ai.P
 				m.ahSelected = &sel
@@ -1581,7 +1662,7 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						}
 						vi, ok := it.(ahVersionItem)
 						if !ok {
-							return m, func() tea.Msg { return errMsg{fmt.Errorf("unexpected version item type")}} 
+							return m, func() tea.Msg { return errMsg{fmt.Errorf("unexpected version item type")} }
 						}
 						v := artifacthub.Version(vi)
 						m.ahSelectedVersion = v.Version
@@ -1627,7 +1708,7 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				vi, ok := it.(ahVersionItem)
 				if !ok {
-					return m, func() tea.Msg { return errMsg{fmt.Errorf("unexpected version item type")}} 
+					return m, func() tea.Msg { return errMsg{fmt.Errorf("unexpected version item type")} }
 				}
 				v := artifacthub.Version(vi)
 				return m, m.applyDependencyDraft(yamlchart.Dependency{Name: m.ahSelected.Name, Repository: m.ahSelected.RepositoryURL, Version: v.Version})
@@ -1638,12 +1719,19 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if km, ok := msg.(tea.KeyMsg); ok {
 				if km.Type == tea.KeyTab {
 					m.arbFocus = (m.arbFocus + 1) % 4
-					m.arbRepo.Blur(); m.arbName.Blur(); m.arbVersion.Blur(); m.arbAlias.Blur()
+					m.arbRepo.Blur()
+					m.arbName.Blur()
+					m.arbVersion.Blur()
+					m.arbAlias.Blur()
 					switch m.arbFocus {
-					case 0: m.arbRepo.Focus()
-					case 1: m.arbName.Focus()
-					case 2: m.arbVersion.Focus()
-					case 3: m.arbAlias.Focus()
+					case 0:
+						m.arbRepo.Focus()
+					case 1:
+						m.arbName.Focus()
+					case 2:
+						m.arbVersion.Focus()
+					case 3:
+						m.arbAlias.Focus()
 					}
 				}
 				if km.Type == tea.KeyEnter {
@@ -1653,10 +1741,14 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			var cmds []tea.Cmd
 			var cmd tea.Cmd
-			m.arbRepo, cmd = m.arbRepo.Update(msg); cmds = append(cmds, cmd)
-			m.arbName, cmd = m.arbName.Update(msg); cmds = append(cmds, cmd)
-			m.arbVersion, cmd = m.arbVersion.Update(msg); cmds = append(cmds, cmd)
-			m.arbAlias, cmd = m.arbAlias.Update(msg); cmds = append(cmds, cmd)
+			m.arbRepo, cmd = m.arbRepo.Update(msg)
+			cmds = append(cmds, cmd)
+			m.arbName, cmd = m.arbName.Update(msg)
+			cmds = append(cmds, cmd)
+			m.arbVersion, cmd = m.arbVersion.Update(msg)
+			cmds = append(cmds, cmd)
+			m.arbAlias, cmd = m.arbAlias.Update(msg)
+			cmds = append(cmds, cmd)
 			return m, tea.Batch(cmds...)
 		}
 	}
@@ -1669,7 +1761,7 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	if m.screen == ScreenInstance {
 		// Deps tab uses its own list.
-		if m.activeTab == 1 && !m.addingDep {
+		if m.activeTab == InstanceTabDeps && !m.addingDep {
 			var cmd tea.Cmd
 			m.depsList, cmd = m.depsList.Update(msg)
 			if km, ok := msg.(tea.KeyMsg); ok && km.Type == tea.KeyEnter {
@@ -1681,7 +1773,7 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, cmd
 		}
 		// Values tab uses its own list.
-		if m.activeTab == 2 && !m.addingDep {
+		if m.activeTab == InstanceTabValues && !m.addingDep {
 			var cmd tea.Cmd
 			m.valuesList, cmd = m.valuesList.Update(msg)
 			if km, ok := msg.(tea.KeyMsg); ok && km.Type == tea.KeyEnter {
@@ -1835,10 +1927,10 @@ func (m AppModel) currentBodyView() string {
 		}
 		tabsLine := renderTabs(m.tabNames, m.activeTab)
 		prefix := tabsLine + "\n\n"
-		if m.activeTab == 1 {
+		if m.activeTab == InstanceTabDeps {
 			return prefix + m.depsList.View()
 		}
-		if m.activeTab == 2 {
+		if m.activeTab == InstanceTabValues {
 			return prefix + m.valuesList.View()
 		}
 		return prefix + m.content.View()
@@ -1889,7 +1981,7 @@ func (m AppModel) contextHelpLine() string {
 		if m.depDetailOpen {
 			return "esc close • ←/→ tabs • / filter • enter apply"
 		}
-		if m.activeTab == 1 {
+		if m.activeTab == InstanceTabDeps {
 			return "←/→ tabs • d remove • v version • u upgrade • a add dep • m commands • esc back • q quit"
 		}
 		return "←/→ tabs • a add dep • e edit values • p apply • r regen values • m commands • esc back • q quit"
@@ -1916,13 +2008,13 @@ func renderInstanceOverview(inst instances.Instance) string {
 
 func renderInstanceTab(inst instances.Instance, tab int) string {
 	switch tab {
-	case 0:
-		return renderInstanceOverview(inst)
-	case 1:
+	case InstanceTabDeps:
 		return "Dependencies (press 'a' to add)"
-	case 2:
+	case InstanceTabOverview:
+		return renderInstanceOverview(inst)
+	case InstanceTabValues:
 		return "Values"
-	case 3:
+	case InstanceTabPresets:
 		return "Presets"
 	default:
 		return "unknown tab"
@@ -1987,11 +2079,13 @@ func (a ahResultItem) Description() string {
 	}
 	return strings.Join(parts, " • ")
 }
-func (a ahResultItem) FilterValue() string { return a.P.Name + " " + a.P.DisplayName + " " + a.P.RepositoryName }
+func (a ahResultItem) FilterValue() string {
+	return a.P.Name + " " + a.P.DisplayName + " " + a.P.RepositoryName
+}
 
 type ahVersionItem artifacthub.Version
 
-func (v ahVersionItem) Title() string { return withIcon(iconVersions, v.Version) }
+func (v ahVersionItem) Title() string       { return withIcon(iconVersions, v.Version) }
 func (v ahVersionItem) Description() string { return "" }
 func (v ahVersionItem) FilterValue() string { return v.Version }
 
@@ -2025,7 +2119,7 @@ func (v versionItem) FilterValue() string { return string(v) }
 
 type valuesFileItem string
 
-func (v valuesFileItem) Title() string       { return string(v) }
+func (v valuesFileItem) Title() string { return string(v) }
 func (v valuesFileItem) Description() string {
 	name := string(v)
 	switch name {
@@ -2219,7 +2313,6 @@ func (m *AppModel) endBusy() {
 	}
 }
 
-
 func (m *AppModel) clearAnyActiveFilter() bool {
 	cleared := false
 	resetIfActive := func(l *list.Model) {
@@ -2358,6 +2451,9 @@ func (m AppModel) openDepDetailSelected() (tea.Model, tea.Cmd) {
 }
 
 func (m AppModel) depDetailUpdate(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	configureTab := DepDetailTabConfigure
+	versionsTab := len(m.depDetailTabNames) - 1
+
 	// Close.
 	if msg.Type == tea.KeyEsc {
 		if m.depDetailMode == depEditModeList {
@@ -2367,6 +2463,11 @@ func (m AppModel) depDetailUpdate(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 		}
+		if m.depConfigure.editing {
+			m.depConfigure.CancelEdit()
+			m.depDetailPreview.SetContent(m.renderDepDetailBody())
+			return m, nil
+		}
 		m.depDetailOpen = false
 		m.depDetailLoading = false
 		m.modalErr = ""
@@ -2375,10 +2476,105 @@ func (m AppModel) depDetailUpdate(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
+	// Tab-specific interaction.
+	// Configure tab: no focus mode.
+	// - ↑/↓ navigate tree
+	// - Enter edits scalars, cycles unions, and toggles expand/collapse for object/array
+	// - ←/→ collapse/expand when possible
+	// - ←/→ also navigates tabs ONLY when cursor is on the root "$" row and the tree cannot
+	//   collapse/expand further in that direction.
+	if m.depDetailTab == configureTab {
+		// While editing, route keys to the active input.
+		if m.depConfigure.editing {
+			var cmd tea.Cmd
+			if m.depConfigure.editMode == cfgEditNewPropKey {
+				m.depConfigure.editPropKey, cmd = m.depConfigure.editPropKey.Update(msg)
+			} else {
+				m.depConfigure.editInput, cmd = m.depConfigure.editInput.Update(msg)
+				// Clear displayed edit error as soon as user changes input.
+				if msg.Type != tea.KeyEnter {
+					m.depConfigure.editErr = ""
+				}
+			}
+			// Always rerender while editing so typed text is visible.
+			m.depDetailPreview.SetContent(m.renderDepDetailBody())
+			if msg.Type == tea.KeyEnter {
+				if err := m.depConfigure.ApplyEdit(); err != nil {
+					m.modalErr = err.Error()
+				} else {
+					m.modalErr = ""
+				}
+				m.depDetailPreview.SetContent(m.renderDepDetailBody())
+				return m, cmd
+			}
+			if msg.Type == tea.KeyEsc {
+				m.depConfigure.CancelEdit()
+				m.depDetailPreview.SetContent(m.renderDepDetailBody())
+				return m, cmd
+			}
+			return m, cmd
+		}
+		// Tree navigation.
+		switch {
+		case msg.Type == tea.KeyUp:
+			m.depConfigure.Move(-1)
+			m.depDetailPreview.SetContent(m.renderDepDetailBody())
+			return m, nil
+		case msg.Type == tea.KeyDown:
+			m.depConfigure.Move(1)
+			m.depDetailPreview.SetContent(m.renderDepDetailBody())
+			return m, nil
+		case msg.Type == tea.KeyEnter:
+			// Enter toggles expand for containers (object/array).
+			if m.depConfigure.ToggleExpandCollapse() {
+				m.depDetailPreview.SetContent(m.renderDepDetailBody())
+				return m, nil
+			}
+			changed := m.depConfigure.StartEdit()
+			if changed {
+				_ = m.depConfigure.PersistDraft()
+				m.refreshValuesList()
+			}
+			m.depDetailPreview.SetContent(m.renderDepDetailBody())
+			return m, nil
+		case msg.String() == "s" || msg.String() == "S":
+			if err := m.depConfigure.Save(); err != nil {
+				m.modalErr = err.Error()
+			} else {
+				m.modalErr = ""
+			}
+			m.refreshValuesList()
+			m.depDetailPreview.SetContent(m.renderDepDetailBody())
+			return m, nil
+		case msg.Type == tea.KeyLeft:
+			changed := m.depConfigure.Collapse()
+			if changed {
+				m.depDetailPreview.SetContent(m.renderDepDetailBody())
+				return m, nil
+			}
+			// Only bubble to tab navigation when the cursor is on root.
+			if !m.depConfigure.CursorIsRoot() {
+				return m, nil
+			}
+			// fall through to normal tab switching below
+		case msg.Type == tea.KeyRight:
+			changed := m.depConfigure.Expand()
+			if changed {
+				m.depDetailPreview.SetContent(m.renderDepDetailBody())
+				return m, nil
+			}
+			// Only bubble to tab navigation when the cursor is on root.
+			if !m.depConfigure.CursorIsRoot() {
+				return m, nil
+			}
+			// fall through to normal tab switching below
+		}
+	}
+
 	// Switch tabs.
 	if key.Matches(msg, m.keys.TabLeft) {
 		m.depDetailTab = (m.depDetailTab - 1 + len(m.depDetailTabNames)) % len(m.depDetailTabNames)
-		if m.depDetailTab == 3 && m.depDetailMode == depEditModeManual {
+		if m.depDetailTab == versionsTab && m.depDetailMode == depEditModeManual {
 			m.depDetailVersionInput.Focus()
 		} else {
 			m.depDetailVersionInput.Blur()
@@ -2388,7 +2584,7 @@ func (m AppModel) depDetailUpdate(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 	if key.Matches(msg, m.keys.TabRight) {
 		m.depDetailTab = (m.depDetailTab + 1) % len(m.depDetailTabNames)
-		if m.depDetailTab == 3 && m.depDetailMode == depEditModeManual {
+		if m.depDetailTab == versionsTab && m.depDetailMode == depEditModeManual {
 			m.depDetailVersionInput.Focus()
 		} else {
 			m.depDetailVersionInput.Blur()
@@ -2397,9 +2593,8 @@ func (m AppModel) depDetailUpdate(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	// Tab-specific interaction.
 	// Versions tab index is last.
-	if m.depDetailTab == 3 {
+	if m.depDetailTab == versionsTab {
 		if m.depDetailMode == depEditModeManual {
 			var cmd tea.Cmd
 			m.depDetailVersionInput, cmd = m.depDetailVersionInput.Update(msg)
@@ -2459,18 +2654,21 @@ func (m AppModel) renderDepDetailBody() string {
 	}
 	switch m.depDetailTab {
 	case 0:
+		// Configure tab.
+		return m.depConfigure.View(m.depDetailPreview.Width, m.depDetailPreview.Height)
+	case DepDetailTabReadme:
 		if m.depDetailReadme == "" {
 			return "README not loaded."
 		}
 		return renderMarkdownForDisplay(m.depDetailPreview.Width, m.depDetailReadme)
-	case 1:
+	case DepDetailTabDefault:
 		if m.depDetailDefaultValues == "" {
 			return "Default values not loaded."
 		}
 		return m.depDetailDefaultValues
-	case 2:
+	case DepDetailTabLocal:
 		return m.renderDepLocalValuesBody(dep)
-	case 3:
+	case DepDetailTabVersions:
 		// Versions are rendered by the modal renderer.
 		return ""
 	default:

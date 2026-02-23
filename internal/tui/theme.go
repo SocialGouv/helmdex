@@ -33,6 +33,7 @@ const (
 
 	iconReadme   = "📖"
 	iconAHValues = "🧾"
+	iconSchema   = "🧬"
 	iconVersions = "🏷"
 
 	iconCmd    = "⌘"

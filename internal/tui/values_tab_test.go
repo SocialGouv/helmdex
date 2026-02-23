@@ -24,7 +24,7 @@ func TestValuesTabEnterOpensPreviewModal(t *testing.T) {
 	m := NewAppModel(Params{RepoRoot: tmp})
 	m.screen = ScreenInstance
 	m.selected = &instances.Instance{Name: "x", Path: instPath}
-	m.activeTab = 2
+	m.activeTab = 2 // Values tab unchanged
 	m.refreshValuesList()
 
 	nm, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})

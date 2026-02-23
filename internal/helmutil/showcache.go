@@ -12,6 +12,7 @@ type ShowKind string
 const (
 	ShowKindReadme ShowKind = "readme"
 	ShowKindValues ShowKind = "values"
+	ShowKindSchema ShowKind = "schema"
 )
 
 func showCacheDir(repoRoot string) string {
@@ -31,6 +32,8 @@ func ShowCachePath(repoRoot, repoURL, chart, version string, kind ShowKind) stri
 		return filepath.Join(base, "readme.txt")
 	case ShowKindValues:
 		return filepath.Join(base, "values.yaml")
+	case ShowKindSchema:
+		return filepath.Join(base, "values.schema.json")
 	default:
 		return filepath.Join(base, string(kind))
 	}
@@ -59,4 +62,3 @@ func WriteShowCache(repoRoot, repoURL, chart, version string, kind ShowKind, con
 func ClearShowCache(repoRoot string) error {
 	return os.RemoveAll(showCacheDir(repoRoot))
 }
-

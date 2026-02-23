@@ -12,7 +12,7 @@ import (
 func TestDepsEnterOpensDepDetailModal(t *testing.T) {
 	m := NewAppModel(Params{RepoRoot: "."})
 	m.screen = ScreenInstance
-	m.activeTab = 1 // deps tab
+	m.activeTab = 0 // deps tab (Dependencies is first)
 
 	dep := yamlchart.Dependency{Name: "postgresql", Repository: "https://charts.bitnami.com/bitnami", Version: "1.2.3"}
 	m.depsList.SetItems([]list.Item{depItem(dep)})
@@ -42,7 +42,7 @@ func TestDepDetailPreviewsMsgPopulatesBuffers(t *testing.T) {
 	readme := "# nginx\n"
 	vals := "replicaCount: 1\n"
 
-	nm, _ := m.Update(depDetailPreviewsMsg{ID: yamlchart.DependencyID(dep), readme: readme, defaultValues: vals})
+	nm, _ := m.Update(depDetailPreviewsMsg{ID: yamlchart.DependencyID(dep), readme: readme, defaultValues: vals, schema: ""})
 	mm := nm.(AppModel)
 	if mm.depDetailLoading {
 		t.Fatalf("expected loading=false")
@@ -60,7 +60,8 @@ func TestDepDetailVersionsEnterSetsPendingVersion(t *testing.T) {
 	dep := yamlchart.Dependency{Name: "nginx", Repository: "https://example.com", Version: "0.1.0"}
 	m.depDetailOpen = true
 	m.depDetailDep = dep
-	m.depDetailTab = 3
+	// Versions tab is last (Configure was inserted before it).
+	m.depDetailTab = len(m.depDetailTabNames) - 1
 	m.depDetailMode = depEditModeList
 	m.depDetailVersions.SetItems([]list.Item{versionItem("1.0.0"), versionItem("1.1.0")})
 	m.depDetailVersions.Select(1)

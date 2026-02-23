@@ -8,6 +8,21 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
+// modalMaxHeight returns a conservative max height for full-body modals.
+//
+// AppModel.View() wraps the body with:
+// - base padding (top+bottom)
+// - app header + breadcrumb
+// - context help + status footer
+// plus blank spacer lines.
+// Keeping modals under this height prevents the terminal from scrolling and
+// cutting off the modal's top border.
+func modalMaxHeight(m AppModel) int {
+	// Empirically: header/breadcrumb + spacers + context help/status + base padding
+	// consumes ~10 terminal rows.
+	return max(8, m.height-10)
+}
+
 func renderWithModal(m AppModel, body, modal string) string {
 	// Simple composition for now: render modal above body.
 	// (True terminal overlay can be added later without changing call sites.)
@@ -125,6 +140,10 @@ func renderFooterStatusLine(m AppModel) string {
 
 func renderDepEditModal(m AppModel) string {
 	box := lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).Padding(1, 2)
+	// Clamp modal height so its top border never scrolls off-screen.
+	// The global View() renders: header + breadcrumb + body + contextHelp + status,
+	// all inside a padded base style.
+	box = box.Height(modalMaxHeight(m))
 	if !m.depEditOpen {
 		return ""
 	}
@@ -162,6 +181,8 @@ func renderDepEditModal(m AppModel) string {
 
 func renderDepDetailModal(m AppModel) string {
 	box := lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).Padding(1, 2)
+	// Clamp modal height so its top border never scrolls off-screen.
+	box = box.Height(modalMaxHeight(m))
 	if !m.depDetailOpen {
 		return ""
 	}
@@ -186,8 +207,9 @@ func renderDepDetailModal(m AppModel) string {
 	tabsLine := renderTabs(m.depDetailTabNames, m.depDetailTab)
 
 	var body string
+	versionsTab := len(m.depDetailTabNames) - 1
 	// Versions tab is last.
-	if m.depDetailTab == 3 {
+	if m.depDetailTab == versionsTab {
 		switch m.depDetailMode {
 		case depEditModeManual:
 			body = "Enter an exact version:\n\n" + m.depDetailVersionInput.View() + "\n\n(enter: apply • esc: cancel)"
@@ -220,6 +242,8 @@ func renderDepDetailModal(m AppModel) string {
 
 func renderValuesPreviewModal(m AppModel) string {
 	box := lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).Padding(1, 2)
+	// Clamp modal height so its top border never scrolls off-screen.
+	box = box.Height(modalMaxHeight(m))
 	if !m.valuesPreviewOpen {
 		return ""
 	}
