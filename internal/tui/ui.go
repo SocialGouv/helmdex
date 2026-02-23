@@ -142,12 +142,18 @@ func renderDepEditModal(m AppModel) string {
 	case depEditModeManual:
 		body = "Enter an exact version:\n\n" + m.depEditVersionInput.View() + "\n\n(enter: apply • esc: cancel)"
 	default:
-		if m.depEditLoading {
-			body = styleMuted.Render("Loading versions…")
-		} else if len(m.depEditVersionsData) == 0 {
-			body = styleMuted.Render("No versions found.")
+		if len(m.depEditVersionsData) == 0 {
+			if m.depEditLoading {
+				body = styleMuted.Render("Loading versions…")
+			} else {
+				body = styleMuted.Render("No versions found.")
+			}
 		} else {
-			body = m.depEditVersions.View() + "\n" + styleMuted.Render(withIcon(iconFilter, "/: filter")+" • enter: apply • esc: cancel")
+			refreshing := ""
+			if m.depEditLoading {
+				refreshing = "  " + styleMuted.Render("(refreshing…)")
+			}
+			body = m.depEditVersions.View() + refreshing + "\n" + styleMuted.Render(withIcon(iconFilter, "/: filter")+" • enter: apply • esc: cancel")
 		}
 	}
 
@@ -186,12 +192,18 @@ func renderDepDetailModal(m AppModel) string {
 		case depEditModeManual:
 			body = "Enter an exact version:\n\n" + m.depDetailVersionInput.View() + "\n\n(enter: apply • esc: cancel)"
 		default:
-			if m.depDetailLoading {
-				body = styleMuted.Render("Loading versions…")
-			} else if len(m.depDetailVersionsData) == 0 {
-				body = styleMuted.Render("No versions found.")
+			if len(m.depDetailVersionsData) == 0 {
+				if m.depDetailVersionsLoading {
+					body = styleMuted.Render("Loading versions…")
+				} else {
+					body = styleMuted.Render("No versions found.")
+				}
 			} else {
-				body = m.depDetailVersions.View() + "\n" + styleMuted.Render(withIcon(iconFilter, "/: filter")+" • enter: apply • esc: cancel")
+				refreshing := ""
+				if m.depDetailVersionsLoading {
+					refreshing = "  " + styleMuted.Render("(refreshing…)")
+				}
+				body = m.depDetailVersions.View() + refreshing + "\n" + styleMuted.Render(withIcon(iconFilter, "/: filter")+" • enter: apply • esc: cancel")
 			}
 		}
 	} else {

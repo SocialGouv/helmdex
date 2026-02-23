@@ -24,13 +24,16 @@ func newCacheClearCmd(f *rootFlags) *cobra.Command {
 	var clearHelm bool
 	cmd := &cobra.Command{
 		Use:   "clear",
-		Short: "Clear helmdex caches (helm show cache by default)",
+		Short: "Clear helmdex caches (helm show + helm versions caches by default)",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			repoRoot, err := repo.ResolveRoot(f.RepoRoot)
 			if err != nil {
 				return err
 			}
 			if err := helmutil.ClearShowCache(repoRoot); err != nil {
+				return err
+			}
+			if err := helmutil.ClearVersionsCache(repoRoot); err != nil {
 				return err
 			}
 			if clearHelm {

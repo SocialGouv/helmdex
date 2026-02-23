@@ -106,6 +106,8 @@ type AppModel struct {
 	depEditOpen         bool
 	depEditDep          yamlchart.Dependency
 	depEditMode         depEditMode
+	// depEditLoading indicates a background refresh is running; the list may still
+	// be usable if we have cached versions.
 	depEditLoading      bool
 	depEditVersions     list.Model
 	depEditVersionsData []string
@@ -118,6 +120,9 @@ type AppModel struct {
 	depDetailTabNames       []string
 	depDetailLoading        bool
 	depDetailMode           depEditMode // reuse enum: list vs manual
+	// depDetailVersionsLoading is specific to the Versions tab, so other tabs can
+	// remain interactive while versions refreshes.
+	depDetailVersionsLoading bool
 	depDetailVersions       list.Model
 	depDetailVersionsData   []string
 	depDetailVersionInput   textinput.Model // OCI/manual fallback
@@ -125,6 +130,10 @@ type AppModel struct {
 	depDetailDefaultValues  string
 	depDetailPreview        viewport.Model
 	depDetailPendingVersion string
+
+	// versions refresh (disk cache + periodic background refresh)
+	versionsWatched  map[string]versionsWatch
+	versionsInFlight map[string]bool
 
 	// arbitrary
 	arbRepo textinput.Model
@@ -341,13 +350,19 @@ func NewAppModel(p Params) AppModel {
 		valuesPreview: valsPrev,
 		palette: newPaletteModel(),
 		keys: keys,
+		versionsWatched:  map[string]versionsWatch{},
+		versionsInFlight: map[string]bool{},
 	}
 
 	return m
 }
 
 func (m AppModel) Init() tea.Cmd {
-	return tea.Batch(m.beginBusy("Reloading"), m.reloadInstancesCmd())
+	return tea.Batch(
+		m.beginBusy("Reloading"),
+		m.reloadInstancesCmd(),
+		tea.Tick(versionsRefreshInterval, func(t time.Time) tea.Msg { return versionsRefreshTickMsg{now: t} }),
+	)
 }
 
 type errMsg struct{ err error }
@@ -390,9 +405,87 @@ type depVersionsMsg struct {
 	Versions []string
 }
 
+type versionsTarget int
+
+const (
+	versionsTargetDepEdit versionsTarget = iota
+	versionsTargetDepDetail
+	versionsTargetBackground
+)
+
+type versionsRefreshResultMsg struct {
+	key      string
+	repoURL   string
+	chartName string
+	depID     yamlchart.DepID
+	target    versionsTarget
+	versions  []string
+	err       error
+}
+
+type versionsRefreshTickMsg struct{ now time.Time }
+
+type versionsWatch struct {
+	repoURL     string
+	chartName   string
+	lastRefresh time.Time
+}
+
+const (
+	versionsCacheTTL        = 15 * time.Minute
+	versionsRefreshInterval = 15 * time.Minute
+)
+
 type valuesPreviewLoadedMsg struct {
 	path    string
 	content string
+}
+
+// staleWhileOpen avoids re-opening errors while the modal is active.
+func (m *AppModel) handleVersionsRefreshResult(msg versionsRefreshResultMsg) tea.Cmd {
+	// Mark single-flight complete.
+	if msg.key != "" {
+		delete(m.versionsInFlight, msg.key)
+	}
+
+	// Update watched refresh timestamp on success.
+	if msg.err == nil {
+		if w, ok := m.versionsWatched[msg.key]; ok {
+			w.lastRefresh = time.Now().UTC()
+			m.versionsWatched[msg.key] = w
+		}
+	}
+
+	// Apply to UI when still relevant.
+	switch msg.target {
+	case versionsTargetDepEdit:
+		m.depEditLoading = false
+		if !m.depEditOpen {
+			return nil
+		}
+		if msg.depID != yamlchart.DependencyID(m.depEditDep) {
+			return nil
+		}
+		if msg.err == nil {
+			m.setVersionsList(msg.versions, versionsTargetDepEdit)
+		}
+		return nil
+	case versionsTargetDepDetail:
+		m.depDetailVersionsLoading = false
+		if !m.depDetailOpen {
+			return nil
+		}
+		if msg.depID != yamlchart.DependencyID(m.depDetailDep) {
+			return nil
+		}
+		if msg.err == nil {
+			m.setVersionsList(msg.versions, versionsTargetDepDetail)
+		}
+		return nil
+	default:
+		// Background refresh: no direct UI.
+		return nil
+	}
 }
 
 // noopMsg is used by background cmds to signal "success but no UI change",
@@ -404,6 +497,76 @@ type noopMsg struct{}
 type depAppliedMsg struct{ chart yamlchart.Chart }
 
 type depAppliedAndAppliedMsg struct{ chart yamlchart.Chart }
+
+func (m *AppModel) setVersionsList(items []string, which versionsTarget) {
+	data := items
+	listModel := &m.depEditVersions
+	curVer := ""
+	if which == versionsTargetDepDetail {
+		listModel = &m.depDetailVersions
+		curVer = m.depDetailDep.Version
+		m.depDetailVersionsData = data
+	} else {
+		curVer = m.depEditDep.Version
+		m.depEditVersionsData = data
+	}
+	its := make([]list.Item, 0, len(data))
+	for _, v := range data {
+		its = append(its, versionItem(v))
+	}
+	listModel.SetItems(its)
+	// Keep selection on current version when possible.
+	listModel.Select(0)
+	for i := range data {
+		if strings.TrimSpace(data[i]) == strings.TrimSpace(curVer) {
+			listModel.Select(i)
+			break
+		}
+	}
+}
+
+func versionsKey(repoURL, chartName string) string {
+	return helmutil.VersionsCacheKey(repoURL, chartName)
+}
+
+func (m *AppModel) watchVersions(dep yamlchart.Dependency) {
+	if strings.TrimSpace(dep.Repository) == "" || strings.TrimSpace(dep.Name) == "" {
+		return
+	}
+	if strings.HasPrefix(dep.Repository, "oci://") {
+		return
+	}
+	key := versionsKey(dep.Repository, dep.Name)
+	if _, ok := m.versionsWatched[key]; ok {
+		return
+	}
+	last := time.Time{}
+	if _, fetchedAt, ok, err := helmutil.ReadVersionsCache(m.params.RepoRoot, dep.Repository, dep.Name); err == nil && ok {
+		last = fetchedAt
+	}
+	m.versionsWatched[key] = versionsWatch{repoURL: dep.Repository, chartName: dep.Name, lastRefresh: last}
+}
+
+func (m *AppModel) refreshVersionsCmd(dep yamlchart.Dependency, target versionsTarget) tea.Cmd {
+	return func() tea.Msg {
+		key := versionsKey(dep.Repository, dep.Name)
+		ctx, cancel := context.WithTimeout(contextBG(), 60*time.Second)
+		defer cancel()
+		vs, err := helmutil.RepoChartVersions(ctx, m.params.RepoRoot, dep.Repository, dep.Name, 24*time.Hour)
+		if err == nil {
+			_, _ = helmutil.WriteVersionsCache(m.params.RepoRoot, dep.Repository, dep.Name, vs)
+		}
+		return versionsRefreshResultMsg{
+			key: key,
+			repoURL: dep.Repository,
+			chartName: dep.Name,
+			depID: yamlchart.DependencyID(dep),
+			target: target,
+			versions: vs,
+			err: err,
+		}
+	}
+}
 
 func (m AppModel) loadHelmPreviewsCmd(repoURL, chartName, version string) tea.Cmd {
 	return func() tea.Msg {
@@ -630,12 +793,19 @@ func (m AppModel) loadDepDetailVersionsCmd(dep yamlchart.Dependency) tea.Cmd {
 		if strings.HasPrefix(dep.Repository, "oci://") {
 			return depDetailVersionsMsg{ID: id, Versions: nil}
 		}
+
+		// Cache-first: return cached versions immediately when present.
+		if vs, _, ok, err := helmutil.ReadVersionsCache(m.params.RepoRoot, dep.Repository, dep.Name); err == nil && ok {
+			return depDetailVersionsMsg{ID: id, Versions: vs}
+		}
+		// No cache: trigger a normal load; UI will show loader.
 		ctx, cancel := context.WithTimeout(contextBG(), 60*time.Second)
 		defer cancel()
 		vs, err := helmutil.RepoChartVersions(ctx, m.params.RepoRoot, dep.Repository, dep.Name, 24*time.Hour)
 		if err != nil {
 			return errMsg{err}
 		}
+		_, _ = helmutil.WriteVersionsCache(m.params.RepoRoot, dep.Repository, dep.Name, vs)
 		return depDetailVersionsMsg{ID: id, Versions: vs}
 	}
 }
@@ -965,20 +1135,7 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.depEditLoading = false
-		m.depEditVersionsData = msg.Versions
-		items := make([]list.Item, 0, len(msg.Versions))
-		for _, v := range msg.Versions {
-			items = append(items, versionItem(v))
-		}
-		m.depEditVersions.SetItems(items)
-		// Try to keep selection on current version.
-		m.depEditVersions.Select(0)
-		for i := range msg.Versions {
-			if strings.TrimSpace(msg.Versions[i]) == strings.TrimSpace(m.depEditDep.Version) {
-				m.depEditVersions.Select(i)
-				break
-			}
-		}
+		m.setVersionsList(msg.Versions, versionsTargetDepEdit)
 		return m, nil
 	case depDetailPreviewsMsg:
 		m.endBusy()
@@ -1001,23 +1158,31 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if yamlchart.DependencyID(m.depDetailDep) != msg.ID {
 			return m, nil
 		}
-		m.depDetailVersionsData = msg.Versions
-		items := make([]list.Item, 0, len(msg.Versions))
-		for _, v := range msg.Versions {
-			items = append(items, versionItem(v))
-		}
-		m.depDetailVersions.SetItems(items)
-		// Keep selection on current version.
-		m.depDetailVersions.Select(0)
-		for i := range msg.Versions {
-			if strings.TrimSpace(msg.Versions[i]) == strings.TrimSpace(m.depDetailDep.Version) {
-				m.depDetailVersions.Select(i)
-				break
-			}
-		}
-		m.depDetailLoading = false
+		m.setVersionsList(msg.Versions, versionsTargetDepDetail)
+		m.depDetailVersionsLoading = false
 		m.depDetailPreview.SetContent(m.renderDepDetailBody())
 		return m, nil
+	case versionsRefreshResultMsg:
+		// Background refresh result: update cache + update the open modal when still relevant.
+		_ = m.handleVersionsRefreshResult(msg)
+		return m, nil
+	case versionsRefreshTickMsg:
+		// Periodic background refresh for watched deps.
+		cmds := []tea.Cmd{}
+		for key, w := range m.versionsWatched {
+			if m.versionsInFlight[key] {
+				continue
+			}
+			if !helmutil.VersionsCacheStale(w.lastRefresh, versionsCacheTTL, msg.now.UTC()) {
+				continue
+			}
+			m.versionsInFlight[key] = true
+			dep := yamlchart.Dependency{Repository: w.repoURL, Name: w.chartName}
+			cmds = append(cmds, m.refreshVersionsCmd(dep, versionsTargetBackground))
+		}
+		// Re-arm tick.
+		cmds = append(cmds, tea.Tick(versionsRefreshInterval, func(t time.Time) tea.Msg { return versionsRefreshTickMsg{now: t} }))
+		return m, tea.Batch(cmds...)
 	case noopMsg:
 		m.endBusy()
 		return m, nil
@@ -2085,6 +2250,7 @@ func (m AppModel) openDepDetailSelected() (tea.Model, tea.Cmd) {
 	m.depDetailPendingVersion = ""
 	m.depDetailVersionsData = nil
 	m.depDetailVersions.SetItems(nil)
+	m.depDetailVersionsLoading = false
 	m.depDetailPreview.SetContent(m.renderDepDetailBody())
 
 	// Decide mode.
@@ -2101,7 +2267,18 @@ func (m AppModel) openDepDetailSelected() (tea.Model, tea.Cmd) {
 	// Kick off loads.
 	cmds := []tea.Cmd{m.beginBusy("Loading"), m.loadDepDetailPreviewsCmd(dep)}
 	if m.depDetailMode == depEditModeList {
-		cmds = append(cmds, m.loadDepDetailVersionsCmd(dep))
+		// Cache-first: populate from cache immediately if present.
+		if vs, _, ok, err := helmutil.ReadVersionsCache(m.params.RepoRoot, dep.Repository, dep.Name); err == nil && ok {
+			m.setVersionsList(vs, versionsTargetDepDetail)
+		}
+		// Always background refresh; show loader in Versions tab only.
+		key := versionsKey(dep.Repository, dep.Name)
+		if !m.versionsInFlight[key] {
+			m.versionsInFlight[key] = true
+			m.depDetailVersionsLoading = true
+			m.watchVersions(dep)
+			cmds = append(cmds, m.refreshVersionsCmd(dep, versionsTargetDepDetail))
+		}
 	}
 	return m, tea.Batch(cmds...)
 }
@@ -2343,8 +2520,23 @@ func (m AppModel) openDepEditSelected() (tea.Model, tea.Cmd) {
 	}
 
 	m.depEditMode = depEditModeList
-	m.depEditLoading = true
-	return m, tea.Batch(m.beginBusy("Loading versions"), m.loadDepVersionsCmd(dep))
+
+	// Cache-first: show cached versions immediately if present.
+	if vs, fetchedAt, ok, err := helmutil.ReadVersionsCache(m.params.RepoRoot, dep.Repository, dep.Name); err == nil && ok {
+		m.setVersionsList(vs, versionsTargetDepEdit)
+		// Start background refresh regardless; loader shown only in the Versions view.
+		_ = fetchedAt
+	}
+
+	// Always start a background refresh (non-blocking UI). Use single-flight.
+	key := versionsKey(dep.Repository, dep.Name)
+	if !m.versionsInFlight[key] {
+		m.versionsInFlight[key] = true
+		m.depEditLoading = true
+		m.watchVersions(dep)
+		return m, m.refreshVersionsCmd(dep, versionsTargetDepEdit)
+	}
+	return m, nil
 }
 
 func (m AppModel) loadDepVersionsCmd(dep yamlchart.Dependency) tea.Cmd {
