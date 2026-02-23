@@ -28,6 +28,10 @@ func TestDepsEnterOpensDepDetailModal(t *testing.T) {
 	}
 }
 func TestDepDetailPreviewsMsgPopulatesBuffers(t *testing.T) {
+	// Keep this test focused on the message wiring; disable color so highlighted
+	// output doesn't change string equality assertions.
+	t.Setenv("NO_COLOR", "1")
+
 	m := NewAppModel(Params{RepoRoot: "."})
 	dep := yamlchart.Dependency{Name: "nginx", Repository: "https://example.com", Version: "0.1.0"}
 	m.depDetailOpen = true

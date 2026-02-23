@@ -682,7 +682,9 @@ func (m AppModel) loadValuesPreviewCmd(relPath string) tea.Cmd {
 		if len(b) == 0 {
 			return valuesPreviewLoadedMsg{path: relPath, content: "(empty file)"}
 		}
-		return valuesPreviewLoadedMsg{path: relPath, content: string(b)}
+		content := string(b)
+		content = maybeHighlightYAMLForDisplay(relPath, content)
+		return valuesPreviewLoadedMsg{path: relPath, content: content}
 	}
 }
 
@@ -1122,7 +1124,7 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case ahDetailMsg:
 		m.endBusy()
 		m.ahReadme = msg.readme
-		m.ahValues = msg.values
+		m.ahValues = highlightYAMLForDisplay(msg.values)
 		m.ahLoading = false
 		m.ahPreview.SetContent(m.renderAHDetailBody())
 		return m, nil
@@ -1146,7 +1148,7 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.depDetailReadme = msg.readme
-		m.depDetailDefaultValues = msg.defaultValues
+		m.depDetailDefaultValues = highlightYAMLForDisplay(msg.defaultValues)
 		m.depDetailLoading = false
 		m.depDetailPreview.SetContent(m.renderDepDetailBody())
 		return m, nil
