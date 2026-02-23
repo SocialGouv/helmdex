@@ -1242,6 +1242,67 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, cmd
 		}
 
+		// Always honor hard quit keys, even when a text input is focused.
+		// Otherwise the user can get stuck in inputs (e.g. Artifact Hub query).
+		if msg.Type == tea.KeyCtrlC || msg.String() == "ctrl+c" {
+			return m, tea.Quit
+		}
+		// Bubble Tea may or may not decode Ctrl+D as a dedicated key type depending
+		// on terminal/reader; matching by string keeps it robust.
+		if msg.Type == tea.KeyCtrlD || msg.String() == "ctrl+d" {
+			return m, tea.Quit
+		}
+
+		// Always handle Esc/back before deferring to focused inputs.
+		// Esc should first clear any active list filtering, then navigate back.
+		if key.Matches(msg, m.keys.Back) || msg.Type == tea.KeyEsc {
+			// First: if any filter is active, clear it.
+			if m.clearAnyActiveFilter() {
+				return m, nil
+			}
+			if m.creating {
+				m.creating = false
+				return m, nil
+			}
+			if m.addingDep {
+				// Step-wise back inside the wizard.
+				switch m.depStep {
+				case depStepChooseSource:
+					m.addingDep = false
+					m.depStep = depStepNone
+					m.modalErr = ""
+					return m, nil
+				case depStepCatalog, depStepAHQuery, depStepArbitrary:
+					m.depStep = depStepChooseSource
+					m.modalErr = ""
+					return m, nil
+				case depStepAHResults:
+					m.depStep = depStepAHQuery
+					m.ahQuery.Focus()
+					m.modalErr = ""
+					return m, nil
+				case depStepAHVersions:
+					m.depStep = depStepAHResults
+					m.modalErr = ""
+					return m, nil
+				case depStepAHDetail:
+					m.depStep = depStepAHResults
+					m.modalErr = ""
+					return m, nil
+				default:
+					m.addingDep = false
+					m.depStep = depStepNone
+					m.modalErr = ""
+					return m, nil
+				}
+			}
+			if m.screen == ScreenInstance {
+				m.screen = ScreenDashboard
+				m.selected = nil
+				return m, nil
+			}
+		}
+
 		// If a text input is focused or a list filter is active, do not treat
 		// characters as global shortcuts.
 		if m.inputCapturesKeys() {
@@ -1328,53 +1389,7 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, tea.Batch(m.beginBusy("Loading catalog"), m.loadCatalogCmd())
 			}
 		}
-		if key.Matches(msg, m.keys.Back) {
-			// First: if any filter is applied, clear it.
-			if m.clearAnyAppliedFilter() {
-				return m, nil
-			}
-			if m.creating {
-				m.creating = false
-				return m, nil
-			}
-			if m.addingDep {
-				// Step-wise back inside the wizard.
-				switch m.depStep {
-				case depStepChooseSource:
-					m.addingDep = false
-					m.depStep = depStepNone
-					m.modalErr = ""
-					return m, nil
-				case depStepCatalog, depStepAHQuery, depStepArbitrary:
-					m.depStep = depStepChooseSource
-					m.modalErr = ""
-					return m, nil
-				case depStepAHResults:
-					m.depStep = depStepAHQuery
-					m.ahQuery.Focus()
-					m.modalErr = ""
-					return m, nil
-				case depStepAHVersions:
-					m.depStep = depStepAHResults
-					m.modalErr = ""
-					return m, nil
-				case depStepAHDetail:
-					m.depStep = depStepAHResults
-					m.modalErr = ""
-					return m, nil
-				default:
-					m.addingDep = false
-					m.depStep = depStepNone
-					m.modalErr = ""
-					return m, nil
-				}
-			}
-			if m.screen == ScreenInstance {
-				m.screen = ScreenDashboard
-				m.selected = nil
-				return m, nil
-			}
-		}
+		// Back/Esc is handled above, before input capture, so it works inside text inputs.
 		if key.Matches(msg, m.keys.Open) {
 			if m.screen == ScreenDashboard {
 				if it, ok := m.instList.SelectedItem().(instanceItem); ok {
@@ -2146,20 +2161,21 @@ func (m *AppModel) endBusy() {
 	}
 }
 
-func (m *AppModel) clearAnyAppliedFilter() bool {
+
+func (m *AppModel) clearAnyActiveFilter() bool {
 	cleared := false
-	if m.instList.FilterState() == list.FilterApplied {
-		m.instList.ResetFilter()
-		cleared = true
+	resetIfActive := func(l *list.Model) {
+		fs := l.FilterState()
+		if fs == list.Filtering || fs == list.FilterApplied {
+			l.ResetFilter()
+			cleared = true
+		}
 	}
-	if m.catalogList.FilterState() == list.FilterApplied {
-		m.catalogList.ResetFilter()
-		cleared = true
-	}
-	if m.depSource.FilterState() == list.FilterApplied {
-		m.depSource.ResetFilter()
-		cleared = true
-	}
+	resetIfActive(&m.instList)
+	resetIfActive(&m.catalogList)
+	resetIfActive(&m.depSource)
+	resetIfActive(&m.depsList)
+	resetIfActive(&m.valuesList)
 	return cleared
 }
 
