@@ -732,13 +732,13 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// to avoid clipping in smaller terminals.
 		m.instList.SetSize(msg.Width-2, msg.Height-5)
 		m.content.Width = msg.Width - 2
-		// Instance view now has a tab bar + per-tab heading row above the viewport.
+		// Instance view has a tab bar above the viewport.
 		// Reduce height so the body fits within the terminal without clipping.
-		m.content.Height = msg.Height - 9
+		m.content.Height = msg.Height - 8
 		m.ahPreview.Width = msg.Width - 2
 		m.ahPreview.Height = msg.Height - 11
-		// Deps tab also has the shared tab bar + per-tab heading row.
-		m.depsList.SetSize(msg.Width-2, msg.Height-9)
+		// Deps tab also has the shared tab bar.
+		m.depsList.SetSize(msg.Width-2, msg.Height-8)
 		m.depSource.SetSize(msg.Width-2, msg.Height-7)
 		m.catalogList.SetSize(msg.Width-2, msg.Height-7)
 		m.ahResults.SetSize(msg.Width-2, msg.Height-7)
@@ -1523,29 +1523,13 @@ func (m AppModel) currentBodyView() string {
 			return renderAddDepView(m)
 		}
 		tabsLine := renderTabs(m.tabNames, m.activeTab)
-		headingLine := lipgloss.NewStyle().Bold(true).Render(m.instanceTabHeading())
-		prefix := tabsLine + "\n" + headingLine + "\n\n"
+		prefix := tabsLine + "\n\n"
 		if m.activeTab == 1 {
 			return prefix + m.depsList.View()
 		}
 		return prefix + m.content.View()
 	default:
 		return "unknown screen"
-	}
-}
-
-func (m AppModel) instanceTabHeading() string {
-	switch m.activeTab {
-	case 0:
-		return withIcon(iconOverview, "Overview")
-	case 1:
-		return withIcon(iconDeps, "Dependencies")
-	case 2:
-		return withIcon(iconValues, "Values")
-	case 3:
-		return withIcon(iconPresets, "Presets")
-	default:
-		return ""
 	}
 }
 
