@@ -10,6 +10,18 @@ Launch the interactive dashboard:
 helmdex tui
 ```
 
+### Values tab
+
+In an instance view, the **Values** tab lists the values-related files that exist in the instance directory, with a short description next to each:
+
+- `values.default.yaml` — baseline defaults
+- `values.platform.yaml` — platform overrides
+- `values.set.<name>.yaml` — preset layer `<name>` (sorted)
+- `values.instance.yaml` — user overrides (**editable**)
+- `values.yaml` — merged output (**generated**)
+
+Select a file to open a preview.
+
 ## YAML syntax highlighting
 
 YAML previews are syntax-highlighted in the TUI (instance values preview, Artifact Hub “Values”, dependency detail “Default”).

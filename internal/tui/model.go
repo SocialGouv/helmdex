@@ -2026,7 +2026,31 @@ func (v versionItem) FilterValue() string { return string(v) }
 type valuesFileItem string
 
 func (v valuesFileItem) Title() string       { return string(v) }
-func (v valuesFileItem) Description() string { return "" }
+func (v valuesFileItem) Description() string {
+	name := string(v)
+	switch name {
+	case "values.default.yaml":
+		return "Baseline defaults"
+	case "values.platform.yaml":
+		return "Platform overrides"
+	case "values.instance.yaml":
+		return "User overrides (editable)"
+	case "values.yaml":
+		return "Merged output (generated)"
+	default:
+		// values.set.<name>.yaml
+		const prefix = "values.set."
+		const suffix = ".yaml"
+		if strings.HasPrefix(name, prefix) && strings.HasSuffix(name, suffix) {
+			setName := strings.TrimSuffix(strings.TrimPrefix(name, prefix), suffix)
+			if strings.TrimSpace(setName) != "" {
+				return "Preset layer: " + setName
+			}
+			return "Preset layer"
+		}
+		return ""
+	}
+}
 func (v valuesFileItem) FilterValue() string { return string(v) }
 
 func (m *AppModel) refreshValuesList() {
@@ -2037,7 +2061,14 @@ func (m *AppModel) refreshValuesList() {
 	inst := *m.selected
 
 	// Only show existing files. Keep ordering stable.
-	base := []string{"values.instance.yaml", "values.yaml"}
+	//
+	// Order:
+	//  1) values.default.yaml (optional)
+	//  2) values.platform.yaml (optional)
+	//  3) values.set.*.yaml (0..n, lexicographic)
+	//  4) values.instance.yaml (required by generator; user-owned)
+	//  5) values.yaml (generated)
+	base := []string{"values.default.yaml", "values.platform.yaml"}
 	items := []list.Item{}
 	for _, rel := range base {
 		p := filepath.Join(inst.Path, rel)
@@ -2049,6 +2080,12 @@ func (m *AppModel) refreshValuesList() {
 	sort.Strings(setFiles)
 	for _, p := range setFiles {
 		items = append(items, valuesFileItem(filepath.Base(p)))
+	}
+	for _, rel := range []string{"values.instance.yaml", "values.yaml"} {
+		p := filepath.Join(inst.Path, rel)
+		if _, err := os.Stat(p); err == nil {
+			items = append(items, valuesFileItem(rel))
+		}
 	}
 
 	// Preserve selection when possible.
