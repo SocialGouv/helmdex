@@ -18,6 +18,8 @@ func newCatalogCmd(f *rootFlags) *cobra.Command {
 	}
 
 	cmd.AddCommand(newCatalogSyncCmd(f))
+	cmd.AddCommand(newCatalogListCmd(f))
+	cmd.AddCommand(newCatalogGetCmd(f))
 	return cmd
 }
 
@@ -54,4 +56,3 @@ func newCatalogSyncCmd(f *rootFlags) *cobra.Command {
 
 	return cmd
 }
-

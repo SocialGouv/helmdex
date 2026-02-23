@@ -28,6 +28,8 @@ func newInstanceCmd(f *rootFlags) *cobra.Command {
 	cmd.AddCommand(newInstanceUpdateCmd(f))
 	cmd.AddCommand(newInstanceApplyCmd(f))
 	cmd.AddCommand(newInstanceRmCmd(f))
+	cmd.AddCommand(newInstanceValuesCmd(f))
+	cmd.AddCommand(newInstancePresetsCmd(f))
 
 	return cmd
 }
@@ -38,8 +40,14 @@ func newInstanceDepCmd(f *rootFlags) *cobra.Command {
 		Short: "Manage instance dependencies in Chart.yaml",
 	}
 	cmd.AddCommand(newInstanceDepAddCmd(f))
+	cmd.AddCommand(newInstanceDepAddFromCatalogCmd(f))
 	cmd.AddCommand(newInstanceDepRmCmd(f))
 	cmd.AddCommand(newInstanceDepListCmd(f))
+	cmd.AddCommand(newInstanceDepSetVersionCmd(f))
+	cmd.AddCommand(newInstanceDepUpgradeCmd(f))
+	cmd.AddCommand(newInstanceDepVersionsCmd(f))
+	cmd.AddCommand(newInstanceDepValuesCmd(f))
+	cmd.AddCommand(newInstanceDepInspectCmd(f))
 	return cmd
 }
 

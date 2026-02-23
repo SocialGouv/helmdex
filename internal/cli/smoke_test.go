@@ -53,3 +53,56 @@ func TestCLI_Smoke_InitCreateList(t *testing.T) {
 	}
 }
 
+func TestCLI_Smoke_InstanceValuesSetGetUnset(t *testing.T) {
+	repoRoot := t.TempDir()
+
+	// init
+	{
+		cmd := NewRootCmd()
+		cmd.SetArgs([]string{"--repo", repoRoot, "init"})
+		if err := cmd.Execute(); err != nil {
+			t.Fatalf("init: %v", err)
+		}
+	}
+	// create
+	{
+		cmd := NewRootCmd()
+		cmd.SetArgs([]string{"--repo", repoRoot, "instance", "create", "app1"})
+		if err := cmd.Execute(); err != nil {
+			t.Fatalf("create: %v", err)
+		}
+	}
+
+	// set
+	{
+		cmd := NewRootCmd()
+		cmd.SetArgs([]string{"--repo", repoRoot, "instance", "values", "set", "app1", "--path", "$.foo.bar", "--value-yaml", "123"})
+		if err := cmd.Execute(); err != nil {
+			t.Fatalf("values set: %v", err)
+		}
+	}
+
+	// get
+	{
+		var b strings.Builder
+		cmd := NewRootCmd()
+		cmd.SetOut(&b)
+		cmd.SetArgs([]string{"--repo", repoRoot, "instance", "values", "get", "app1", "--path", "$.foo.bar"})
+		if err := cmd.Execute(); err != nil {
+			t.Fatalf("values get: %v", err)
+		}
+		out := b.String()
+		if !strings.Contains(out, "123") {
+			t.Fatalf("expected 123 in output, got: %q", out)
+		}
+	}
+
+	// unset
+	{
+		cmd := NewRootCmd()
+		cmd.SetArgs([]string{"--repo", repoRoot, "instance", "values", "unset", "app1", "--path", "$.foo.bar"})
+		if err := cmd.Execute(); err != nil {
+			t.Fatalf("values unset: %v", err)
+		}
+	}
+}
