@@ -29,7 +29,8 @@ func TestDepsEnterOpensDepDetailModal(t *testing.T) {
 }
 func TestDepDetailPreviewsMsgPopulatesBuffers(t *testing.T) {
 	// Keep this test focused on the message wiring; disable color so highlighted
-	// output doesn't change string equality assertions.
+	// output doesn't change string equality assertions, and markdown rendering
+	// returns raw strings.
 	t.Setenv("NO_COLOR", "1")
 
 	m := NewAppModel(Params{RepoRoot: "."})

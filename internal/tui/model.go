@@ -904,7 +904,7 @@ func (m AppModel) renderAHDetailBody() string {
 			}
 			return "README not loaded yet. Select a version in Versions tab."
 		}
-		return m.ahReadme
+		return renderMarkdownForDisplay(m.ahPreview.Width, m.ahReadme)
 	case 1:
 		if m.ahValues == "" {
 			if m.ahSelectedVersion == "" {
@@ -940,6 +940,13 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case tea.WindowSizeMsg:
+		// Capture pre-resize scroll offsets so we can preserve position where possible
+		// when we re-render markdown for a new width.
+		oldAHOff := m.ahPreview.YOffset
+		oldDepOff := m.depDetailPreview.YOffset
+		oldAHW := m.ahPreview.Width
+		oldDepW := m.depDetailPreview.Width
+
 		m.width, m.height = msg.Width, msg.Height
 		// Layout has: header + breadcrumb + body + context help + footer status,
 		// all wrapped in a padded base style. Keep list/viewports slightly smaller
@@ -968,6 +975,18 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Ensure the viewport never ends up with negative size.
 		if m.ahPreview.Height < 3 {
 			m.ahPreview.Height = 3
+		}
+
+		// Re-render markdown previews to reflow with the new width.
+		// Only do this when we have content; otherwise we'd replace helpful
+		// placeholder messages.
+		if m.ahReadme != "" && (oldAHW != m.ahPreview.Width) {
+			m.ahPreview.SetContent(m.renderAHDetailBody())
+			m.ahPreview.SetYOffset(oldAHOff)
+		}
+		if m.depDetailReadme != "" && (oldDepW != m.depDetailPreview.Width) {
+			m.depDetailPreview.SetContent(m.renderDepDetailBody())
+			m.depDetailPreview.SetYOffset(oldDepOff)
 		}
 		return m, nil
 	case instancesMsg:
@@ -2406,7 +2425,7 @@ func (m AppModel) renderDepDetailBody() string {
 		if m.depDetailReadme == "" {
 			return "README not loaded."
 		}
-		return m.depDetailReadme
+		return renderMarkdownForDisplay(m.depDetailPreview.Width, m.depDetailReadme)
 	case 1:
 		if m.depDetailDefaultValues == "" {
 			return "Default values not loaded."
