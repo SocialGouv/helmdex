@@ -205,3 +205,18 @@ func renderDepDetailModal(m AppModel) string {
 	footer := styleMuted.Render("←/→ tabs • esc close")
 	return box.Render(header + "\n\n" + tabsLine + "\n\n" + body + "\n\n" + footer)
 }
+
+func renderValuesPreviewModal(m AppModel) string {
+	box := lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).Padding(1, 2)
+	if !m.valuesPreviewOpen {
+		return ""
+	}
+	label := "Values"
+	if strings.TrimSpace(m.valuesPreviewPath) != "" {
+		label = m.valuesPreviewPath
+	}
+	header := lipgloss.NewStyle().Bold(true).Render(withIcon(iconValues, label))
+	body := m.valuesPreview.View()
+	footer := styleMuted.Render("esc close")
+	return box.Render(header + "\n\n" + body + "\n\n" + footer)
+}

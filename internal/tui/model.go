@@ -57,6 +57,12 @@ type AppModel struct {
 	tabNames  []string
 	content  viewport.Model
 
+	// values tab (file list + preview modal)
+	valuesList        list.Model
+	valuesPreviewOpen bool
+	valuesPreviewPath string
+	valuesPreview     viewport.Model
+
 	// deps state
 	depsList list.Model
 	chart    *yamlchart.Chart
@@ -218,6 +224,12 @@ func NewAppModel(p Params) AppModel {
 	deps.SetShowTitle(false)
 	deps.SetShowHelp(false)
 
+	vals := list.New([]list.Item{}, list.NewDefaultDelegate(), 0, 0)
+	vals.Title = ""
+	vals.SetShowTitle(false)
+	vals.SetShowHelp(false)
+	vals.SetFilteringEnabled(true)
+
 	src := list.New([]list.Item{sourceItem("Predefined catalog"), sourceItem("Artifact Hub"), sourceItem("Arbitrary")}, list.NewDefaultDelegate(), 0, 0)
 	src.Title = withIcon(iconWizard, "Select source")
 	src.SetShowHelp(false)
@@ -290,6 +302,8 @@ func NewAppModel(p Params) AppModel {
 	vp := viewport.New(0, 0)
 	ahvp := viewport.New(0, 0)
 	depDetailVP := viewport.New(0, 0)
+	valsPrev := viewport.New(0, 0)
+	valsPrev.SetContent("No file selected")
 
 	sp := spinner.New()
 	sp.Spinner = spinner.Dot
@@ -323,6 +337,8 @@ func NewAppModel(p Params) AppModel {
 		activeTab: 0,
 		tabNames:  tabNames,
 		content: vp,
+		valuesList: vals,
+		valuesPreview: valsPrev,
 		palette: newPaletteModel(),
 		keys: keys,
 	}
@@ -337,6 +353,10 @@ func (m AppModel) Init() tea.Cmd {
 type errMsg struct{ err error }
 
 type regenDoneMsg struct{}
+
+// editValuesDoneMsg is emitted after the editor for values.instance.yaml exits.
+// We use it to trigger an automatic regenerate of merged values.yaml.
+type editValuesDoneMsg struct{}
 
 type appliedMsg struct{}
 
@@ -368,6 +388,11 @@ type depDetailVersionsMsg struct {
 type depVersionsMsg struct {
 	ID       yamlchart.DepID
 	Versions []string
+}
+
+type valuesPreviewLoadedMsg struct {
+	path    string
+	content string
 }
 
 // noopMsg is used by background cmds to signal "success but no UI change",
@@ -478,6 +503,23 @@ func (m AppModel) loadHelmPreviewsCmd(repoURL, chartName, version string) tea.Cm
 		_ = helmutil.WriteShowCache(m.params.RepoRoot, repoURL, chartName, version, helmutil.ShowKindReadme, readme)
 		_ = helmutil.WriteShowCache(m.params.RepoRoot, repoURL, chartName, version, helmutil.ShowKindValues, values)
 		return ahDetailMsg{readme: readme, values: values}
+	}
+}
+
+func (m AppModel) loadValuesPreviewCmd(relPath string) tea.Cmd {
+	return func() tea.Msg {
+		if m.selected == nil {
+			return valuesPreviewLoadedMsg{path: relPath, content: "No instance selected"}
+		}
+		p := filepath.Join(m.selected.Path, relPath)
+		b, err := os.ReadFile(p)
+		if err != nil {
+			return errMsg{fmt.Errorf("could not read %s: %w", relPath, err)}
+		}
+		if len(b) == 0 {
+			return valuesPreviewLoadedMsg{path: relPath, content: "(empty file)"}
+		}
+		return valuesPreviewLoadedMsg{path: relPath, content: string(b)}
 	}
 }
 
@@ -739,6 +781,7 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.ahPreview.Height = msg.Height - 11
 		// Deps tab also has the shared tab bar.
 		m.depsList.SetSize(msg.Width-2, msg.Height-8)
+		m.valuesList.SetSize(msg.Width-2, msg.Height-8)
 		m.depSource.SetSize(msg.Width-2, msg.Height-7)
 		m.catalogList.SetSize(msg.Width-2, msg.Height-7)
 		m.ahResults.SetSize(msg.Width-2, msg.Height-7)
@@ -748,6 +791,8 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.palette.SetSize(min(70, msg.Width-4), min(14, msg.Height-6))
 		m.depDetailPreview.Width = max(10, msg.Width-6)
 		m.depDetailPreview.Height = max(5, msg.Height-14)
+		m.valuesPreview.Width = max(10, msg.Width-6)
+		m.valuesPreview.Height = max(5, msg.Height-14)
 		// Ensure the viewport never ends up with negative size.
 		if m.ahPreview.Height < 3 {
 			m.ahPreview.Height = 3
@@ -817,7 +862,25 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(m.beginBusy("Applying"), m.applyDependencyAndApplyInstanceCmd(msg.dep))
 	case regenDoneMsg:
 		m.endBusy()
+		m.statusErr = ""
+		m.refreshValuesList()
+		if m.valuesPreviewOpen {
+			return m, m.loadValuesPreviewCmd(m.valuesPreviewPath)
+		}
 		m.refreshInstanceView()
+		return m, nil
+	case valuesPreviewLoadedMsg:
+		// Ignore stale preview loads.
+		if !m.valuesPreviewOpen || msg.path != m.valuesPreviewPath {
+			return m, nil
+		}
+		m.valuesPreview.SetContent(msg.content)
+		return m, nil
+	case editValuesDoneMsg:
+		// After editing instance values, always regenerate merged values.yaml.
+		if m.screen == ScreenInstance && !m.addingDep {
+			return m, tea.Batch(m.beginBusy("Regenerating values"), m.regenMergedValuesCmd())
+		}
 		return m, nil
 	case appliedMsg:
 		m.endBusy()
@@ -1001,6 +1064,18 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.paletteOpen {
 			return m.paletteUpdate(msg)
 		}
+		// Values preview modal has priority over global shortcuts.
+		if m.valuesPreviewOpen {
+			if msg.Type == tea.KeyEsc {
+				m.valuesPreviewOpen = false
+				m.valuesPreviewPath = ""
+				m.valuesPreview.SetContent("")
+				return m, nil
+			}
+			var cmd tea.Cmd
+			m.valuesPreview, cmd = m.valuesPreview.Update(msg)
+			return m, cmd
+		}
 
 		// If a text input is focused or a list filter is active, do not treat
 		// characters as global shortcuts.
@@ -1031,6 +1106,15 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if key.Matches(msg, m.keys.EditValues) {
 			if m.screen == ScreenInstance && !m.addingDep {
+				// Values tab: only allow editing values.instance.yaml.
+				if m.activeTab == 2 {
+					if it := m.valuesList.SelectedItem(); it != nil {
+						if vf, ok := it.(valuesFileItem); ok && string(vf) == "values.instance.yaml" {
+							return m, m.editInstanceValuesCmd()
+						}
+					}
+					return m, nil
+				}
 				return m, m.editInstanceValuesCmd()
 			}
 		}
@@ -1154,17 +1238,23 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 		if m.screen == ScreenInstance && !m.addingDep {
-			if key.Matches(msg, m.keys.TabLeft) {
-				m.activeTab = (m.activeTab - 1 + len(m.tabNames)) % len(m.tabNames)
-				m.refreshInstanceView()
-				return m, nil
+		if key.Matches(msg, m.keys.TabLeft) {
+			m.activeTab = (m.activeTab - 1 + len(m.tabNames)) % len(m.tabNames)
+			if m.activeTab == 2 {
+				m.refreshValuesList()
 			}
-			if key.Matches(msg, m.keys.TabRight) {
-				m.activeTab = (m.activeTab + 1) % len(m.tabNames)
-				m.refreshInstanceView()
-				return m, nil
-			}
+			m.refreshInstanceView()
+			return m, nil
 		}
+		if key.Matches(msg, m.keys.TabRight) {
+			m.activeTab = (m.activeTab + 1) % len(m.tabNames)
+			if m.activeTab == 2 {
+				m.refreshValuesList()
+			}
+			m.refreshInstanceView()
+			return m, nil
+		}
+	}
 	}
 
 	// Modal: create instance.
@@ -1389,6 +1479,23 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, cmd
 		}
+		// Values tab uses its own list.
+		if m.activeTab == 2 && !m.addingDep {
+			var cmd tea.Cmd
+			m.valuesList, cmd = m.valuesList.Update(msg)
+			if km, ok := msg.(tea.KeyMsg); ok && km.Type == tea.KeyEnter {
+				if m.valuesList.FilterState() != list.Filtering {
+					it := m.valuesList.SelectedItem()
+					if vf, ok := it.(valuesFileItem); ok {
+						m.valuesPreviewOpen = true
+						m.valuesPreviewPath = string(vf)
+						m.valuesPreview.SetContent(styleMuted.Render("Loading…"))
+						return m, tea.Batch(cmd, m.loadValuesPreviewCmd(m.valuesPreviewPath))
+					}
+				}
+			}
+			return m, cmd
+		}
 		var cmd tea.Cmd
 		m.content, cmd = m.content.Update(msg)
 		return m, cmd
@@ -1501,6 +1608,9 @@ func (m AppModel) View() string {
 		// block above a long instance view can scroll it off-screen in AltScreen.
 		// Render it as the full body instead.
 		body = renderDepEditModal(m)
+	} else if m.valuesPreviewOpen {
+		// Values preview is a full-screen modal.
+		body = renderValuesPreviewModal(m)
 	} else {
 		body = m.currentBodyView()
 	}
@@ -1526,6 +1636,9 @@ func (m AppModel) currentBodyView() string {
 		prefix := tabsLine + "\n\n"
 		if m.activeTab == 1 {
 			return prefix + m.depsList.View()
+		}
+		if m.activeTab == 2 {
+			return prefix + m.valuesList.View()
 		}
 		return prefix + m.content.View()
 	default:
@@ -1708,6 +1821,53 @@ type versionItem string
 func (v versionItem) Title() string       { return string(v) }
 func (v versionItem) Description() string { return "" }
 func (v versionItem) FilterValue() string { return string(v) }
+
+type valuesFileItem string
+
+func (v valuesFileItem) Title() string       { return string(v) }
+func (v valuesFileItem) Description() string { return "" }
+func (v valuesFileItem) FilterValue() string { return string(v) }
+
+func (m *AppModel) refreshValuesList() {
+	if m.selected == nil {
+		m.valuesList.SetItems(nil)
+		return
+	}
+	inst := *m.selected
+
+	// Only show existing files. Keep ordering stable.
+	base := []string{"values.instance.yaml", "values.yaml"}
+	items := []list.Item{}
+	for _, rel := range base {
+		p := filepath.Join(inst.Path, rel)
+		if _, err := os.Stat(p); err == nil {
+			items = append(items, valuesFileItem(rel))
+		}
+	}
+	setFiles, _ := filepath.Glob(filepath.Join(inst.Path, "values.set.*.yaml"))
+	sort.Strings(setFiles)
+	for _, p := range setFiles {
+		items = append(items, valuesFileItem(filepath.Base(p)))
+	}
+
+	// Preserve selection when possible.
+	prevSel := ""
+	if it := m.valuesList.SelectedItem(); it != nil {
+		if vf, ok := it.(valuesFileItem); ok {
+			prevSel = string(vf)
+		}
+	}
+
+	m.valuesList.SetItems(items)
+	if prevSel != "" {
+		for i, it := range items {
+			if vf, ok := it.(valuesFileItem); ok && string(vf) == prevSel {
+				m.valuesList.Select(i)
+				break
+			}
+		}
+	}
+}
 
 func renderAddDepView(m AppModel) string {
 	header := lipgloss.NewStyle().Bold(true).Render(withIcon(iconAdd, "Add dependency"))
@@ -2337,20 +2497,70 @@ func (m AppModel) editInstanceValuesCmd() tea.Cmd {
 		if m.selected == nil {
 			return errMsg{fmt.Errorf("no instance selected")}
 		}
-		editor := os.Getenv("EDITOR")
-		if strings.TrimSpace(editor) == "" {
+		editor := strings.TrimSpace(os.Getenv("EDITOR"))
+		if editor == "" {
 			editor = "vi"
 		}
 		path := filepath.Join(m.selected.Path, "values.instance.yaml")
-		cmd := exec.Command(editor, path)
+		name, args := editorCommand(editor, path)
+		cmd := exec.Command(name, args...)
 		cmd.Stdin = os.Stdin
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
 		if err := cmd.Run(); err != nil {
 			return errMsg{fmt.Errorf("editor failed: %w", err)}
 		}
-		return nil
+		return editValuesDoneMsg{}
 	}
+}
+
+// editorCommand builds an editor invocation that tries to *block until the file
+// is closed* for common GUI editors.
+//
+// NOTE: This uses strings.Fields (no shell parsing). If you need quoting,
+// prefer setting EDITOR to a wrapper script.
+func editorCommand(editor, path string) (name string, args []string) {
+	parts := strings.Fields(strings.TrimSpace(editor))
+	if len(parts) == 0 {
+		return "vi", []string{path}
+	}
+	name = parts[0]
+	args = append([]string{}, parts[1:]...)
+
+	base := filepath.Base(name)
+
+	// Terminal editors block by default (no special flags required).
+	// Keep this list as documentation / future hook point.
+	switch base {
+	case "vi", "vim", "nvim", "neovim", "nano", "micro":
+		args = append(args, path)
+		return name, args
+	}
+
+	// VS Code and variants: require --wait to block.
+	if (base == "code" || base == "code-insiders" || base == "codium" || base == "cursor") && !containsArg(args, "--wait") {
+		args = append(args, "--wait")
+	}
+	// Sublime: -w blocks.
+	if (base == "subl" || base == "sublime_text") && !containsArg(args, "-w") && !containsArg(args, "--wait") {
+		args = append(args, "-w")
+	}
+	// gedit: --wait blocks.
+	if base == "gedit" && !containsArg(args, "--wait") {
+		args = append(args, "--wait")
+	}
+
+	args = append(args, path)
+	return name, args
+}
+
+func containsArg(args []string, want string) bool {
+	for _, a := range args {
+		if a == want {
+			return true
+		}
+	}
+	return false
 }
 
 func (m AppModel) applyInstanceCmd(forceRelock bool) tea.Cmd {
@@ -2393,7 +2603,7 @@ func (m *AppModel) refreshInstanceView() {
 	case 0:
 		m.content.SetContent(m.renderOverviewTab())
 	case 2:
-		m.content.SetContent(m.renderValuesTab())
+		m.refreshValuesList()
 	case 3:
 		m.content.SetContent(m.renderPresetsTab())
 	default:
@@ -2463,30 +2673,8 @@ func readResolvedCommit(metaPath string) string {
 }
 
 func (m AppModel) renderValuesTab() string {
-	if m.selected == nil {
-		return ""
-	}
-	inst := *m.selected
-	paths := []string{
-		"values.default.yaml",
-		"values.platform.yaml",
-		"values.instance.yaml",
-		"values.yaml",
-	}
-	setFiles, _ := filepath.Glob(filepath.Join(inst.Path, "values.set.*.yaml"))
-	sort.Strings(setFiles)
-	lines := []string{"Values files:", ""}
-	for _, rel := range paths {
-		p := filepath.Join(inst.Path, rel)
-		if _, err := os.Stat(p); err == nil {
-			lines = append(lines, "- "+rel)
-		}
-	}
-	for _, p := range setFiles {
-		lines = append(lines, "- "+filepath.Base(p))
-	}
-	lines = append(lines, "", "Actions:", "- e: edit values.instance.yaml", "- r: regenerate values.yaml")
-	return strings.Join(lines, "\n")
+	// Deprecated: Values tab now renders via valuesList.
+	return ""
 }
 
 func (m AppModel) renderPresetsTab() string {
