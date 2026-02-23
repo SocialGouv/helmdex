@@ -24,7 +24,7 @@ func TestValuesTabEnterOpensPreviewModal(t *testing.T) {
 	m := NewAppModel(Params{RepoRoot: tmp})
 	m.screen = ScreenInstance
 	m.selected = &instances.Instance{Name: "x", Path: instPath}
-	m.activeTab = 2 // Values tab unchanged
+	m.activeTab = InstanceTabValues
 	m.refreshValuesList()
 
 	nm, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
@@ -37,7 +37,7 @@ func TestValuesTabEnterOpensPreviewModal(t *testing.T) {
 func TestValuesTabEscClosesPreviewModal(t *testing.T) {
 	m := NewAppModel(Params{RepoRoot: "."})
 	m.screen = ScreenInstance
-	m.activeTab = 2
+	m.activeTab = InstanceTabValues
 	m.valuesPreviewOpen = true
 	m.valuesPreviewPath = "values.instance.yaml"
 
@@ -75,7 +75,7 @@ func TestValuesTabListShowsDescriptionsAndOrdering(t *testing.T) {
 	m := NewAppModel(Params{RepoRoot: tmp})
 	m.screen = ScreenInstance
 	m.selected = &instances.Instance{Name: "x", Path: instPath}
-	m.activeTab = 2
+	m.activeTab = InstanceTabValues
 	m.refreshValuesList()
 
 	items := m.valuesList.Items()

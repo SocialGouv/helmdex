@@ -153,7 +153,6 @@ type AppModel struct {
 // Instance tabs (ScreenInstance).
 const (
 	InstanceTabDeps = iota
-	InstanceTabOverview
 	InstanceTabValues
 	InstanceTabPresets
 )
@@ -162,7 +161,6 @@ func instanceTabNames() []string {
 	// Centralized tab order definition.
 	return []string{
 		withIcon(iconDeps, "Dependencies"),
-		withIcon(iconOverview, "Overview"),
 		withIcon(iconValues, "Values"),
 		withIcon(iconPresets, "Presets"),
 	}
@@ -1557,7 +1555,6 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.selected = &inst
 			m.screen = ScreenInstance
 			m.activeTab = 0 // Dependencies is first tab
-			m.content.SetContent(renderInstanceOverview(inst))
 			return m, tea.Batch(
 				m.beginBusy("Reloading"),
 				m.reloadInstancesCmd(),
@@ -2000,25 +1997,6 @@ func (i instanceItem) Description() string {
 		return ""
 	}
 	return i.Path
-}
-
-func renderInstanceOverview(inst instances.Instance) string {
-	return fmt.Sprintf("Instance: %s\nPath: %s", inst.Name, inst.Path)
-}
-
-func renderInstanceTab(inst instances.Instance, tab int) string {
-	switch tab {
-	case InstanceTabDeps:
-		return "Dependencies (press 'a' to add)"
-	case InstanceTabOverview:
-		return renderInstanceOverview(inst)
-	case InstanceTabValues:
-		return "Values"
-	case InstanceTabPresets:
-		return "Presets"
-	default:
-		return "unknown tab"
-	}
 }
 
 type sourceItem string
@@ -3064,58 +3042,14 @@ func (m *AppModel) refreshInstanceView() {
 		return
 	}
 	switch m.activeTab {
-	case 0:
-		m.content.SetContent(m.renderOverviewTab())
-	case 2:
+	case InstanceTabValues:
 		m.refreshValuesList()
-	case 3:
+	case InstanceTabPresets:
 		m.content.SetContent(m.renderPresetsTab())
 	default:
-		m.content.SetContent(renderInstanceTab(*m.selected, m.activeTab))
+		// Deps tab (and any future non-viewport tabs) render via their own widgets.
+		m.content.SetContent("")
 	}
-}
-
-func (m AppModel) renderOverviewTab() string {
-	inst := *m.selected
-	lines := []string{renderInstanceOverview(inst), ""}
-	// Chart summary.
-	if m.chart != nil {
-		lines = append(lines, fmt.Sprintf("Chart: %s (%s)\nVersion: %s", m.chart.Name, m.chart.APIVersion, m.chart.Version))
-		lines = append(lines, fmt.Sprintf("Dependencies: %d", len(m.chart.Dependencies)))
-		for _, d := range m.chart.Dependencies {
-			lines = append(lines, fmt.Sprintf("- %s: %s @ %s", yamlchart.DependencyID(d), d.Version, d.Repository))
-		}
-		lines = append(lines, "")
-	}
-	// Local set files.
-	setFiles, _ := filepath.Glob(filepath.Join(inst.Path, "values.set.*.yaml"))
-	if len(setFiles) == 0 {
-		lines = append(lines, "Sets: (none)")
-	} else {
-		s := []string{}
-		for _, f := range setFiles {
-			s = append(s, filepath.Base(f))
-		}
-		sort.Strings(s)
-		lines = append(lines, "Sets:")
-		for _, f := range s {
-			lines = append(lines, "- "+f)
-		}
-	}
-	lines = append(lines, "")
-	// Sync meta.
-	if m.params.Config != nil && len(m.params.Config.Sources) > 0 {
-		lines = append(lines, "Sources:")
-		for _, src := range m.params.Config.Sources {
-			metaPath := filepath.Join(m.params.RepoRoot, ".helmdex", "cache", src.Name, ".helmdex-meta.yaml")
-			commit := readResolvedCommit(metaPath)
-			if commit == "" {
-				commit = "(not synced)"
-			}
-			lines = append(lines, fmt.Sprintf("- %s: %s", src.Name, commit))
-		}
-	}
-	return strings.Join(lines, "\n")
 }
 
 func readResolvedCommit(metaPath string) string {

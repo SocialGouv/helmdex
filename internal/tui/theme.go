@@ -26,7 +26,6 @@ const (
 	iconAH        = "🌐"
 	iconCustom    = "🧰"
 
-	iconOverview = "📝"
 	iconDeps     = "🧩"
 	iconValues   = "⚙"
 	iconPresets  = "🎛"
