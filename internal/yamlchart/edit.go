@@ -26,21 +26,23 @@ func (c *Chart) UpsertDependency(dep Dependency) error {
 		return fmt.Errorf("dependency repository is required")
 	}
 
-	// Uniqueness of id.
+	// Upsert key is the stable dep id (alias if set, else name).
+	//
+	// This allows depending on the same chart multiple times by using distinct
+	// aliases (Helm supports this), while keeping values keying stable.
 	id := DependencyID(dep)
-	for _, existing := range c.Dependencies {
-		if DependencyID(existing) == id && existing.Name != dep.Name {
-			return fmt.Errorf("dependency id %q already used", id)
-		}
-	}
-
 	for i := range c.Dependencies {
-		if c.Dependencies[i].Name == dep.Name {
+		if DependencyID(c.Dependencies[i]) == id {
 			c.Dependencies[i] = dep
 			return nil
 		}
 	}
-	// Add.
+	// Add (ensure no duplicate id exists).
+	for _, existing := range c.Dependencies {
+		if DependencyID(existing) == id {
+			return fmt.Errorf("dependency id %q already used", id)
+		}
+	}
 	c.Dependencies = append(c.Dependencies, dep)
 	return nil
 }

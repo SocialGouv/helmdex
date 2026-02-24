@@ -14,6 +14,8 @@ type paletteCmdID string
 const (
 	palNewInstance  paletteCmdID = "new-instance"
 	palReload       paletteCmdID = "reload"
+	palSources      paletteCmdID = "sources"
+	palCatalogSync  paletteCmdID = "catalog-sync"
 	palQuit         paletteCmdID = "quit"
 	palBack         paletteCmdID = "back"
 	palAddDep       paletteCmdID = "add-dep"
@@ -76,11 +78,17 @@ func (p *paletteModel) View() string {
 func (p *paletteModel) Update(msg tea.Msg) (tea.Cmd, bool) {
 	var cmds []tea.Cmd
 
+	oldQ := p.query.Value()
 	var cmd tea.Cmd
 	p.query, cmd = p.query.Update(msg)
 	cmds = append(cmds, cmd)
-	// Apply filter after query update.
-	p.applyQueryFilter()
+	// Apply filter only when the query changes.
+	//
+	// If we re-apply the filter on every key (including ↑/↓), we reset selection
+	// to index 0 each time, preventing navigation beyond the first items.
+	if p.query.Value() != oldQ {
+		p.applyQueryFilter()
+	}
 
 	p.list, cmd = p.list.Update(msg)
 	cmds = append(cmds, cmd)
@@ -107,6 +115,8 @@ func paletteItemsFor(m AppModel) []paletteItem {
 	items = append(items,
 		paletteItem{ID: palReload, Icon: iconReload, Name: "Reload instances", Desc: "Refresh instances list"},
 		paletteItem{ID: palNewInstance, Icon: iconAdd, Name: "New instance", Desc: "Create a new instance"},
+		paletteItem{ID: palSources, Icon: iconCmd, Name: "Configure sources", Desc: "Edit helmdex.yaml sources (catalog/presets)"},
+		paletteItem{ID: palCatalogSync, Icon: iconReload, Name: "Catalog sync", Desc: "Sync remote sources into .helmdex and refresh catalog"},
 	)
 
 	if m.screen == ScreenInstance {

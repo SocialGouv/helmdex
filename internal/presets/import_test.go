@@ -47,13 +47,13 @@ func TestImport_CopiesDefaultPlatformAndSelectedSet(t *testing.T) {
 	// Default copied.
 	if b, err := os.ReadFile(filepath.Join(instancePath, "values.default.yaml")); err != nil {
 		t.Fatalf("read default: %v", err)
-	} else if string(b) != "a: 1\n" {
+	} else if string(b) != "postgresql:\n    a: 1\n" {
 		t.Fatalf("unexpected default: %q", string(b))
 	}
 	// Platform copied.
 	if b, err := os.ReadFile(filepath.Join(instancePath, "values.platform.yaml")); err != nil {
 		t.Fatalf("read platform: %v", err)
-	} else if string(b) != "p: 1\n" {
+	} else if string(b) != "postgresql:\n    p: 1\n" {
 		t.Fatalf("unexpected platform: %q", string(b))
 	}
 	// Set overwritten.
@@ -63,4 +63,3 @@ func TestImport_CopiesDefaultPlatformAndSelectedSet(t *testing.T) {
 		t.Fatalf("expected set to be overwritten")
 	}
 }
-

@@ -1,0 +1,4 @@
+global:
+  tier: ha-production
+setHA: true
+

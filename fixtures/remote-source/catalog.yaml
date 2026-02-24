@@ -1,0 +1,18 @@
+apiVersion: helmdex.io/v0.2
+kind: HelmdexCatalog
+entries:
+  - id: bitnami-postgresql-15.5.0
+    description: Bitnami PostgreSQL pinned version (fixture)
+    chart:
+      repo: https://charts.bitnami.com/bitnami
+      name: postgresql
+    version: 15.5.0
+    defaultSets: [dev]
+  - id: bitnami-nginx-15.0.0
+    description: Bitnami NGINX pinned version (fixture)
+    chart:
+      repo: https://charts.bitnami.com/bitnami
+      name: nginx
+    version: 15.0.0
+    defaultSets: [dev]
+

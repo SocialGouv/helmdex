@@ -1,0 +1,4 @@
+global:
+  platform: eks
+pfOnly: true
+

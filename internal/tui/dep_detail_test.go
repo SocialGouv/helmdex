@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"strings"
 	"testing"
 
 	"helmdex/internal/yamlchart"
@@ -71,5 +72,35 @@ func TestDepDetailVersionsEnterSetsPendingVersion(t *testing.T) {
 	mm := nm.(AppModel)
 	if mm.depDetailPendingVersion != "1.1.0" {
 		t.Fatalf("expected pending version to be set, got %q", mm.depDetailPendingVersion)
+	}
+}
+
+func TestDepDetailTabNamesIncludesSets(t *testing.T) {
+	names := depDetailTabNames()
+	found := false
+	for _, n := range names {
+		if strings.Contains(n, "Sets") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected dep detail tab names to include Sets, got %#v", names)
+	}
+}
+
+func TestDepActionsMenuOpensFromDepsTab(t *testing.T) {
+	m := NewAppModel(Params{RepoRoot: "."})
+	m.screen = ScreenInstance
+	m.activeTab = InstanceTabDeps
+
+	dep := yamlchart.Dependency{Name: "nginx", Repository: "https://example.com", Version: "1.2.3"}
+	m.depsList.SetItems([]list.Item{depItem(dep)})
+
+	// Press x to open actions menu.
+	nm, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
+	mm := nm.(AppModel)
+	if !mm.depActionsOpen {
+		t.Fatalf("expected dep actions menu to open")
 	}
 }

@@ -1,8 +1,8 @@
-.helmdex/
-charts/
+/.helmdex/
+/charts/
 *.tmp
 *.swp
 
-apps/
-helmdex.yaml
+/apps/
+/helmdex.yaml
 

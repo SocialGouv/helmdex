@@ -1,0 +1,6 @@
+app:
+  name: nginx
+  replicas: 1
+global:
+  tier: default
+

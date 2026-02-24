@@ -19,6 +19,8 @@ import (
 
 func newInstanceDepAddFromCatalogCmd(f *rootFlags) *cobra.Command {
 	var catalogID string
+	var sets []string
+	var noDefaultSets bool
 	var apply bool
 	var relock bool
 	cmd := &cobra.Command{
@@ -63,13 +65,30 @@ func newInstanceDepAddFromCatalogCmd(f *rootFlags) *cobra.Command {
 			if err := yamlchart.WriteChart(chartPath, c); err != nil {
 				return err
 			}
-			// Materialize default sets.
-			for _, setName := range e.DefaultSets {
+
+			// Materialize selected sets as per-dependency marker files.
+			// Selection rules:
+			// - If --no-default-sets is NOT set, start with catalog defaultSets.
+			// - Always union with explicit --set flags.
+			// - Selection is represented by local file presence; `instance apply` overwrites
+			//   these files with downloaded content from the remote presets cache.
+			wantSets := []string{}
+			if !noDefaultSets {
+				wantSets = append(wantSets, e.DefaultSets...)
+			}
+			wantSets = append(wantSets, sets...)
+			seen := map[string]struct{}{}
+			depID := yamlchart.DependencyID(dep)
+			for _, setName := range wantSets {
 				setName = strings.TrimSpace(setName)
 				if setName == "" {
 					continue
 				}
-				p := filepath.Join(inst.Path, fmt.Sprintf("values.set.%s.yaml", setName))
+				if _, ok := seen[setName]; ok {
+					continue
+				}
+				seen[setName] = struct{}{}
+				p := filepath.Join(inst.Path, fmt.Sprintf("values.dep-set.%s--%s.yaml", depID, setName))
 				if _, err := os.Stat(p); err == nil {
 					continue
 				}
@@ -96,6 +115,8 @@ func newInstanceDepAddFromCatalogCmd(f *rootFlags) *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&catalogID, "id", "", "Catalog entry id")
+	cmd.Flags().StringSliceVar(&sets, "set", nil, "Select a values set for this dependency (repeatable); unions with catalog defaultSets")
+	cmd.Flags().BoolVar(&noDefaultSets, "no-default-sets", false, "Do not select catalog defaultSets")
 	cmd.Flags().BoolVar(&apply, "apply", false, "Apply instance after adding")
 	cmd.Flags().BoolVar(&relock, "relock", false, "Force relock when applying")
 	return cmd

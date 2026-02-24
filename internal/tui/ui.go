@@ -179,6 +179,24 @@ func renderDepEditModal(m AppModel) string {
 	return box.Render(header + "\n\n" + body)
 }
 
+func renderDepActionsModal(m AppModel) string {
+	box := lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).Padding(1, 2)
+	box = box.Height(modalMaxHeight(m))
+	if !m.depActionsOpen {
+		return ""
+	}
+	dep := m.depActionsDep
+	header := lipgloss.NewStyle().Bold(true).Render(withIcon(iconCmd, "Dependency actions"))
+	if strings.TrimSpace(dep.Name) != "" {
+		header += "\n" + styleMuted.Render(fmt.Sprintf("%s @ %s  (%s)", dep.Name, dep.Repository, dep.Version))
+	}
+	if m.modalErr != "" {
+		header += "\n" + styleErrStrong.Render(withIcon(iconErr, "Error:")+" "+m.modalErr)
+	}
+	body := m.depActionsList.View() + "\n" + styleMuted.Render("enter run • esc close")
+	return box.Render(header + "\n\n" + body)
+}
+
 func renderDepDetailModal(m AppModel) string {
 	box := lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).Padding(1, 2)
 	// Clamp modal height so its top border never scrolls off-screen.

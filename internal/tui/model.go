@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"helmdex/internal/artifacthub"
+	"helmdex/internal/config"
 	"helmdex/internal/catalog"
 	"helmdex/internal/helmutil"
 	"helmdex/internal/instances"
@@ -76,9 +77,28 @@ type AppModel struct {
 	depSource list.Model
 	modalErr  string
 
+	// blocking apply overlay (for long-running add+apply flows)
+	applyOpen           bool
+	applyCancelConfirm  bool
+	applyCancelRequested bool
+	applyCancel         context.CancelFunc
+	applyID             int
+
 	// catalog picker
 	catalogList    list.Model
 	catalogEntries []catalog.Entry
+
+	// catalog detail (sets selection)
+	catalogDetailEntry *catalog.Entry
+	catalogSetList     list.Model
+	catalogSetsLoading bool
+
+	// catalog collision resolution (same dependency name already exists)
+	catalogCollisionDep      yamlchart.Dependency
+	catalogCollisionExisting yamlchart.Dependency
+	catalogCollisionSets     []string
+	catalogCollisionChoice   collisionChoice
+	catalogCollisionAlias    textinput.Model
 
 	// artifacthub picker
 	ahClient          *artifacthub.Client
@@ -113,6 +133,11 @@ type AppModel struct {
 	depEditVersionsData []string
 	depEditVersionInput textinput.Model
 
+	// dependency actions menu (Deps tab)
+	depActionsOpen bool
+	depActionsDep  yamlchart.Dependency
+	depActionsList list.Model
+
 	// dependency detail modal (Deps tab)
 	depDetailOpen     bool
 	depDetailDep      yamlchart.Dependency
@@ -120,6 +145,9 @@ type AppModel struct {
 	depDetailTabNames []string
 	depDetailLoading  bool
 	depDetailMode     depEditMode // reuse enum: list vs manual
+	// depDetailSetsLoading is specific to the Sets tab.
+	depDetailSetsLoading bool
+	depDetailSets        list.Model
 	// depDetailVersionsLoading is specific to the Versions tab, so other tabs can
 	// remain interactive while versions refreshes.
 	depDetailVersionsLoading bool
@@ -148,13 +176,21 @@ type AppModel struct {
 	height int
 
 	keys keyMap
+
+	// sources config modal
+	sourcesOpen bool
+	sourcesName textinput.Model
+	sourcesGit  textinput.Model
+	sourcesRef  textinput.Model
+	sourcesPlat textinput.Model
+	sourcesFocus int
+	sourcesErr  string
 }
 
 // Instance tabs (ScreenInstance).
 const (
 	InstanceTabDeps = iota
 	InstanceTabValues
-	InstanceTabPresets
 )
 
 func instanceTabNames() []string {
@@ -162,7 +198,6 @@ func instanceTabNames() []string {
 	return []string{
 		withIcon(iconDeps, "Dependencies"),
 		withIcon(iconValues, "Values"),
-		withIcon(iconPresets, "Presets"),
 	}
 }
 
@@ -171,7 +206,7 @@ const (
 	DepDetailTabConfigure = iota
 	DepDetailTabReadme
 	DepDetailTabDefault
-	DepDetailTabLocal
+	DepDetailTabSets
 	DepDetailTabVersions
 )
 
@@ -181,7 +216,7 @@ func depDetailTabNames() []string {
 		withIcon(iconSchema, "Configure"),
 		withIcon(iconReadme, "README"),
 		withIcon(iconAHValues, "Default"),
-		withIcon(iconValues, "Local"),
+		withIcon(iconPresets, "Sets"),
 		withIcon(iconVersions, "Versions"),
 	}
 }
@@ -205,18 +240,102 @@ const (
 	actionForceRefreshAHDetail = "Force refresh chart detail"
 )
 
+type depActionItem string
+
+func (a depActionItem) Title() string       { return string(a) }
+func (a depActionItem) Description() string { return "" }
+func (a depActionItem) FilterValue() string { return string(a) }
+
+const (
+	depActionSyncPresets  depActionItem = "Sync presets"
+	depActionChangeVer    depActionItem = "Change version"
+	depActionUpgrade      depActionItem = "Upgrade to latest"
+	depActionRemove       depActionItem = "Remove"
+)
+
 type depWizardStep int
 
 const (
 	depStepNone depWizardStep = iota
 	depStepChooseSource
 	depStepCatalog
+	depStepCatalogDetail
+	depStepCatalogCollision
 	depStepAHQuery
 	depStepAHResults
 	depStepAHVersions
 	depStepAHDetail
 	depStepArbitrary
 )
+
+type applyDoneMsg struct {
+	applyID int
+	chart   *yamlchart.Chart
+	err     error
+}
+
+type applyCancelDoneMsg struct {
+	applyID int
+}
+
+type collisionChoice int
+
+const (
+	collisionChoiceAlias collisionChoice = iota
+	collisionChoiceOverride
+	collisionChoiceCancel
+)
+
+type catalogSetsMsg struct {
+	entry catalog.Entry
+	sets  []setChoice
+	err   error
+}
+
+type depDetailSetsMsg struct {
+	ID   yamlchart.DepID
+	Sets []setChoice
+	Err  error
+}
+
+type setChoice struct {
+	Name    string
+	Default bool
+	On      bool
+}
+
+type setChoiceItem struct{ C setChoice }
+
+func (s setChoiceItem) Title() string {
+	box := "[ ]"
+	if s.C.On {
+		box = "[x]"
+	}
+	if s.C.Default {
+		return box + " " + s.C.Name + " " + styleMuted.Render("(default)")
+	}
+	return box + " " + s.C.Name
+}
+func (s setChoiceItem) Description() string { return "" }
+func (s setChoiceItem) FilterValue() string { return s.C.Name }
+
+// setChoiceForDepItem is used in the dependency detail Sets tab.
+// It reuses the same underlying setChoice struct but keeps it separate so
+// we can evolve rendering/interaction independently from the catalog wizard.
+type setChoiceForDepItem struct{ C setChoice }
+
+func (s setChoiceForDepItem) Title() string {
+	box := "[ ]"
+	if s.C.On {
+		box = "[x]"
+	}
+	if s.C.Default {
+		return box + " " + s.C.Name + " " + styleMuted.Render("(default)")
+	}
+	return box + " " + s.C.Name
+}
+func (s setChoiceForDepItem) Description() string { return "" }
+func (s setChoiceForDepItem) FilterValue() string { return s.C.Name }
 
 type keyMap struct {
 	Quit        key.Binding
@@ -277,6 +396,18 @@ func NewAppModel(p Params) AppModel {
 	vals.SetShowHelp(false)
 	vals.SetFilteringEnabled(true)
 
+	catSets := list.New([]list.Item{}, list.NewDefaultDelegate(), 0, 0)
+	catSets.Title = ""
+	catSets.SetShowTitle(false)
+	catSets.SetShowHelp(false)
+	catSets.SetFilteringEnabled(false)
+
+	depSets := list.New([]list.Item{}, list.NewDefaultDelegate(), 0, 0)
+	depSets.Title = ""
+	depSets.SetShowTitle(false)
+	depSets.SetShowHelp(false)
+	depSets.SetFilteringEnabled(false)
+
 	src := list.New([]list.Item{sourceItem("Predefined catalog"), sourceItem("Artifact Hub"), sourceItem("Arbitrary")}, list.NewDefaultDelegate(), 0, 0)
 	src.Title = withIcon(iconWizard, "Select source")
 	src.SetShowHelp(false)
@@ -302,9 +433,34 @@ func NewAppModel(p Params) AppModel {
 	depVers.SetFilteringEnabled(true)
 	depVers.SetShowHelp(false)
 
+	depActions := list.New([]list.Item{}, list.NewDefaultDelegate(), 0, 0)
+	depActions.Title = withIcon(iconCmd, "Dependency actions")
+	depActions.SetShowHelp(false)
+	depActions.SetFilteringEnabled(false)
+
 	newName := textinput.New()
 	newName.Placeholder = "instance name"
 	newName.Prompt = "> "
+
+	srcName := textinput.New()
+	srcName.Placeholder = "source name (e.g. example)"
+	srcName.Prompt = "name> "
+
+	srcGit := textinput.New()
+	srcGit.Placeholder = "git URL/path (e.g. /tmp/... or https://...)"
+	srcGit.Prompt = "git> "
+
+	srcRef := textinput.New()
+	srcRef.Placeholder = "git ref (optional, e.g. main, v1.2.3, HEAD~1)"
+	srcRef.Prompt = "ref> "
+
+	srcPlat := textinput.New()
+	srcPlat.Placeholder = "platform name (e.g. eks)"
+	srcPlat.Prompt = "platform> "
+
+	collAlias := textinput.New()
+	collAlias.Placeholder = "alias (required)"
+	collAlias.Prompt = "alias> "
 
 	q := textinput.New()
 	q.Placeholder = "search charts (e.g. postgresql)"
@@ -366,6 +522,7 @@ func NewAppModel(p Params) AppModel {
 		ahResults:             ahRes,
 		ahVersions:            ahVers,
 		depEditVersions:       depVers,
+		depActionsList:        depActions,
 		depEditVersionInput:   depVerInput,
 		ahDetailTabNames:      ahDetailTabNames,
 		ahPreview:             ahvp,
@@ -384,10 +541,19 @@ func NewAppModel(p Params) AppModel {
 		content:               vp,
 		valuesList:            vals,
 		valuesPreview:         valsPrev,
+		catalogSetList:        catSets,
+		depDetailSets:         depSets,
 		palette:               newPaletteModel(),
 		keys:                  keys,
 		versionsWatched:       map[string]versionsWatch{},
 		versionsInFlight:      map[string]bool{},
+		sourcesName:           srcName,
+		sourcesGit:            srcGit,
+		sourcesRef:            srcRef,
+		sourcesPlat:           srcPlat,
+		sourcesFocus:          0,
+		catalogCollisionAlias: collAlias,
+		catalogCollisionChoice: collisionChoiceAlias,
 	}
 
 	return m
@@ -399,6 +565,36 @@ func (m AppModel) Init() tea.Cmd {
 		m.reloadInstancesCmd(),
 		tea.Tick(versionsRefreshInterval, func(t time.Time) tea.Msg { return versionsRefreshTickMsg{now: t} }),
 	)
+}
+
+func selectedSetNames(items []list.Item) []string {
+	out := []string{}
+	for _, it := range items {
+		si, ok := it.(setChoiceItem)
+		if !ok {
+			continue
+		}
+		if si.C.On {
+			out = append(out, si.C.Name)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+func uniqueStrings(in []string) []string {
+	if len(in) < 2 {
+		return in
+	}
+	out := make([]string, 0, len(in))
+	prev := ""
+	for i, s := range in {
+		if i == 0 || s != prev {
+			out = append(out, s)
+		}
+		prev = s
+	}
+	return out
 }
 
 type errMsg struct{ err error }
@@ -417,11 +613,477 @@ type chartMsg struct{ chart yamlchart.Chart }
 
 type catalogMsg struct{ entries []catalog.Entry }
 
+type catalogSyncDoneMsg struct{ err error }
+
+type depPresetsSyncDoneMsg struct {
+	dep yamlchart.Dependency
+	err error
+}
+
+type sourcesSavedMsg struct {
+	cfg *config.Config
+	err error
+}
+
 type ahSearchMsg struct{ results []artifacthub.PackageSummary }
 
 type ahVersionsMsg struct{ versions []artifacthub.Version }
 
 type ahDetailMsg struct{ readme, values string }
+
+func (m AppModel) openDepActionsSelected() (tea.Model, tea.Cmd) {
+	it := m.depsList.SelectedItem()
+	if it == nil {
+		return m, nil
+	}
+	di, ok := it.(depItem)
+	if !ok {
+		return m, func() tea.Msg { return errMsg{fmt.Errorf("unexpected dependency item type")} }
+	}
+	dep := yamlchart.Dependency(di)
+
+	m.depActionsOpen = true
+	m.depActionsDep = dep
+	m.modalErr = ""
+	m.depActionsList.SetItems([]list.Item{
+		depActionItem(depActionSyncPresets),
+		depActionItem(depActionChangeVer),
+		depActionItem(depActionUpgrade),
+		depActionItem(depActionRemove),
+	})
+	m.depActionsList.Select(0)
+	return m, nil
+}
+
+func (m AppModel) depActionsUpdate(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	// Close.
+	if msg.Type == tea.KeyEsc {
+		m.depActionsOpen = false
+		m.depActionsDep = yamlchart.Dependency{}
+		m.modalErr = ""
+		return m, nil
+	}
+
+	var cmd tea.Cmd
+	m.depActionsList, cmd = m.depActionsList.Update(msg)
+	if msg.Type != tea.KeyEnter {
+		return m, cmd
+	}
+	it := m.depActionsList.SelectedItem()
+	if it == nil {
+		return m, cmd
+	}
+	ai, ok := it.(depActionItem)
+	if !ok {
+		return m, func() tea.Msg { return errMsg{fmt.Errorf("unexpected dep action item type")} }
+	}
+
+	// Close menu before launching the chosen action.
+	m.depActionsOpen = false
+
+	switch ai {
+	case depActionItem(depActionRemove):
+		return m, tea.Batch(m.beginBusy("Updating"), m.removeSelectedDepCmd())
+	case depActionItem(depActionUpgrade):
+		return m.upgradeSelectedDepCmd()
+	case depActionItem(depActionChangeVer):
+		return m.openDepEditSelected()
+	case depActionItem(depActionSyncPresets):
+		return m, tea.Batch(m.beginBusy("Syncing"), m.syncSelectedDepPresetsCmd())
+	default:
+		return m, cmd
+	}
+}
+
+func (m AppModel) loadCatalogSetsCmd(e catalog.Entry) tea.Cmd {
+	return func() tea.Msg {
+		if m.params.Config == nil {
+			return catalogSetsMsg{entry: e, sets: nil, err: fmt.Errorf("no config loaded; cannot resolve preset sets")}
+		}
+		// Resolve against the synced preset cache using presets.Resolve.
+		dep := yamlchart.Dependency{Name: e.Chart.Name, Repository: e.Chart.Repo, Version: e.Version}
+		res, err := presets.Resolve(m.params.RepoRoot, *m.params.Config, []yamlchart.Dependency{dep})
+		if err != nil {
+			return catalogSetsMsg{entry: e, sets: nil, err: err}
+		}
+		rd, ok := res.ByID[yamlchart.DependencyID(dep)]
+		if !ok {
+			return catalogSetsMsg{entry: e, sets: []setChoice{}, err: nil}
+		}
+		setNames := make([]string, 0, len(rd.SetPaths))
+		for s := range rd.SetPaths {
+			setNames = append(setNames, s)
+		}
+		sort.Strings(setNames)
+		defaults := map[string]struct{}{}
+		for _, s := range e.DefaultSets {
+			s = strings.TrimSpace(s)
+			if s != "" {
+				defaults[s] = struct{}{}
+			}
+		}
+		out := make([]setChoice, 0, len(setNames))
+		for _, s := range setNames {
+			_, isDef := defaults[s]
+			out = append(out, setChoice{Name: s, Default: isDef, On: isDef})
+		}
+		return catalogSetsMsg{entry: e, sets: out, err: nil}
+	}
+}
+
+func (m AppModel) loadDepDetailSetsCmd(dep yamlchart.Dependency) tea.Cmd {
+	return func() tea.Msg {
+		if m.params.Config == nil {
+			return depDetailSetsMsg{ID: yamlchart.DependencyID(dep), Sets: nil, Err: fmt.Errorf("no config loaded; cannot resolve preset sets")}
+		}
+		if m.selected == nil {
+			return depDetailSetsMsg{ID: yamlchart.DependencyID(dep), Sets: nil, Err: fmt.Errorf("no instance selected")}
+		}
+		id := yamlchart.DependencyID(dep)
+		res, err := presets.Resolve(m.params.RepoRoot, *m.params.Config, []yamlchart.Dependency{dep})
+		if err != nil {
+			return depDetailSetsMsg{ID: id, Sets: nil, Err: err}
+		}
+		rd, ok := res.ByID[id]
+		if !ok {
+			return depDetailSetsMsg{ID: id, Sets: []setChoice{}, Err: nil}
+		}
+		setNames := make([]string, 0, len(rd.SetPaths))
+		for s := range rd.SetPaths {
+			setNames = append(setNames, s)
+		}
+		sort.Strings(setNames)
+
+		selected, _ := readSelectedDepSetsForDep(m.selected.Path, string(id))
+		selectedSet := map[string]struct{}{}
+		for _, s := range selected {
+			selectedSet[s] = struct{}{}
+		}
+
+		out := make([]setChoice, 0, len(setNames))
+		for _, s := range setNames {
+			_, on := selectedSet[s]
+			out = append(out, setChoice{Name: s, Default: false, On: on})
+		}
+		return depDetailSetsMsg{ID: id, Sets: out, Err: nil}
+	}
+}
+
+func readSelectedDepSetsForDep(instancePath string, depID string) ([]string, error) {
+	depID = strings.TrimSpace(depID)
+	if depID == "" {
+		return []string{}, nil
+	}
+	glob := filepath.Join(instancePath, fmt.Sprintf("values.dep-set.%s--*.yaml", depID))
+	files, err := filepath.Glob(glob)
+	if err != nil {
+		return nil, err
+	}
+	if len(files) == 0 {
+		return []string{}, nil
+	}
+	sets := make([]string, 0, len(files))
+	for _, f := range files {
+		base := filepath.Base(f)
+		name := strings.TrimSuffix(strings.TrimPrefix(base, "values.dep-set."), ".yaml")
+		parts := strings.SplitN(name, "--", 2)
+		if len(parts) != 2 {
+			continue
+		}
+		if strings.TrimSpace(parts[0]) != depID {
+			continue
+		}
+		setName := strings.TrimSpace(parts[1])
+		if setName == "" {
+			continue
+		}
+		sets = append(sets, setName)
+	}
+	sort.Strings(sets)
+	sets = uniqueStrings(sets)
+	return sets, nil
+}
+
+func (m AppModel) applyCatalogDependencyWithSetsCmd(dep yamlchart.Dependency, sets []string) tea.Cmd {
+	return func() tea.Msg {
+		// Backward-compat: run as a normal apply without collision prompting.
+		ctx, cancel := context.WithCancel(contextBG())
+		defer cancel()
+		return m.applyCatalogDependencyWithSetsCmdCtx(ctx, 0, dep, sets, applyOptions{Override: true, DeleteMarkersForDepID: false})()
+	}
+}
+
+type applyOptions struct {
+	// Override controls whether we allow updating an existing dependency with the same Name.
+	Override bool
+	// DeleteMarkersForDepID deletes existing per-dependency set marker files for the final depID.
+	DeleteMarkersForDepID bool
+}
+
+func (m *AppModel) startApplyCmd(dep yamlchart.Dependency, sets []string, opt applyOptions) tea.Cmd {
+	// Start a cancellable, blocking apply.
+	m.applyID++
+	applyID := m.applyID
+	ctx, cancel := context.WithCancel(contextBG())
+	m.applyCancel = cancel
+	m.applyOpen = true
+	m.applyCancelConfirm = false
+	m.applyCancelRequested = false
+	m.modalErr = ""
+
+	// Keep the busy spinner going and show a centered blocking overlay.
+	cmd := m.applyCatalogDependencyWithSetsCmdCtx(ctx, applyID, dep, sets, opt)
+	return tea.Batch(m.beginBusy("Applying"), cmd)
+}
+
+func (m AppModel) applyCatalogDependencyWithSetsCmdCtx(ctx context.Context, applyID int, dep yamlchart.Dependency, sets []string, opt applyOptions) tea.Cmd {
+	return func() tea.Msg {
+		if m.selected == nil {
+			return applyDoneMsg{applyID: applyID, chart: nil, err: fmt.Errorf("no instance selected")}
+		}
+		chartPath := filepath.Join(m.selected.Path, "Chart.yaml")
+		// Keep a copy so we can roll back if apply fails.
+		origChartYAML, _ := os.ReadFile(chartPath)
+		lockPath := filepath.Join(m.selected.Path, "Chart.lock")
+		origLockYAML, _ := os.ReadFile(lockPath)
+		hadOrigLock := origLockYAML != nil
+		rollback := func() {
+			if origChartYAML != nil {
+				_ = os.WriteFile(chartPath, origChartYAML, 0o644)
+			}
+			if hadOrigLock {
+				_ = os.WriteFile(lockPath, origLockYAML, 0o644)
+			} else {
+				_ = os.Remove(lockPath)
+			}
+		}
+
+		c, err := yamlchart.ReadChart(chartPath)
+		if err != nil {
+			return applyDoneMsg{applyID: applyID, chart: nil, err: err}
+		}
+		// Collision handling: disallow adding the same dependency name twice only when
+		// the new dependency has no alias (depID == name). If an alias is provided,
+		// Helm supports it and we upsert by depID.
+		if strings.TrimSpace(dep.Alias) == "" {
+			for _, d := range c.Dependencies {
+				if d.Name == dep.Name {
+					if !opt.Override {
+						return applyDoneMsg{applyID: applyID, chart: nil, err: fmt.Errorf("dependency %q already exists", dep.Name)}
+					}
+					break
+				}
+			}
+		}
+		if err := c.UpsertDependency(dep); err != nil {
+			return applyDoneMsg{applyID: applyID, chart: nil, err: err}
+		}
+		if err := yamlchart.WriteChart(chartPath, c); err != nil {
+			return applyDoneMsg{applyID: applyID, chart: nil, err: err}
+		}
+
+		depID := yamlchart.DependencyID(dep)
+		if opt.DeleteMarkersForDepID {
+			_ = deleteDepSetMarkers(m.selected.Path, depID)
+		}
+		for _, setName := range sets {
+			setName = strings.TrimSpace(setName)
+			if setName == "" {
+				continue
+			}
+			p := filepath.Join(m.selected.Path, fmt.Sprintf("values.dep-set.%s--%s.yaml", depID, setName))
+			if _, err := os.Stat(p); err == nil {
+				continue
+			}
+			_ = os.WriteFile(p, []byte("{}\n"), 0o644)
+		}
+
+		// Apply pipeline.
+		if _, err := instances.RelockIfDepsChanged(ctx, m.params.RepoRoot, m.selected.Path); err != nil {
+			rollback()
+			return applyDoneMsg{applyID: applyID, chart: nil, err: err}
+		}
+		if m.params.Config != nil {
+			_, err = presets.Import(presets.ImportParams{RepoRoot: m.params.RepoRoot, InstancePath: m.selected.Path, Config: *m.params.Config, Dependencies: c.Dependencies})
+			if err != nil {
+				rollback()
+				return applyDoneMsg{applyID: applyID, chart: nil, err: err}
+			}
+		}
+		if err := values.GenerateMergedValues(m.selected.Path); err != nil {
+			rollback()
+			return applyDoneMsg{applyID: applyID, chart: nil, err: err}
+		}
+		return applyDoneMsg{applyID: applyID, chart: &c, err: nil}
+	}
+}
+
+func deleteDepSetMarkers(instancePath string, depID yamlchart.DepID) error {
+	glob := filepath.Join(instancePath, fmt.Sprintf("values.dep-set.%s--*.yaml", depID))
+	files, err := filepath.Glob(glob)
+	if err != nil {
+		return err
+	}
+	for _, p := range files {
+		_ = os.Remove(p)
+	}
+	return nil
+}
+
+func writeDepSetMarker(instancePath string, depID yamlchart.DepID, setName string) error {
+	setName = strings.TrimSpace(setName)
+	if setName == "" {
+		return nil
+	}
+	p := filepath.Join(instancePath, fmt.Sprintf("values.dep-set.%s--%s.yaml", depID, setName))
+	return os.WriteFile(p, []byte("{}\n"), 0o644)
+}
+
+func deleteDepSetMarker(instancePath string, depID yamlchart.DepID, setName string) error {
+	setName = strings.TrimSpace(setName)
+	if setName == "" {
+		return nil
+	}
+	p := filepath.Join(instancePath, fmt.Sprintf("values.dep-set.%s--%s.yaml", depID, setName))
+	_ = os.Remove(p)
+	return nil
+}
+
+func removeOrphanDepSetMarkers(instancePath string, depID yamlchart.DepID, allowedSets map[string]struct{}) error {
+	glob := filepath.Join(instancePath, fmt.Sprintf("values.dep-set.%s--*.yaml", depID))
+	files, err := filepath.Glob(glob)
+	if err != nil {
+		return err
+	}
+	for _, f := range files {
+		base := filepath.Base(f)
+		name := strings.TrimSuffix(strings.TrimPrefix(base, "values.dep-set."), ".yaml")
+		parts := strings.SplitN(name, "--", 2)
+		if len(parts) != 2 {
+			continue
+		}
+		if strings.TrimSpace(parts[0]) != string(depID) {
+			continue
+		}
+		setName := strings.TrimSpace(parts[1])
+		if setName == "" {
+			continue
+		}
+		if allowedSets != nil {
+			if _, ok := allowedSets[setName]; !ok {
+				_ = os.Remove(f)
+			}
+		}
+	}
+	return nil
+}
+
+func (m AppModel) applyDepDetailSetsCmd() tea.Cmd {
+	return func() tea.Msg {
+		if m.selected == nil {
+			return errMsg{fmt.Errorf("no instance selected")}
+		}
+		if m.params.Config == nil {
+			return errMsg{fmt.Errorf("no config loaded")}
+		}
+		dep := m.depDetailDep
+		depID := yamlchart.DependencyID(dep)
+
+		// Resolve available sets from preset cache.
+		res, err := presets.Resolve(m.params.RepoRoot, *m.params.Config, []yamlchart.Dependency{dep})
+		if err != nil {
+			return errMsg{err}
+		}
+		rd, ok := res.ByID[depID]
+		allowed := map[string]struct{}{}
+		if ok {
+			for s := range rd.SetPaths {
+				allowed[s] = struct{}{}
+			}
+		}
+
+		// Remove orphan markers (selected sets that no longer exist in cache).
+		_ = removeOrphanDepSetMarkers(m.selected.Path, depID, allowed)
+
+		// Apply current UI selection by writing/removing markers.
+		items := m.depDetailSets.Items()
+		for _, it := range items {
+			si, ok := it.(setChoiceForDepItem)
+			if !ok {
+				continue
+			}
+			if si.C.On {
+				_ = writeDepSetMarker(m.selected.Path, depID, si.C.Name)
+			} else {
+				_ = deleteDepSetMarker(m.selected.Path, depID, si.C.Name)
+			}
+		}
+
+		// Re-import presets and regenerate merged values.
+		c, err := yamlchart.ReadChart(filepath.Join(m.selected.Path, "Chart.yaml"))
+		if err != nil {
+			return errMsg{err}
+		}
+		if _, err := presets.Import(presets.ImportParams{RepoRoot: m.params.RepoRoot, InstancePath: m.selected.Path, Config: *m.params.Config, Dependencies: c.Dependencies}); err != nil {
+			return errMsg{err}
+		}
+		if err := values.GenerateMergedValues(m.selected.Path); err != nil {
+			return errMsg{err}
+		}
+		return appliedMsg{}
+	}
+}
+
+func (m AppModel) syncSelectedDepPresetsCmd() tea.Cmd {
+	return func() tea.Msg {
+		if m.selected == nil {
+			return depPresetsSyncDoneMsg{dep: m.depActionsDep, err: fmt.Errorf("no instance selected")}
+		}
+		if m.params.Config == nil {
+			return depPresetsSyncDoneMsg{dep: m.depActionsDep, err: fmt.Errorf("no config loaded")}
+		}
+		dep := m.depActionsDep
+		depID := yamlchart.DependencyID(dep)
+
+		// Sync only sources that have presets enabled. (We can't reliably map a dep
+		// back to an individual source without a catalog -> sourceName index.)
+		s := catalog.NewSyncer(m.params.RepoRoot)
+		_, err := s.SyncFiltered(contextBG(), *m.params.Config, func(src config.Source) bool {
+			return src.Presets.Enabled
+		})
+		if err != nil {
+			return depPresetsSyncDoneMsg{dep: dep, err: err}
+		}
+
+		// Resolve allowed sets after sync and remove orphan markers.
+		res, err := presets.Resolve(m.params.RepoRoot, *m.params.Config, []yamlchart.Dependency{dep})
+		if err != nil {
+			return depPresetsSyncDoneMsg{dep: dep, err: err}
+		}
+		allowed := map[string]struct{}{}
+		if rd, ok := res.ByID[depID]; ok {
+			for s := range rd.SetPaths {
+				allowed[s] = struct{}{}
+			}
+		}
+		_ = removeOrphanDepSetMarkers(m.selected.Path, depID, allowed)
+
+		// Re-import presets and regenerate merged values.
+		c, err := yamlchart.ReadChart(filepath.Join(m.selected.Path, "Chart.yaml"))
+		if err != nil {
+			return depPresetsSyncDoneMsg{dep: dep, err: err}
+		}
+		if _, err := presets.Import(presets.ImportParams{RepoRoot: m.params.RepoRoot, InstancePath: m.selected.Path, Config: *m.params.Config, Dependencies: c.Dependencies}); err != nil {
+			return depPresetsSyncDoneMsg{dep: dep, err: err}
+		}
+		if err := values.GenerateMergedValues(m.selected.Path); err != nil {
+			return depPresetsSyncDoneMsg{dep: dep, err: err}
+		}
+		return depPresetsSyncDoneMsg{dep: dep, err: nil}
+	}
+}
+
+// (catalogSetsMsg is declared near dep wizard types; keep only one definition)
 
 // depDetailPreviewsMsg carries readme + default values previews for the selected dependency.
 type depDetailPreviewsMsg struct {
@@ -926,6 +1588,92 @@ func (m AppModel) loadCatalogCmd() tea.Cmd {
 	}
 }
 
+func (m AppModel) catalogSyncCmd() tea.Cmd {
+	return func() tea.Msg {
+		if m.params.Config == nil {
+			return catalogSyncDoneMsg{err: fmt.Errorf("no config loaded; cannot sync catalog")}
+		}
+		s := catalog.NewSyncer(m.params.RepoRoot)
+		_, err := s.Sync(contextBG(), *m.params.Config)
+		return catalogSyncDoneMsg{err: err}
+	}
+}
+
+func (m AppModel) saveSourcesCmd(name, gitURL, gitRef, platform string) tea.Cmd {
+	return func() tea.Msg {
+		name = strings.TrimSpace(name)
+		gitURL = strings.TrimSpace(gitURL)
+		gitRef = strings.TrimSpace(gitRef)
+		platform = strings.TrimSpace(platform)
+		if name == "" {
+			return sourcesSavedMsg{err: fmt.Errorf("source name is required")}
+		}
+		if gitURL == "" {
+			return sourcesSavedMsg{err: fmt.Errorf("git url/path is required")}
+		}
+		if platform == "" {
+			return sourcesSavedMsg{err: fmt.Errorf("platform name is required (needed for presets/sets)")}
+		}
+
+		// UX: if the user typed a local path, ensure it looks like a git repo.
+		// Sync uses `git clone`, so pointing at a plain directory like
+		// `fixtures/remote-source` will fail with an opaque exit status.
+		if filepath.IsAbs(gitURL) || strings.HasPrefix(gitURL, ".") || strings.HasPrefix(gitURL, string(os.PathSeparator)) {
+			st, err := os.Stat(gitURL)
+			if err == nil && st.IsDir() {
+				if _, err := os.Stat(filepath.Join(gitURL, ".git")); err != nil {
+					return sourcesSavedMsg{err: fmt.Errorf("git path %q is not a git repo (missing .git). For the built-in fixture, copy it to /tmp and run git init/commit as documented in README, then use that /tmp path.", gitURL)}
+				}
+			}
+		}
+
+		cfg := config.DefaultConfig()
+		if m.params.Config != nil {
+			cfg = *m.params.Config
+		}
+		cfg.Platform.Name = platform
+
+		// For now, a source configured from TUI always enables both catalog + presets.
+		// This is the minimum needed for catalog entries + set discovery.
+		src := config.Source{
+			Name: name,
+			Git:  config.GitRef{URL: gitURL, Ref: gitRef},
+			Presets: config.PresetsConfig{
+				Enabled:    true,
+				ChartsPath: "charts",
+			},
+			Catalog: config.CatalogConfig{
+				Enabled: true,
+				Path:    "catalog.yaml",
+			},
+		}
+
+		updated := false
+		for i := range cfg.Sources {
+			if cfg.Sources[i].Name == name {
+				cfg.Sources[i] = src
+				updated = true
+				break
+			}
+		}
+		if !updated {
+			cfg.Sources = append(cfg.Sources, src)
+		}
+
+		if err := cfg.Validate(); err != nil {
+			return sourcesSavedMsg{err: err}
+		}
+		if err := config.WriteFile(m.params.ConfigPath, cfg); err != nil {
+			return sourcesSavedMsg{err: err}
+		}
+		loaded, err := config.LoadFile(m.params.ConfigPath)
+		if err != nil {
+			return sourcesSavedMsg{err: err}
+		}
+		return sourcesSavedMsg{cfg: &loaded, err: nil}
+	}
+}
+
 func (m AppModel) ahSearchCmd(query string) tea.Cmd {
 	return func() tea.Msg {
 		res, err := m.ahClient.SearchHelm(contextBG(), query, 50)
@@ -1020,6 +1768,7 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.valuesList.SetSize(msg.Width-2, msg.Height-8)
 		m.depSource.SetSize(msg.Width-2, msg.Height-7)
 		m.catalogList.SetSize(msg.Width-2, msg.Height-7)
+		m.catalogSetList.SetSize(msg.Width-2, msg.Height-12)
 		m.ahResults.SetSize(msg.Width-2, msg.Height-7)
 		m.ahVersions.SetSize(msg.Width-2, msg.Height-7)
 		m.depEditVersions.SetSize(max(10, msg.Width-6), max(5, msg.Height-12))
@@ -1034,6 +1783,7 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Conservative "chrome" height inside the dep detail modal (border+padding + header/tabs/footer + blank separators).
 		depDetailChromeH := 12
 		m.depDetailPreview.Height = max(5, modalMaxH-depDetailChromeH)
+		m.depDetailSets.SetSize(m.depDetailPreview.Width, max(5, m.depDetailPreview.Height-2))
 		// Dep detail modal has a header + tab bar + footer around its body.
 		// Keep the versions list height aligned with the preview viewport height
 		// (minus a couple of lines for the versions hint line) so the modal header
@@ -1117,6 +1867,75 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.statusErr = ""
 		m.refreshInstanceView()
 		return m, nil
+	case catalogSyncDoneMsg:
+		m.endBusy()
+		if msg.err != nil {
+			m.statusErr = msg.err.Error()
+			m.statusErrAt = time.Now()
+			return m, nil
+		}
+		m.statusErr = ""
+		// Refresh catalog list in case we're in the add-dep wizard.
+		return m, tea.Batch(m.beginBusy("Loading catalog"), m.loadCatalogCmd())
+	case depPresetsSyncDoneMsg:
+		m.endBusy()
+		if msg.err != nil {
+			m.statusErr = msg.err.Error()
+			m.statusErrAt = time.Now()
+			return m, nil
+		}
+		m.statusErr = ""
+		m.refreshValuesList()
+		m.refreshInstanceView()
+		// If the dep detail modal is open for this dependency, reload sets.
+		if m.depDetailOpen && yamlchart.DependencyID(m.depDetailDep) == yamlchart.DependencyID(msg.dep) {
+			m.depDetailSetsLoading = true
+			m.depDetailPreview.SetContent(m.renderDepDetailBody())
+			return m, tea.Batch(m.beginBusy("Loading sets"), m.loadDepDetailSetsCmd(msg.dep))
+		}
+		return m, nil
+	case catalogSetsMsg:
+		m.endBusy()
+		m.catalogSetsLoading = false
+		if msg.err != nil {
+			m.modalErr = msg.err.Error()
+			m.catalogSetList.SetItems(nil)
+			return m, nil
+		}
+		// Ensure we're still on the matching entry.
+		if m.catalogDetailEntry == nil || m.catalogDetailEntry.ID != msg.entry.ID {
+			return m, nil
+		}
+		items := make([]list.Item, 0, len(msg.sets))
+		for _, c := range msg.sets {
+			items = append(items, setChoiceItem{C: c})
+		}
+		m.catalogSetList.SetItems(items)
+		m.catalogSetList.Select(0)
+		return m, nil
+	case depDetailSetsMsg:
+		m.endBusy()
+		m.depDetailSetsLoading = false
+		if msg.Err != nil {
+			// Non-fatal: show error and keep the rest of the modal usable.
+			m.modalErr = msg.Err.Error()
+			m.depDetailSets.SetItems(nil)
+			m.depDetailPreview.SetContent(m.renderDepDetailBody())
+			return m, nil
+		}
+		// Ignore stale loads.
+		if !m.depDetailOpen || yamlchart.DependencyID(m.depDetailDep) != msg.ID {
+			return m, nil
+		}
+		m.modalErr = ""
+		items := make([]list.Item, 0, len(msg.Sets))
+		for _, c := range msg.Sets {
+			items = append(items, setChoiceForDepItem{C: c})
+		}
+		m.depDetailSets.SetItems(items)
+		m.depDetailSets.Select(0)
+		m.depDetailPreview.SetContent(m.renderDepDetailBody())
+		return m, nil
 	case depVersionValidatedMsg:
 		m.endBusy()
 		// Keep modal open; close only after apply succeeds.
@@ -1155,6 +1974,46 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			items = append(items, catalogListItem{E: e})
 		}
 		m.catalogList.SetItems(items)
+		return m, nil
+	case applyDoneMsg:
+		// Ignore stale apply results.
+		if msg.applyID != m.applyID {
+			return m, nil
+		}
+		m.endBusy()
+		m.applyOpen = false
+		m.applyCancelConfirm = false
+		m.applyCancelRequested = false
+		if m.applyCancel != nil {
+			m.applyCancel()
+			m.applyCancel = nil
+		}
+		if msg.err != nil {
+			m.modalErr = msg.err.Error()
+			return m, nil
+		}
+		if msg.chart != nil {
+			m.chart = msg.chart
+			m.depsList.SetItems(depsToItems(msg.chart.Dependencies))
+		}
+		m.addingDep = false
+		m.depStep = depStepNone
+		m.modalErr = ""
+		m.statusErr = ""
+		m.refreshInstanceView()
+		return m, nil
+	case sourcesSavedMsg:
+		m.endBusy()
+		if msg.err != nil {
+			m.sourcesErr = msg.err.Error()
+			return m, nil
+		}
+		m.sourcesErr = ""
+		m.sourcesOpen = false
+		m.sourcesName.Blur()
+		m.sourcesGit.Blur()
+		m.sourcesPlat.Blur()
+		m.params.Config = msg.cfg
 		return m, nil
 	case ahSearchMsg:
 		m.endBusy()
@@ -1317,9 +2176,40 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case tea.KeyMsg:
+		// Apply overlay has highest priority and blocks all other input.
+		if m.applyOpen {
+			// Cancel confirmation flow.
+			if m.applyCancelConfirm {
+				if msg.String() == "y" || msg.String() == "Y" {
+					m.applyCancelConfirm = false
+					m.applyCancelRequested = true
+					if m.applyCancel != nil {
+						m.applyCancel()
+					}
+					return m, nil
+				}
+				if msg.String() == "n" || msg.String() == "N" || msg.Type == tea.KeyEsc {
+					m.applyCancelConfirm = false
+					return m, nil
+				}
+				return m, nil
+			}
+			// Esc requests cancel.
+			if msg.Type == tea.KeyEsc {
+				m.applyCancelConfirm = true
+				return m, nil
+			}
+			// Ignore all other keys while applying.
+			return m, nil
+		}
+
 		// Dep detail modal has the highest priority while open.
 		if m.depDetailOpen {
 			return m.depDetailUpdate(msg)
+		}
+		// Dep actions menu modal has priority over other input.
+		if m.depActionsOpen {
+			return m.depActionsUpdate(msg)
 		}
 		// Dep version editor modal has priority over global shortcuts.
 		if m.depEditOpen {
@@ -1328,6 +2218,10 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Command palette has priority over global shortcuts.
 		if m.paletteOpen {
 			return m.paletteUpdate(msg)
+		}
+		// Sources modal has priority over global shortcuts.
+		if m.sourcesOpen {
+			return m.sourcesUpdate(msg)
 		}
 		// Values preview modal has priority over global shortcuts.
 		if m.valuesPreviewOpen {
@@ -1364,18 +2258,18 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.creating = false
 				return m, nil
 			}
-			if m.addingDep {
-				// Step-wise back inside the wizard.
-				switch m.depStep {
-				case depStepChooseSource:
-					m.addingDep = false
-					m.depStep = depStepNone
-					m.modalErr = ""
-					return m, nil
-				case depStepCatalog, depStepAHQuery, depStepArbitrary:
-					m.depStep = depStepChooseSource
-					m.modalErr = ""
-					return m, nil
+		if m.addingDep {
+			// Step-wise back inside the wizard.
+			switch m.depStep {
+			case depStepChooseSource:
+				m.addingDep = false
+				m.depStep = depStepNone
+				m.modalErr = ""
+				return m, nil
+		case depStepCatalog, depStepCatalogDetail, depStepCatalogCollision, depStepAHQuery, depStepArbitrary:
+			m.depStep = depStepChooseSource
+			m.modalErr = ""
+			return m, nil
 				case depStepAHResults:
 					m.depStep = depStepAHQuery
 					m.ahQuery.Focus()
@@ -1451,6 +2345,10 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		// Deps tab actions.
 		if m.screen == ScreenInstance && !m.addingDep && m.activeTab == InstanceTabDeps {
+			// Actions menu.
+			if msg.String() == "x" || msg.String() == "X" {
+				return m.openDepActionsSelected()
+			}
 			// Delete dependency.
 			if msg.String() == "d" || msg.String() == "D" {
 				return m, tea.Batch(m.beginBusy("Updating"), m.removeSelectedDepCmd())
@@ -1604,7 +2502,122 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					return m, func() tea.Msg { return errMsg{fmt.Errorf("unexpected catalog item type")} }
 				}
 				e := ci.E
-				return m, m.applyDependencyDraft(yamlchart.Dependency{Name: e.Chart.Name, Repository: e.Chart.Repo, Version: e.Version})
+				m.catalogDetailEntry = &e
+				m.catalogSetsLoading = true
+				m.catalogSetList.SetItems(nil)
+				m.depStep = depStepCatalogDetail
+				return m, tea.Batch(cmd, m.loadCatalogSetsCmd(e))
+			}
+			return m, cmd
+		case depStepCatalogDetail:
+			var cmd tea.Cmd
+			m.catalogSetList, cmd = m.catalogSetList.Update(msg)
+			if km, ok := msg.(tea.KeyMsg); ok {
+				// Space toggles the current set.
+				if km.Type == tea.KeySpace {
+					if it := m.catalogSetList.SelectedItem(); it != nil {
+						if si, ok := it.(setChoiceItem); ok {
+							si.C.On = !si.C.On
+							items := m.catalogSetList.Items()
+							idx := m.catalogSetList.Index()
+							if idx >= 0 && idx < len(items) {
+								items[idx] = si
+								m.catalogSetList.SetItems(items)
+								m.catalogSetList.Select(idx)
+							}
+						}
+					}
+				}
+				// 'd' toggles all defaults.
+				if km.String() == "d" || km.String() == "D" {
+					items := m.catalogSetList.Items()
+					anyOff := false
+					for _, it := range items {
+						if si, ok := it.(setChoiceItem); ok && si.C.Default && !si.C.On {
+							anyOff = true
+							break
+						}
+					}
+					for i := range items {
+						if si, ok := items[i].(setChoiceItem); ok && si.C.Default {
+							si.C.On = anyOff
+							items[i] = si
+						}
+					}
+					idx := m.catalogSetList.Index()
+					m.catalogSetList.SetItems(items)
+					m.catalogSetList.Select(idx)
+				}
+				// Enter confirms and applies.
+				if km.Type == tea.KeyEnter {
+					if m.catalogDetailEntry == nil {
+						return m, cmd
+					}
+					dep := yamlchart.Dependency{Name: m.catalogDetailEntry.Chart.Name, Repository: m.catalogDetailEntry.Chart.Repo, Version: m.catalogDetailEntry.Version}
+					setNames := selectedSetNames(m.catalogSetList.Items())
+					// Collision check: same dependency name already exists.
+					if m.chart != nil {
+						for _, ex := range m.chart.Dependencies {
+							if ex.Name == dep.Name {
+								m.catalogCollisionDep = dep
+								m.catalogCollisionExisting = ex
+								m.catalogCollisionSets = setNames
+								m.catalogCollisionChoice = collisionChoiceAlias
+								m.catalogCollisionAlias.SetValue("")
+								m.catalogCollisionAlias.Focus()
+								m.depStep = depStepCatalogCollision
+								return m, cmd
+							}
+						}
+					}
+					return m, tea.Batch(cmd, m.startApplyCmd(dep, setNames, applyOptions{Override: true, DeleteMarkersForDepID: false}))
+				}
+			}
+			return m, cmd
+		case depStepCatalogCollision:
+			// Alias input needs updates.
+			var cmd tea.Cmd
+			m.catalogCollisionAlias, cmd = m.catalogCollisionAlias.Update(msg)
+			if km, ok := msg.(tea.KeyMsg); ok {
+				if km.Type == tea.KeyUp {
+					m.catalogCollisionChoice = (m.catalogCollisionChoice - 1 + 3) % 3
+					if m.catalogCollisionChoice == collisionChoiceAlias {
+						m.catalogCollisionAlias.Focus()
+					} else {
+						m.catalogCollisionAlias.Blur()
+					}
+					return m, cmd
+				}
+				if km.Type == tea.KeyDown {
+					m.catalogCollisionChoice = (m.catalogCollisionChoice + 1) % 3
+					if m.catalogCollisionChoice == collisionChoiceAlias {
+						m.catalogCollisionAlias.Focus()
+					} else {
+						m.catalogCollisionAlias.Blur()
+					}
+					return m, cmd
+				}
+				if km.Type == tea.KeyEnter {
+					switch m.catalogCollisionChoice {
+					case collisionChoiceCancel:
+						m.depStep = depStepCatalogDetail
+						m.catalogCollisionAlias.Blur()
+						return m, cmd
+					case collisionChoiceOverride:
+						dep := m.catalogCollisionDep
+						// Override: keep same depID (name if no alias) and delete markers for that depID.
+						return m, tea.Batch(cmd, m.startApplyCmd(dep, m.catalogCollisionSets, applyOptions{Override: true, DeleteMarkersForDepID: true}))
+					case collisionChoiceAlias:
+						alias := strings.TrimSpace(m.catalogCollisionAlias.Value())
+						if alias == "" {
+							m.modalErr = "alias is required"
+							return m, cmd
+						}
+						dep := m.catalogCollisionDep
+						dep.Alias = alias
+						return m, tea.Batch(cmd, m.startApplyCmd(dep, m.catalogCollisionSets, applyOptions{Override: false, DeleteMarkersForDepID: false}))
+					}
+				}
 			}
 			return m, cmd
 		case depStepAHQuery:
@@ -1853,10 +2866,117 @@ func (m AppModel) paletteUpdate(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 					return m, tea.Batch(m.beginBusy("Refreshing"), c)
 				}
 				return m, nil
+			case palSources:
+				m.paletteOpen = false
+				m.sourcesOpen = true
+				m.sourcesErr = ""
+				m.sourcesFocus = 0
+				// Prefill from config when available (first source).
+				if m.params.Config != nil {
+					m.sourcesPlat.SetValue(m.params.Config.Platform.Name)
+					if len(m.params.Config.Sources) > 0 {
+						m.sourcesName.SetValue(m.params.Config.Sources[0].Name)
+						m.sourcesGit.SetValue(m.params.Config.Sources[0].Git.URL)
+						m.sourcesRef.SetValue(m.params.Config.Sources[0].Git.Ref)
+					} else {
+						m.sourcesName.SetValue("")
+						m.sourcesGit.SetValue("")
+						m.sourcesRef.SetValue("")
+					}
+				} else {
+					m.sourcesName.SetValue("")
+					m.sourcesGit.SetValue("")
+					m.sourcesRef.SetValue("")
+					m.sourcesPlat.SetValue("")
+				}
+				m.sourcesName.Focus()
+				m.sourcesGit.Blur()
+				m.sourcesRef.Blur()
+				m.sourcesPlat.Blur()
+				return m, nil
+			case palCatalogSync:
+				m.paletteOpen = false
+				return m, tea.Batch(m.beginBusy("Syncing catalog"), m.catalogSyncCmd())
 			}
 		}
 	}
 	return m, cmd
+}
+
+func (m AppModel) sourcesUpdate(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	// Close.
+	if msg.Type == tea.KeyEsc {
+		m.sourcesOpen = false
+		m.sourcesErr = ""
+		m.sourcesName.Blur()
+		m.sourcesGit.Blur()
+		m.sourcesRef.Blur()
+		m.sourcesPlat.Blur()
+		return m, nil
+	}
+	if msg.Type == tea.KeyCtrlC || msg.String() == "ctrl+c" {
+		return m, tea.Quit
+	}
+
+	// Focus cycling.
+	if msg.Type == tea.KeyTab {
+		m.sourcesFocus = (m.sourcesFocus + 1) % 4
+		m.sourcesName.Blur()
+		m.sourcesGit.Blur()
+		m.sourcesRef.Blur()
+		m.sourcesPlat.Blur()
+		switch m.sourcesFocus {
+		case 0:
+			m.sourcesName.Focus()
+		case 1:
+			m.sourcesGit.Focus()
+		case 2:
+			m.sourcesRef.Focus()
+		case 3:
+			m.sourcesPlat.Focus()
+		}
+		return m, nil
+	}
+	if msg.Type == tea.KeyShiftTab {
+		m.sourcesFocus = (m.sourcesFocus - 1 + 4) % 4
+		m.sourcesName.Blur()
+		m.sourcesGit.Blur()
+		m.sourcesRef.Blur()
+		m.sourcesPlat.Blur()
+		switch m.sourcesFocus {
+		case 0:
+			m.sourcesName.Focus()
+		case 1:
+			m.sourcesGit.Focus()
+		case 2:
+			m.sourcesRef.Focus()
+		case 3:
+			m.sourcesPlat.Focus()
+		}
+		return m, nil
+	}
+
+	// Save.
+	if msg.Type == tea.KeyEnter {
+		name := m.sourcesName.Value()
+		gitURL := m.sourcesGit.Value()
+		gitRef := m.sourcesRef.Value()
+		platform := m.sourcesPlat.Value()
+		m.sourcesErr = ""
+		return m, tea.Batch(m.beginBusy("Saving"), m.saveSourcesCmd(name, gitURL, gitRef, platform))
+	}
+
+	var cmds []tea.Cmd
+	var cmd tea.Cmd
+	m.sourcesName, cmd = m.sourcesName.Update(msg)
+	cmds = append(cmds, cmd)
+	m.sourcesGit, cmd = m.sourcesGit.Update(msg)
+	cmds = append(cmds, cmd)
+	m.sourcesRef, cmd = m.sourcesRef.Update(msg)
+	cmds = append(cmds, cmd)
+	m.sourcesPlat, cmd = m.sourcesPlat.Update(msg)
+	cmds = append(cmds, cmd)
+	return m, tea.Batch(cmds...)
 }
 
 func (m AppModel) isAnyFilterActive() bool {
@@ -1888,8 +3008,14 @@ func (m AppModel) View() string {
 		// Help fully replaces the body.
 		body = renderHelpOverlay(m)
 	} else if m.paletteOpen {
-		// Palette currently renders as a modal stacked above the body.
-		body = renderWithModal(m, m.currentBodyView(), m.palette.View())
+		// Palette is a full-body modal so it can't be pushed off-screen by the body.
+		body = m.palette.View()
+	} else if m.sourcesOpen {
+		// Sources modal is full-body for the same reason as the palette.
+		body = m.renderSourcesModal()
+	} else if m.depActionsOpen {
+		// Dep actions is a full-body modal.
+		body = renderDepActionsModal(m)
 	} else if m.depDetailOpen {
 		// Dependency detail modal should be full-screen (like dep version editor).
 		body = renderDepDetailModal(m)
@@ -1901,6 +3027,8 @@ func (m AppModel) View() string {
 	} else if m.valuesPreviewOpen {
 		// Values preview is a full-screen modal.
 		body = renderValuesPreviewModal(m)
+	} else if m.applyOpen {
+		body = m.renderApplyOverlay()
 	} else {
 		body = m.currentBodyView()
 	}
@@ -1950,6 +3078,48 @@ func renderTabs(names []string, active int) string {
 	return strings.Join(parts, "  ")
 }
 
+func (m AppModel) renderSourcesModal() string {
+	box := lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).Padding(1, 2)
+	box = box.Height(modalMaxHeight(m))
+	lines := []string{}
+	lines = append(lines, lipgloss.NewStyle().Bold(true).Render(withIcon(iconCmd, "Configure sources")))
+	if strings.TrimSpace(m.sourcesErr) != "" {
+		lines = append(lines, styleErrStrong.Render(withIcon(iconErr, "Error:")+" "+m.sourcesErr))
+	}
+	lines = append(lines, "")
+	lines = append(lines, m.sourcesName.View())
+	lines = append(lines, m.sourcesGit.View())
+	lines = append(lines, m.sourcesRef.View())
+	lines = append(lines, m.sourcesPlat.View())
+	lines = append(lines, "")
+	lines = append(lines, styleMuted.Render("tab: next field • enter: save • esc: close"))
+	return box.Render(strings.Join(lines, "\n"))
+}
+
+func (m AppModel) renderApplyOverlay() string {
+	box := lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).Padding(1, 2)
+	box = box.Height(modalMaxHeight(m))
+	lines := []string{}
+	lines = append(lines, lipgloss.NewStyle().Bold(true).Render(withIcon(iconBusy, "Applying")))
+	if strings.TrimSpace(m.busyLabel) != "" {
+		lines = append(lines, styleMuted.Render(m.spin.View()+" "+m.busyLabel))
+	} else {
+		lines = append(lines, styleMuted.Render(m.spin.View()+" Working…"))
+	}
+	lines = append(lines, "")
+	if m.applyCancelConfirm {
+		lines = append(lines, styleErrStrong.Render("Cancel apply?"))
+		lines = append(lines, styleMuted.Render("This is best-effort; it may still finish in the background."))
+		lines = append(lines, "")
+		lines = append(lines, styleMuted.Render("y: cancel • n: continue"))
+	} else if m.applyCancelRequested {
+		lines = append(lines, styleMuted.Render("Cancelling…"))
+	} else {
+		lines = append(lines, styleMuted.Render("esc: cancel"))
+	}
+	return box.Render(strings.Join(lines, "\n"))
+}
+
 func shortHelp(k keyMap) string {
 	parts := []string{}
 	for _, b := range k.ShortHelp() {
@@ -1965,6 +3135,9 @@ func (m AppModel) contextHelpLine() string {
 	if m.paletteOpen {
 		return "type to search • ↑/↓ select • enter run • esc close"
 	}
+	if m.sourcesOpen {
+		return "tab: next field • enter: save • esc: close"
+	}
 	if m.creating {
 		return "enter create • esc cancel"
 	}
@@ -1975,12 +3148,15 @@ func (m AppModel) contextHelpLine() string {
 		if m.addingDep {
 			return "esc close • enter select • ←/→ tabs • a add"
 		}
-		if m.depDetailOpen {
-			return "esc close • ←/→ tabs • / filter • enter apply"
-		}
-		if m.activeTab == InstanceTabDeps {
-			return "←/→ tabs • d remove • v version • u upgrade • a add dep • m commands • esc back • q quit"
-		}
+	if m.depDetailOpen {
+		return "esc close • ←/→ tabs • / filter • enter apply"
+	}
+	if m.depActionsOpen {
+		return "esc close • ↑/↓ select • enter run"
+	}
+	if m.activeTab == InstanceTabDeps {
+		return "←/→ tabs • x actions • d remove • v version • u upgrade • a add dep • m commands • esc back • q quit"
+	}
 		return "←/→ tabs • a add dep • e edit values • p apply • r regen values • m commands • esc back • q quit"
 	}
 	return shortHelp(m.keys)
@@ -2192,10 +3368,64 @@ func renderAddDepView(m AppModel) string {
 		return header + "\n\n" + m.depSource.View()
 	case depStepCatalog:
 		if len(m.catalogEntries) == 0 {
-			msg := styleMuted.Render("No local catalog entries. Run `helmdex catalog sync` then retry.")
+			msg := styleMuted.Render("No local catalog entries. Run `helmdex catalog sync` (or command palette: Catalog sync) then retry.")
 			return header + "\n\n" + msg
 		}
 		return header + "\n\n" + m.catalogList.View()
+	case depStepCatalogDetail:
+		if m.catalogDetailEntry == nil {
+			return header + "\n\n" + styleMuted.Render("No catalog entry selected")
+		}
+		e := m.catalogDetailEntry
+		lines := []string{}
+		lines = append(lines, lipgloss.NewStyle().Bold(true).Render(withIcon(iconCatalog, e.ID)))
+		lines = append(lines, styleMuted.Render(e.Chart.Repo+"/"+e.Chart.Name+"@"+e.Version))
+		if strings.TrimSpace(e.Description) != "" {
+			lines = append(lines, "")
+			lines = append(lines, e.Description)
+		}
+		lines = append(lines, "")
+		if m.catalogSetsLoading {
+			lines = append(lines, styleMuted.Render("Loading sets from preset cache…"))
+		} else {
+			if len(m.catalogSetList.Items()) == 0 {
+				lines = append(lines, styleMuted.Render("No sets found for this chart/version in the preset cache."))
+			} else {
+				lines = append(lines, lipgloss.NewStyle().Bold(true).Render("Sets:"))
+				lines = append(lines, m.catalogSetList.View())
+				lines = append(lines, "")
+				lines = append(lines, styleMuted.Render("space: toggle • d: toggle defaults • enter: add+apply"))
+			}
+		}
+		return header + "\n\n" + strings.Join(lines, "\n")
+	case depStepCatalogCollision:
+		lines := []string{}
+		lines = append(lines, lipgloss.NewStyle().Bold(true).Render(withIcon(iconErr, "Dependency already exists")))
+		lines = append(lines, styleMuted.Render(fmt.Sprintf("A dependency named %q already exists in this instance.", m.catalogCollisionDep.Name)))
+		lines = append(lines, "")
+		lines = append(lines, lipgloss.NewStyle().Bold(true).Render("Choose:"))
+		aliasLine := "( ) Alias (recommended)"
+		overrideLine := "( ) Override existing"
+		cancelLine := "( ) Cancel"
+		switch m.catalogCollisionChoice {
+		case collisionChoiceAlias:
+			aliasLine = "(*) Alias (recommended)"
+		case collisionChoiceOverride:
+			overrideLine = "(*) Override existing"
+		case collisionChoiceCancel:
+			cancelLine = "(*) Cancel"
+		}
+		lines = append(lines, aliasLine)
+		lines = append(lines, overrideLine+" "+styleMuted.Render("(will delete dep-set markers for this depID)"))
+		lines = append(lines, cancelLine)
+		if m.catalogCollisionChoice == collisionChoiceAlias {
+			lines = append(lines, "")
+			lines = append(lines, m.catalogCollisionAlias.View())
+			lines = append(lines, styleMuted.Render("alias is required"))
+		}
+		lines = append(lines, "")
+		lines = append(lines, styleMuted.Render("↑/↓ select • enter confirm • esc back"))
+		return header + "\n\n" + strings.Join(lines, "\n")
 	case depStepAHQuery:
 		return header + "\n\n" + withIcon(iconAH, "Artifact Hub search") + "\n\n" + m.ahQuery.View() + "\n\n(enter to search)"
 	case depStepAHResults:
@@ -2389,6 +3619,7 @@ func (m AppModel) openDepDetailSelected() (tea.Model, tea.Cmd) {
 	m.depDetailDep = dep
 	m.depDetailTab = 0
 	m.depDetailLoading = true
+	m.depDetailSetsLoading = false
 	m.modalErr = ""
 	m.depDetailReadme = ""
 	m.depDetailDefaultValues = ""
@@ -2396,6 +3627,7 @@ func (m AppModel) openDepDetailSelected() (tea.Model, tea.Cmd) {
 	m.depDetailVersionsData = nil
 	m.depDetailVersions.SetItems(nil)
 	m.depDetailVersionsLoading = false
+	m.depDetailSets.SetItems(nil)
 	m.depDetailPreview.SetContent(m.renderDepDetailBody())
 
 	// Decide mode.
@@ -2410,7 +3642,8 @@ func (m AppModel) openDepDetailSelected() (tea.Model, tea.Cmd) {
 	}
 
 	// Kick off loads.
-	cmds := []tea.Cmd{m.beginBusy("Loading"), m.loadDepDetailPreviewsCmd(dep)}
+	m.depDetailSetsLoading = true
+	cmds := []tea.Cmd{m.beginBusy("Loading"), m.loadDepDetailPreviewsCmd(dep), m.loadDepDetailSetsCmd(dep)}
 	if m.depDetailMode == depEditModeList {
 		// Cache-first: populate from cache immediately if present.
 		if vs, _, ok, err := helmutil.ReadVersionsCache(m.params.RepoRoot, dep.Repository, dep.Name); err == nil && ok {
@@ -2430,6 +3663,7 @@ func (m AppModel) openDepDetailSelected() (tea.Model, tea.Cmd) {
 
 func (m AppModel) depDetailUpdate(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	configureTab := DepDetailTabConfigure
+	setsTab := DepDetailTabSets
 	versionsTab := len(m.depDetailTabNames) - 1
 
 	// Close.
@@ -2549,6 +3783,39 @@ func (m AppModel) depDetailUpdate(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	}
 
+	// Sets tab.
+	if m.depDetailTab == setsTab {
+		var cmd tea.Cmd
+		m.depDetailSets, cmd = m.depDetailSets.Update(msg)
+		if msg.Type == tea.KeySpace {
+			if it := m.depDetailSets.SelectedItem(); it != nil {
+				if si, ok := it.(setChoiceForDepItem); ok {
+					si.C.On = !si.C.On
+					items := m.depDetailSets.Items()
+					idx := m.depDetailSets.Index()
+					if idx >= 0 && idx < len(items) {
+						items[idx] = si
+						m.depDetailSets.SetItems(items)
+						m.depDetailSets.Select(idx)
+					}
+				}
+			}
+			m.depDetailPreview.SetContent(m.renderDepDetailBody())
+			return m, cmd
+		}
+		if msg.Type == tea.KeyEnter {
+			// Apply selection.
+			return m, tea.Batch(cmd, m.beginBusy("Applying"), m.applyDepDetailSetsCmd())
+		}
+		if msg.String() == "s" || msg.String() == "S" {
+			// Save+apply immediately.
+			return m, tea.Batch(m.beginBusy("Applying"), m.applyDepDetailSetsCmd())
+		}
+		// Allow scrolling through the list.
+		m.depDetailPreview.SetContent(m.renderDepDetailBody())
+		return m, cmd
+	}
+
 	// Switch tabs.
 	if key.Matches(msg, m.keys.TabLeft) {
 		m.depDetailTab = (m.depDetailTab - 1 + len(m.depDetailTabNames)) % len(m.depDetailTabNames)
@@ -2644,8 +3911,19 @@ func (m AppModel) renderDepDetailBody() string {
 			return "Default values not loaded."
 		}
 		return m.depDetailDefaultValues
-	case DepDetailTabLocal:
-		return m.renderDepLocalValuesBody(dep)
+	case DepDetailTabSets:
+		if m.depDetailSetsLoading {
+			return styleMuted.Render("Loading sets from preset cache…")
+		}
+		if len(m.depDetailSets.Items()) == 0 {
+			return styleMuted.Render("No preset sets found for this dependency/version in the preset cache.")
+		}
+		lines := []string{}
+		lines = append(lines, lipgloss.NewStyle().Bold(true).Render("Sets:"))
+		lines = append(lines, m.depDetailSets.View())
+		lines = append(lines, "")
+		lines = append(lines, styleMuted.Render("space: toggle • s: save+apply • esc: close"))
+		return strings.Join(lines, "\n")
 	case DepDetailTabVersions:
 		// Versions are rendered by the modal renderer.
 		return ""
@@ -2654,67 +3932,7 @@ func (m AppModel) renderDepDetailBody() string {
 	}
 }
 
-func (m AppModel) renderDepLocalValuesBody(dep yamlchart.Dependency) string {
-	lines := []string{}
-	// Left: resolved preset files for this dep.
-	lines = append(lines, "Resolved presets (cache):")
-	if m.params.Config == nil || m.chart == nil {
-		lines = append(lines, styleMuted.Render("(no config/chart loaded; cannot resolve presets)"))
-	} else {
-		res, err := presets.Resolve(m.params.RepoRoot, *m.params.Config, m.chart.Dependencies)
-		if err != nil {
-			lines = append(lines, styleErrStrong.Render("preset resolution error: "+err.Error()))
-		} else {
-			id := yamlchart.DependencyID(dep)
-			rd, ok := res.ByID[id]
-			if !ok {
-				lines = append(lines, styleMuted.Render("(no preset files found for this dependency)"))
-			} else {
-				if rd.DefaultPath != "" {
-					lines = append(lines, "- default:  "+rd.DefaultPath)
-				}
-				if rd.PlatformPath != "" {
-					lines = append(lines, "- platform: "+rd.PlatformPath)
-				}
-				if len(rd.SetPaths) > 0 {
-					setNames := make([]string, 0, len(rd.SetPaths))
-					for s := range rd.SetPaths {
-						setNames = append(setNames, s)
-					}
-					sort.Strings(setNames)
-					for _, s := range setNames {
-						lines = append(lines, fmt.Sprintf("- set %s: %s", s, rd.SetPaths[s]))
-					}
-				}
-			}
-		}
-	}
-
-	lines = append(lines, "", "Instance-local values files:")
-	if m.selected == nil {
-		lines = append(lines, styleMuted.Render("(no instance selected)"))
-		return strings.Join(lines, "\n")
-	}
-	inst := *m.selected
-	paths := []string{
-		"values.default.yaml",
-		"values.platform.yaml",
-		"values.instance.yaml",
-		"values.yaml",
-	}
-	for _, rel := range paths {
-		p := filepath.Join(inst.Path, rel)
-		if _, err := os.Stat(p); err == nil {
-			lines = append(lines, "- "+rel)
-		}
-	}
-	setFiles, _ := filepath.Glob(filepath.Join(inst.Path, "values.set.*.yaml"))
-	sort.Strings(setFiles)
-	for _, p := range setFiles {
-		lines = append(lines, "- "+filepath.Base(p))
-	}
-	return strings.Join(lines, "\n")
-}
+// renderDepLocalValuesBody removed: the dependency detail "Local" tab is intentionally hidden.
 
 func (m AppModel) validateDependencyVersionCmd(dep yamlchart.Dependency) tea.Cmd {
 	return func() tea.Msg {
@@ -3044,8 +4262,6 @@ func (m *AppModel) refreshInstanceView() {
 	switch m.activeTab {
 	case InstanceTabValues:
 		m.refreshValuesList()
-	case InstanceTabPresets:
-		m.content.SetContent(m.renderPresetsTab())
 	default:
 		// Deps tab (and any future non-viewport tabs) render via their own widgets.
 		m.content.SetContent("")
@@ -3075,49 +4291,8 @@ func (m AppModel) renderValuesTab() string {
 	return ""
 }
 
-func (m AppModel) renderPresetsTab() string {
-	if m.selected == nil {
-		return ""
-	}
-	if m.params.Config == nil {
-		return "No config loaded; cannot resolve presets."
-	}
-	if m.chart == nil {
-		return "Chart not loaded yet."
-	}
-	res, err := presets.Resolve(m.params.RepoRoot, *m.params.Config, m.chart.Dependencies)
-	if err != nil {
-		return "Preset resolution error: " + err.Error()
-	}
-	lines := []string{"Resolved presets:", ""}
-	ids := make([]string, 0, len(res.ByID))
-	for id := range res.ByID {
-		ids = append(ids, string(id))
-	}
-	sort.Strings(ids)
-	for _, raw := range ids {
-		rd := res.ByID[yamlchart.DepID(raw)]
-		lines = append(lines, fmt.Sprintf("%s (%s)", raw, rd.Dependency.Version))
-		if rd.DefaultPath != "" {
-			lines = append(lines, "  default:  "+rd.DefaultPath)
-		}
-		if rd.PlatformPath != "" {
-			lines = append(lines, "  platform: "+rd.PlatformPath)
-		}
-		// Sets
-		setNames := make([]string, 0, len(rd.SetPaths))
-		for s := range rd.SetPaths {
-			setNames = append(setNames, s)
-		}
-		sort.Strings(setNames)
-		for _, s := range setNames {
-			lines = append(lines, "  set "+s+": "+rd.SetPaths[s])
-		}
-		lines = append(lines, "")
-	}
-	lines = append(lines, "Actions:", "- p: apply (import preset layers + regenerate values.yaml)")
-	return strings.Join(lines, "\n")
-}
+// renderPresetsTab removed: preset resolution is still used internally (catalog set discovery
+// and preset import on apply), but the instance Presets tab is intentionally hidden.
 
 func (m AppModel) removeSelectedDepCmd() tea.Cmd {
 	return func() tea.Msg {
