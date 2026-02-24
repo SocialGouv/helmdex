@@ -2,6 +2,7 @@ package yamlchart
 
 import (
 	"fmt"
+	"strings"
 )
 
 type DepID string
@@ -55,4 +56,49 @@ func (c *Chart) RemoveDependencyByID(id DepID) bool {
 		}
 	}
 	return false
+}
+
+// ReplaceDependencyByID replaces an existing dependency identified by oldID with dep.
+//
+// This is needed when changing a dependency's id (alias), because UpsertDependency
+// keys by the *new* id and would otherwise add a second entry.
+func (c *Chart) ReplaceDependencyByID(oldID DepID, dep Dependency) error {
+	if strings.TrimSpace(string(oldID)) == "" {
+		return fmt.Errorf("old dependency id is required")
+	}
+	if dep.Name == "" {
+		return fmt.Errorf("dependency name is required")
+	}
+	if dep.Version == "" {
+		return fmt.Errorf("dependency version is required")
+	}
+	if dep.Repository == "" {
+		return fmt.Errorf("dependency repository is required")
+	}
+	newID := DependencyID(dep)
+	// Ensure old exists; record index.
+	idx := -1
+	for i := range c.Dependencies {
+		if DependencyID(c.Dependencies[i]) == oldID {
+			idx = i
+			break
+		}
+	}
+	if idx < 0 {
+		return fmt.Errorf("dependency %q not found", oldID)
+	}
+	// If id changes, ensure no other dep already uses the new id.
+	if newID != oldID {
+		for i := range c.Dependencies {
+			if i == idx {
+				continue
+			}
+			if DependencyID(c.Dependencies[i]) == newID {
+				return fmt.Errorf("dependency id %q already used", newID)
+			}
+		}
+	}
+	// Replace.
+	c.Dependencies[idx] = dep
+	return nil
 }

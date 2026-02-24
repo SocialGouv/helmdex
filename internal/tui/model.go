@@ -52,6 +52,12 @@ type AppModel struct {
 	creating bool
 	newName  textinput.Model
 
+	// instance manage (Instance tab)
+	instanceManageOpen   bool
+	instanceManageMode   instanceManageMode
+	instanceManageName   textinput.Model
+	instanceManageConfirm bool
+
 	// instance detail
 	selected  *instances.Instance
 	activeTab int
@@ -150,6 +156,8 @@ type AppModel struct {
 	depDetailTabKinds []depDetailTabKind
 	depDetailLoading  bool
 	depDetailMode     depEditMode // reuse enum: list vs manual
+	depDetailAliasInput     textinput.Model
+	depDetailDeleteConfirm  bool
 	// depDetailSetsLoading is specific to the Sets tab.
 	depDetailSetsLoading bool
 	depDetailSets        list.Model
@@ -204,6 +212,7 @@ type AppModel struct {
 const (
 	InstanceTabDeps = iota
 	InstanceTabValues
+	InstanceTabInstance
 )
 
 func instanceTabNames() []string {
@@ -211,14 +220,22 @@ func instanceTabNames() []string {
 	return []string{
 		withIcon(iconDeps, "Dependencies"),
 		withIcon(iconValues, "Values"),
+		withIcon(iconSettings, "Instance"),
 	}
 }
+
+type instanceManageMode int
+
+const (
+	instanceManageRename instanceManageMode = iota
+	instanceManageDelete
+)
 
 // depDetailTabs returns the dynamic tabs list for the dependency detail modal.
 // Catalog-backed deps get Sets as the first tab.
 func depDetailTabs(source depSourceMeta, ok bool) (names []string, kinds []depDetailTabKind) {
 	// Base (non-catalog) order.
-	kinds = []depDetailTabKind{depDetailTabValues, depDetailTabDefault, depDetailTabReadme, depDetailTabVersions}
+	kinds = []depDetailTabKind{depDetailTabValues, depDetailTabDependency, depDetailTabDefault, depDetailTabReadme, depDetailTabVersions}
 	if ok && source.Kind == depSourceCatalog {
 		kinds = append([]depDetailTabKind{depDetailTabSets}, kinds...)
 	}
@@ -230,6 +247,8 @@ func depDetailTabs(source depSourceMeta, ok bool) (names []string, kinds []depDe
 			names = append(names, withIcon(iconPresets, "Sets"))
 		case depDetailTabValues:
 			names = append(names, withIcon(iconSchema, "Values"))
+		case depDetailTabDependency:
+			names = append(names, withIcon(iconDeps, "Dependency"))
 		case depDetailTabDefault:
 			names = append(names, withIcon(iconAHValues, "Default"))
 		case depDetailTabReadme:
@@ -257,6 +276,7 @@ type depDetailTabKind int
 const (
 	depDetailTabSets depDetailTabKind = iota
 	depDetailTabValues
+	depDetailTabDependency
 	depDetailTabDefault
 	depDetailTabReadme
 	depDetailTabVersions
@@ -476,6 +496,10 @@ func NewAppModel(p Params) AppModel {
 	newName.Placeholder = "instance name"
 	newName.Prompt = "> "
 
+	instManageName := textinput.New()
+	instManageName.Placeholder = "new instance name"
+	instManageName.Prompt = "name> "
+
 	srcName := textinput.New()
 	srcName.Placeholder = "source name (e.g. example)"
 	srcName.Prompt = "name> "
@@ -513,6 +537,10 @@ func NewAppModel(p Params) AppModel {
 	depDetailVerInput := textinput.New()
 	depDetailVerInput.Placeholder = "exact version"
 	depDetailVerInput.Prompt = "version> "
+
+	depDetailAlias := textinput.New()
+	depDetailAlias.Placeholder = "alias (optional)"
+	depDetailAlias.Prompt = "alias> "
 
 	arbRepo := textinput.New()
 	arbRepo.Placeholder = "repo URL (https://... or oci://...)"
@@ -564,9 +592,11 @@ func NewAppModel(p Params) AppModel {
 		depDetailTabKinds:     depDetailTabKinds,
 		depDetailVersions:     depDetailVersions,
 		depDetailVersionInput: depDetailVerInput,
+		depDetailAliasInput:   depDetailAlias,
 		depDetailPreview:      depDetailVP,
 		spin:                  sp,
 		newName:               newName,
+		instanceManageName:    instManageName,
 		arbRepo:               arbRepo,
 		arbName:               arbName,
 		arbVersion:            arbVersion,
@@ -651,6 +681,14 @@ type regenDoneMsg struct{}
 type editValuesDoneMsg struct{}
 
 type appliedMsg struct{}
+
+type instanceRenamedMsg struct{ inst instances.Instance }
+
+type instanceDeletedMsg struct{ name string }
+
+type instanceRenameRequest struct{ newName string }
+
+type instanceDeleteRequest struct{}
 
 type instancesMsg struct{ items []instances.Instance }
 
@@ -738,22 +776,25 @@ func (m AppModel) depActionsUpdate(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, func() tea.Msg { return errMsg{fmt.Errorf("unexpected dep action item type")} }
 	}
 
-	// Close menu before launching the chosen action.
-	m.depActionsOpen = false
+		// Close menu before launching the chosen action.
+		m.depActionsOpen = false
 
-	switch ai {
-	case depActionItem(depActionRemove):
-		return m, tea.Batch(m.beginBusy("Updating"), m.removeSelectedDepCmd())
-	case depActionItem(depActionUpgrade):
-		return m.upgradeSelectedDepCmd()
-	case depActionItem(depActionChangeVer):
-		return m.openDepEditSelected()
-	case depActionItem(depActionSyncPresets):
-		return m, tea.Batch(m.beginBusy("Syncing"), m.syncSelectedDepPresetsCmd())
-	default:
-		return m, cmd
+		switch ai {
+		case depActionItem(depActionRemove):
+			// When actions are invoked from the actions menu, use the same cleanup pipeline
+			// as the dependency detail delete.
+			m.depDetailDep = m.depActionsDep
+			return m, tea.Batch(m.beginBusy("Updating"), m.deleteDepFromDetailCmd())
+		case depActionItem(depActionUpgrade):
+			return m.upgradeSelectedDepCmd()
+		case depActionItem(depActionChangeVer):
+			return m.openDepEditSelected()
+		case depActionItem(depActionSyncPresets):
+			return m, tea.Batch(m.beginBusy("Syncing"), m.syncSelectedDepPresetsCmd())
+		default:
+			return m, cmd
+		}
 	}
-}
 
 func (m AppModel) loadCatalogSetsCmd(e catalog.Entry) tea.Cmd {
 	return func() tea.Msg {
@@ -1898,6 +1939,36 @@ func (m AppModel) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.instList.SetItems(items)
 		return m, nil
+	case instanceRenameRequest:
+		m.endBusy()
+		if m.selected == nil {
+			return m, nil
+		}
+		oldName := strings.TrimSpace(m.selected.Name)
+		newName := strings.TrimSpace(msg.newName)
+		appsDir := appsDirFromConfig(m.params.Config)
+		inst, err := instances.Rename(m.params.RepoRoot, appsDir, oldName, newName)
+		if err != nil {
+			return m, func() tea.Msg { return errMsg{err} }
+		}
+		_ = renameDepMetaInstanceDir(m.params.RepoRoot, oldName, newName)
+		m.selected = &inst
+		// Refresh list + chart.
+		return m, tea.Batch(m.beginBusy("Reloading"), m.reloadInstancesCmd(), m.beginBusy("Loading chart"), m.loadChartCmd(inst))
+	case instanceDeleteRequest:
+		m.endBusy()
+		if m.selected == nil {
+			return m, nil
+		}
+		name := strings.TrimSpace(m.selected.Name)
+		appsDir := appsDirFromConfig(m.params.Config)
+		if err := instances.Remove(m.params.RepoRoot, appsDir, name); err != nil {
+			return m, func() tea.Msg { return errMsg{err} }
+		}
+		_ = deleteDepMetaInstanceDir(m.params.RepoRoot, name)
+		m.screen = ScreenDashboard
+		m.selected = nil
+		return m, tea.Batch(m.beginBusy("Reloading"), m.reloadInstancesCmd())
 	case chartMsg:
 		m.endBusy()
 		m.chart = &msg.chart
@@ -2021,6 +2092,16 @@ func (m AppModel) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.endBusy()
 		// Keep modal open; close only after apply succeeds.
 		return m, tea.Batch(m.beginBusy("Applying"), m.applyDependencyAndApplyInstanceCmd(msg.dep))
+	case depAliasAppliedMsg:
+		m.endBusy()
+		m.chart = &msg.chart
+		m.depsList.SetItems(m.depsToItems(msg.chart.Dependencies))
+		m.modalErr = ""
+		m.depDetailDeleteConfirm = false
+		m.statusErr = ""
+		m.refreshValuesList()
+		m.depDetailPreview.SetContent(m.renderDepDetailBody())
+		return m, nil
 	case regenDoneMsg:
 		m.endBusy()
 		m.statusErr = ""
@@ -2373,6 +2454,12 @@ func (m AppModel) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 					return m, nil
 				}
 			}
+			if m.instanceManageOpen {
+				m.instanceManageOpen = false
+				m.instanceManageConfirm = false
+				m.instanceManageName.Blur()
+				return m, nil
+			}
 			if m.screen == ScreenInstance {
 				m.screen = ScreenDashboard
 				m.selected = nil
@@ -2384,6 +2471,29 @@ func (m AppModel) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// characters as global shortcuts.
 		if m.inputCapturesKeys() {
 			break
+		}
+
+		// Instance tab actions.
+		if m.screen == ScreenInstance && !m.addingDep && m.activeTab == InstanceTabInstance {
+			if msg.String() == "r" || msg.String() == "R" {
+				m.instanceManageOpen = true
+				m.instanceManageMode = instanceManageRename
+				m.instanceManageConfirm = false
+				cur := ""
+				if m.selected != nil {
+					cur = m.selected.Name
+				}
+				m.instanceManageName.SetValue(cur)
+				m.instanceManageName.Focus()
+				return m, nil
+			}
+			if msg.String() == "d" || msg.String() == "D" {
+				m.instanceManageOpen = true
+				m.instanceManageMode = instanceManageDelete
+				m.instanceManageConfirm = false
+				m.instanceManageName.Blur()
+				return m, nil
+			}
 		}
 
 		if key.Matches(msg, m.keys.Quit) {
@@ -2435,7 +2545,17 @@ func (m AppModel) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			// Delete dependency.
 			if msg.String() == "d" || msg.String() == "D" {
-				return m, tea.Batch(m.beginBusy("Updating"), m.removeSelectedDepCmd())
+				// Route through the same cleanup pipeline as the Dependency tab delete.
+				it := m.depsList.SelectedItem()
+				if it == nil {
+					return m, nil
+				}
+				di, ok := it.(depItem)
+				if !ok {
+					return m, func() tea.Msg { return errMsg{fmt.Errorf("unexpected dependency item type")} }
+				}
+				m.depDetailDep = di.Dep
+				return m, tea.Batch(m.beginBusy("Updating"), m.deleteDepFromDetailCmd())
 			}
 			// Change version.
 			if msg.String() == "v" || msg.String() == "V" {
@@ -2545,6 +2665,37 @@ func (m AppModel) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 			)
 		}
 		return m, cmd
+	}
+
+	// Modal: instance manage (rename/delete).
+	if m.instanceManageOpen {
+		// Rename flow: textinput.
+		if m.instanceManageMode == instanceManageRename {
+			var cmd tea.Cmd
+			m.instanceManageName, cmd = m.instanceManageName.Update(msg)
+			if km, ok := msg.(tea.KeyMsg); ok && km.Type == tea.KeyEnter {
+				name := strings.TrimSpace(m.instanceManageName.Value())
+				m.instanceManageOpen = false
+				m.instanceManageName.Blur()
+				return m, tea.Batch(m.beginBusy("Renaming"), func() tea.Msg { return instanceRenameRequest{newName: name} })
+			}
+			return m, cmd
+		}
+
+		// Delete flow: confirmation.
+		if m.instanceManageMode == instanceManageDelete {
+			if km, ok := msg.(tea.KeyMsg); ok {
+				if km.String() == "y" || km.String() == "Y" {
+					m.instanceManageOpen = false
+					return m, tea.Batch(m.beginBusy("Deleting"), func() tea.Msg { return instanceDeleteRequest{} })
+				}
+				if km.String() == "n" || km.String() == "N" {
+					m.instanceManageOpen = false
+					return m, nil
+				}
+			}
+			return m, nil
+		}
 	}
 
 	// Modal: add dependency wizard.
@@ -3110,6 +3261,8 @@ func (m AppModel) View() string {
 	} else if m.sourcesOpen {
 		// Sources modal is full-body for the same reason as the palette.
 		body = m.renderSourcesModal()
+	} else if m.instanceManageOpen {
+		body = m.renderInstanceManageModal()
 	} else if m.depActionsOpen {
 		// Dep actions is a full-body modal.
 		body = renderDepActionsModal(m)
@@ -3155,6 +3308,17 @@ func (m AppModel) currentBodyView() string {
 		if m.activeTab == InstanceTabValues {
 			return prefix + m.valuesList.View()
 		}
+		if m.activeTab == InstanceTabInstance {
+			lines := []string{}
+			lines = append(lines, lipgloss.NewStyle().Bold(true).Render(withIcon(iconSettings, "Instance")))
+			if m.selected != nil {
+				lines = append(lines, styleMuted.Render("Name: "+m.selected.Name))
+				lines = append(lines, styleMuted.Render("Path: "+m.selected.Path))
+			}
+			lines = append(lines, "")
+			lines = append(lines, styleMuted.Render("r: rename • d: delete"))
+			return prefix + strings.Join(lines, "\n")
+		}
 		return prefix + m.content.View()
 	default:
 		return "unknown screen"
@@ -3191,6 +3355,37 @@ func (m AppModel) renderSourcesModal() string {
 	lines = append(lines, "")
 	lines = append(lines, styleMuted.Render("tab: next field • enter: save • esc: close"))
 	return box.Render(strings.Join(lines, "\n"))
+}
+
+func (m AppModel) renderInstanceManageModal() string {
+	box := lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).Padding(1, 2)
+	box = box.Height(modalMaxHeight(m))
+	if !m.instanceManageOpen {
+		return ""
+	}
+	instName := ""
+	if m.selected != nil {
+		instName = m.selected.Name
+	}
+
+	switch m.instanceManageMode {
+	case instanceManageRename:
+		header := lipgloss.NewStyle().Bold(true).Render(withIcon(iconRename, "Rename instance"))
+		if strings.TrimSpace(instName) != "" {
+			header += "\n" + styleMuted.Render("Current: "+instName)
+		}
+		body := m.instanceManageName.View() + "\n\n" + styleMuted.Render("enter rename • esc cancel")
+		return box.Render(header + "\n\n" + body)
+	case instanceManageDelete:
+		header := lipgloss.NewStyle().Bold(true).Render(withIcon(iconTrash, "Delete instance"))
+		if strings.TrimSpace(instName) != "" {
+			header += "\n" + styleMuted.Render(instName)
+		}
+		body := styleErrStrong.Render("This will delete the instance directory and its depmeta.") + "\n\n" + styleMuted.Render("y: delete • n: cancel • esc: cancel")
+		return box.Render(header + "\n\n" + body)
+	default:
+		return box.Render(styleMuted.Render("Unknown instance action"))
+	}
 }
 
 func (m AppModel) renderApplyOverlay() string {
@@ -3238,6 +3433,12 @@ func (m AppModel) contextHelpLine() string {
 	if m.creating {
 		return "enter create • esc cancel"
 	}
+	if m.instanceManageOpen {
+		if m.instanceManageMode == instanceManageRename {
+			return "enter rename • esc cancel"
+		}
+		return "y delete • n cancel • esc cancel"
+	}
 	if m.screen == ScreenDashboard {
 		return "/ filter • enter open • n new • m commands • q quit"
 	}
@@ -3253,6 +3454,9 @@ func (m AppModel) contextHelpLine() string {
 	}
 	if m.activeTab == InstanceTabDeps {
 		return "←/→ tabs • x actions • d remove • v version • u upgrade • a add dep • m commands • esc back • q quit"
+	}
+	if m.activeTab == InstanceTabInstance {
+		return "←/→ tabs • r rename • d delete • esc back • q quit"
 	}
 		return "←/→ tabs • a add dep • e edit values • p apply • r regen values • m commands • esc back • q quit"
 	}
@@ -3567,6 +3771,9 @@ func (m AppModel) inputCapturesKeys() bool {
 	if m.creating && m.newName.Focused() {
 		return true
 	}
+	if m.instanceManageOpen && m.instanceManageMode == instanceManageRename && m.instanceManageName.Focused() {
+		return true
+	}
 	if m.paletteOpen && m.palette.QueryFocused() {
 		return true
 	}
@@ -3585,6 +3792,9 @@ func (m AppModel) inputCapturesKeys() bool {
 			return true
 		}
 		if m.depDetailMode == depEditModeList && m.depDetailVersions.FilterState() == list.Filtering {
+			return true
+		}
+		if m.depDetailAliasInput.Focused() {
 			return true
 		}
 	}
@@ -3752,6 +3962,9 @@ func (m AppModel) openDepDetailSelected() (tea.Model, tea.Cmd) {
 	m.depDetailVersionsData = nil
 	m.depDetailVersions.SetItems(nil)
 	m.depDetailVersionsLoading = false
+	m.depDetailAliasInput.SetValue(strings.TrimSpace(dep.Alias))
+	m.depDetailAliasInput.Blur()
+	m.depDetailDeleteConfirm = false
 	m.depDetailSets.SetItems(nil)
 	m.depDetailPreview.SetContent(m.renderDepDetailBody())
 
@@ -3795,6 +4008,11 @@ func (m AppModel) depDetailUpdate(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	// Close.
 	if msg.Type == tea.KeyEsc {
+		if m.depDetailDeleteConfirm {
+			m.depDetailDeleteConfirm = false
+			m.depDetailPreview.SetContent(m.renderDepDetailBody())
+			return m, nil
+		}
 		if m.depDetailMode == depEditModeList {
 			fs := m.depDetailVersions.FilterState()
 			if fs == list.Filtering || fs == list.FilterApplied {
@@ -3812,7 +4030,42 @@ func (m AppModel) depDetailUpdate(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.modalErr = ""
 		m.depDetailDep = yamlchart.Dependency{}
 		m.depDetailVersionInput.Blur()
+		m.depDetailAliasInput.Blur()
 		return m, nil
+	}
+
+	// Dependency tab.
+	if activeKind == depDetailTabDependency {
+		if !m.depDetailAliasInput.Focused() {
+			m.depDetailAliasInput.Focus()
+		}
+		// Confirmation flow.
+		if m.depDetailDeleteConfirm {
+			if msg.String() == "y" || msg.String() == "Y" {
+				m.depDetailDeleteConfirm = false
+				return m, tea.Batch(m.beginBusy("Deleting"), m.deleteDepFromDetailCmd())
+			}
+			if msg.String() == "n" || msg.String() == "N" {
+				m.depDetailDeleteConfirm = false
+				m.depDetailPreview.SetContent(m.renderDepDetailBody())
+				return m, nil
+			}
+			return m, nil
+		}
+
+		var cmd tea.Cmd
+		m.depDetailAliasInput, cmd = m.depDetailAliasInput.Update(msg)
+		if msg.Type == tea.KeyEnter {
+			alias := strings.TrimSpace(m.depDetailAliasInput.Value())
+			return m, tea.Batch(cmd, m.beginBusy("Applying"), m.applyDepAliasFromDetailCmd(alias))
+		}
+		if msg.String() == "d" || msg.String() == "D" {
+			m.depDetailDeleteConfirm = true
+			m.depDetailPreview.SetContent(m.renderDepDetailBody())
+			return m, nil
+		}
+		m.depDetailPreview.SetContent(m.renderDepDetailBody())
+		return m, cmd
 	}
 
 	// Tab-specific interaction.
@@ -4043,6 +4296,23 @@ func (m AppModel) renderDepDetailBody() string {
 	switch activeKind {
 	case depDetailTabValues:
 		return m.depConfigure.View(m.depDetailPreview.Width, m.depDetailPreview.Height)
+	case depDetailTabDependency:
+		lines := []string{}
+		lines = append(lines, lipgloss.NewStyle().Bold(true).Render(withIcon(iconDeps, "Dependency")))
+		lines = append(lines, "")
+		lines = append(lines, styleMuted.Render("Rename alias (changes depID)"))
+		lines = append(lines, m.depDetailAliasInput.View())
+		lines = append(lines, styleMuted.Render("enter: apply alias • leave empty to clear alias"))
+		lines = append(lines, "")
+		if m.depDetailDeleteConfirm {
+			lines = append(lines, styleErrStrong.Render(withIcon(iconTrash, "Delete dependency?")))
+			lines = append(lines, styleMuted.Render("This will remove from Chart.yaml and delete depID-keyed data (values.instance.yaml key, values.dep-set markers, depmeta)."))
+			lines = append(lines, styleMuted.Render("y: delete • n: cancel"))
+		} else {
+			lines = append(lines, styleErrStrong.Render(withIcon(iconTrash, "Danger zone")))
+			lines = append(lines, styleMuted.Render("d: delete dependency"))
+		}
+		return strings.Join(lines, "\n")
 	case depDetailTabReadme:
 		if m.depDetailReadme == "" {
 			return "README not loaded."
@@ -4100,6 +4370,10 @@ func (m AppModel) validateDependencyVersionCmd(dep yamlchart.Dependency) tea.Cmd
 
 type depVersionValidatedMsg struct {
 	dep yamlchart.Dependency
+}
+
+type depAliasAppliedMsg struct{
+	chart yamlchart.Chart
 }
 
 func (m AppModel) openDepEditSelected() (tea.Model, tea.Cmd) {
@@ -4282,6 +4556,251 @@ func (m AppModel) applyDependencyAndApplyInstanceCmd(dep yamlchart.Dependency) t
 	}
 }
 
+func appsDirFromConfig(cfg *config.Config) string {
+	appsDir := "apps"
+	if cfg != nil && cfg.Repo.AppsDir != "" {
+		appsDir = cfg.Repo.AppsDir
+	}
+	return appsDir
+}
+
+func isValidDepSetMarker(base string) bool {
+	// Minimal sanity check for marker filenames we manage.
+	// Format: values.dep-set.<depID>--<set>.yaml
+	if !strings.HasPrefix(base, "values.dep-set.") {
+		return false
+	}
+	if !strings.HasSuffix(base, ".yaml") {
+		return false
+	}
+	name := strings.TrimSuffix(strings.TrimPrefix(base, "values.dep-set."), ".yaml")
+	parts := strings.SplitN(name, "--", 2)
+	return len(parts) == 2 && strings.TrimSpace(parts[0]) != "" && strings.TrimSpace(parts[1]) != ""
+}
+
+func migrateDepOverrideKey(instancePath string, oldID, newID string) error {
+	oldID = strings.TrimSpace(oldID)
+	newID = strings.TrimSpace(newID)
+	if instancePath == "" || oldID == "" || newID == "" || oldID == newID {
+		return nil
+	}
+	path := filepath.Join(instancePath, "values.instance.yaml")
+	b, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	if len(b) == 0 {
+		return nil
+	}
+	var root any
+	if err := yaml.Unmarshal(b, &root); err != nil {
+		return err
+	}
+	obj, ok := root.(map[string]any)
+	if !ok {
+		return nil
+	}
+	val, ok := obj[oldID]
+	if !ok {
+		return nil
+	}
+	if _, exists := obj[newID]; exists {
+		return fmt.Errorf("values.instance.yaml already contains key %q", newID)
+	}
+	delete(obj, oldID)
+	obj[newID] = val
+	out, err := yaml.Marshal(obj)
+	if err != nil {
+		return err
+	}
+	if len(out) == 0 || out[len(out)-1] != '\n' {
+		out = append(out, '\n')
+	}
+	return os.WriteFile(path, out, 0o644)
+}
+
+func deleteDepOverrideKey(instancePath, depID string) error {
+	depID = strings.TrimSpace(depID)
+	if instancePath == "" || depID == "" {
+		return nil
+	}
+	path := filepath.Join(instancePath, "values.instance.yaml")
+	b, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	if len(b) == 0 {
+		return nil
+	}
+	var root any
+	if err := yaml.Unmarshal(b, &root); err != nil {
+		return err
+	}
+	obj, ok := root.(map[string]any)
+	if !ok {
+		return nil
+	}
+	if _, ok := obj[depID]; !ok {
+		return nil
+	}
+	delete(obj, depID)
+	out, err := yaml.Marshal(obj)
+	if err != nil {
+		return err
+	}
+	if len(out) == 0 || out[len(out)-1] != '\n' {
+		out = append(out, '\n')
+	}
+	return os.WriteFile(path, out, 0o644)
+}
+
+func migrateDepSetMarkers(instancePath string, oldID, newID yamlchart.DepID) error {
+	if instancePath == "" || strings.TrimSpace(string(oldID)) == "" || strings.TrimSpace(string(newID)) == "" || oldID == newID {
+		return nil
+	}
+	glob := filepath.Join(instancePath, fmt.Sprintf("values.dep-set.%s--*.yaml", oldID))
+	files, err := filepath.Glob(glob)
+	if err != nil {
+		return err
+	}
+	for _, p := range files {
+		base := filepath.Base(p)
+		if !isValidDepSetMarker(base) {
+			continue
+		}
+		name := strings.TrimSuffix(strings.TrimPrefix(base, "values.dep-set."), ".yaml")
+		parts := strings.SplitN(name, "--", 2)
+		if len(parts) != 2 {
+			continue
+		}
+		setName := strings.TrimSpace(parts[1])
+		if setName == "" {
+			continue
+		}
+		np := filepath.Join(instancePath, fmt.Sprintf("values.dep-set.%s--%s.yaml", newID, setName))
+		if _, err := os.Stat(np); err == nil {
+			return fmt.Errorf("dep-set marker already exists for new depID %q set %q", newID, setName)
+		}
+		if err := os.Rename(p, np); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func deleteDepSetMarkersForID(instancePath string, depID yamlchart.DepID) error {
+	return deleteDepSetMarkers(instancePath, depID)
+}
+
+func (m AppModel) applyDepAliasFromDetailCmd(alias string) tea.Cmd {
+	return func() tea.Msg {
+		if m.selected == nil {
+			return errMsg{fmt.Errorf("no instance selected")}
+		}
+		instName := strings.TrimSpace(m.selected.Name)
+		if instName == "" {
+			return errMsg{fmt.Errorf("no instance selected")}
+		}
+
+		chartPath := filepath.Join(m.selected.Path, "Chart.yaml")
+		c, err := yamlchart.ReadChart(chartPath)
+		if err != nil {
+			return errMsg{err}
+		}
+
+		oldDep := m.depDetailDep
+		oldID := yamlchart.DependencyID(oldDep)
+		// Build new dep with updated alias.
+		newDep := oldDep
+		newDep.Alias = strings.TrimSpace(alias)
+		newID := yamlchart.DependencyID(newDep)
+
+		// Update Chart.yaml.
+		if err := c.ReplaceDependencyByID(oldID, newDep); err != nil {
+			return errMsg{err}
+		}
+		if err := yamlchart.WriteChart(chartPath, c); err != nil {
+			return errMsg{err}
+		}
+
+		// Migrate depID-keyed data when id changes.
+		if newID != oldID {
+			if err := migrateDepOverrideKey(m.selected.Path, string(oldID), string(newID)); err != nil {
+				return errMsg{err}
+			}
+			if err := migrateDepSetMarkers(m.selected.Path, oldID, newID); err != nil {
+				return errMsg{err}
+			}
+			if err := renameDepMetaFile(m.params.RepoRoot, instName, oldID, newID); err != nil {
+				return errMsg{err}
+			}
+		}
+
+		// Apply pipeline (presets import + values regen; lock isn't needed for alias only).
+		if m.params.Config != nil {
+			if _, err := presets.Import(presets.ImportParams{RepoRoot: m.params.RepoRoot, InstancePath: m.selected.Path, Config: *m.params.Config, Dependencies: c.Dependencies}); err != nil {
+				return errMsg{err}
+			}
+		}
+		if err := values.GenerateMergedValues(m.selected.Path); err != nil {
+			return errMsg{err}
+		}
+
+		// Keep modal in sync.
+		return depAliasAppliedMsg{chart: c}
+	}
+}
+
+func (m AppModel) deleteDepFromDetailCmd() tea.Cmd {
+	return func() tea.Msg {
+		if m.selected == nil {
+			return errMsg{fmt.Errorf("no instance selected")}
+		}
+		instName := strings.TrimSpace(m.selected.Name)
+		if instName == "" {
+			return errMsg{fmt.Errorf("no instance selected")}
+		}
+		dep := m.depDetailDep
+		depID := yamlchart.DependencyID(dep)
+
+		chartPath := filepath.Join(m.selected.Path, "Chart.yaml")
+		c, err := yamlchart.ReadChart(chartPath)
+		if err != nil {
+			return errMsg{err}
+		}
+		if ok := c.RemoveDependencyByID(depID); !ok {
+			return errMsg{fmt.Errorf("dependency %q not found", depID)}
+		}
+		if err := yamlchart.WriteChart(chartPath, c); err != nil {
+			return errMsg{err}
+		}
+
+		// Cleanup depID-keyed data.
+		if err := deleteDepOverrideKey(m.selected.Path, string(depID)); err != nil {
+			return errMsg{err}
+		}
+		_ = deleteDepSetMarkersForID(m.selected.Path, depID)
+		_ = deleteDepMetaFile(m.params.RepoRoot, instName, depID)
+
+		// Apply pipeline.
+		if m.params.Config != nil {
+			if _, err := presets.Import(presets.ImportParams{RepoRoot: m.params.RepoRoot, InstancePath: m.selected.Path, Config: *m.params.Config, Dependencies: c.Dependencies}); err != nil {
+				return errMsg{err}
+			}
+		}
+		if err := values.GenerateMergedValues(m.selected.Path); err != nil {
+			return errMsg{err}
+		}
+		return depAppliedMsg{chart: c}
+	}
+}
+
 func (m AppModel) regenMergedValuesCmd() tea.Cmd {
 	return func() tea.Msg {
 		if m.selected == nil {
@@ -4441,6 +4960,10 @@ func (m AppModel) removeSelectedDepCmd() tea.Cmd {
 		if m.selected == nil {
 			return errMsg{fmt.Errorf("no instance selected")}
 		}
+		instName := strings.TrimSpace(m.selected.Name)
+		if instName == "" {
+			return errMsg{fmt.Errorf("no instance selected")}
+		}
 		it := m.depsList.SelectedItem()
 		if it == nil {
 			return errMsg{fmt.Errorf("no dependency selected")}
@@ -4449,7 +4972,7 @@ func (m AppModel) removeSelectedDepCmd() tea.Cmd {
 		if !ok {
 			return errMsg{fmt.Errorf("unexpected dependency item type")}
 		}
-		id := yamlchart.DepID(di.Title())
+		id := yamlchart.DependencyID(di.Dep)
 		chartPath := filepath.Join(m.selected.Path, "Chart.yaml")
 		c, err := yamlchart.ReadChart(chartPath)
 		if err != nil {
@@ -4459,6 +4982,23 @@ func (m AppModel) removeSelectedDepCmd() tea.Cmd {
 			return errMsg{fmt.Errorf("dependency %q not found", id)}
 		}
 		if err := yamlchart.WriteChart(chartPath, c); err != nil {
+			return errMsg{err}
+		}
+
+		// Cleanup depID-keyed data.
+		if err := deleteDepOverrideKey(m.selected.Path, string(id)); err != nil {
+			return errMsg{err}
+		}
+		_ = deleteDepSetMarkersForID(m.selected.Path, id)
+		_ = deleteDepMetaFile(m.params.RepoRoot, instName, id)
+
+		// Apply pipeline.
+		if m.params.Config != nil {
+			if _, err := presets.Import(presets.ImportParams{RepoRoot: m.params.RepoRoot, InstancePath: m.selected.Path, Config: *m.params.Config, Dependencies: c.Dependencies}); err != nil {
+				return errMsg{err}
+			}
+		}
+		if err := values.GenerateMergedValues(m.selected.Path); err != nil {
 			return errMsg{err}
 		}
 		return depAppliedMsg{chart: c}

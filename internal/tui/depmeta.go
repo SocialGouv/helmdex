@@ -29,6 +29,68 @@ func depMetaPath(repoRoot, instanceName string, depID yamlchart.DepID) string {
 	return filepath.Join(repoRoot, ".helmdex", "depmeta", instanceName, fmt.Sprintf("%s.yaml", depID))
 }
 
+func depMetaInstanceDir(repoRoot, instanceName string) string {
+	return filepath.Join(repoRoot, ".helmdex", "depmeta", instanceName)
+}
+
+func renameDepMetaInstanceDir(repoRoot, oldInstanceName, newInstanceName string) error {
+	oldInstanceName = strings.TrimSpace(oldInstanceName)
+	newInstanceName = strings.TrimSpace(newInstanceName)
+	if oldInstanceName == "" || newInstanceName == "" || oldInstanceName == newInstanceName {
+		return nil
+	}
+	oldDir := depMetaInstanceDir(repoRoot, oldInstanceName)
+	newDir := depMetaInstanceDir(repoRoot, newInstanceName)
+	if _, err := os.Stat(oldDir); err != nil {
+		// Nothing to move.
+		return nil
+	}
+	if _, err := os.Stat(newDir); err == nil {
+		return fmt.Errorf("depmeta dir for instance %q already exists", newInstanceName)
+	}
+	if err := os.MkdirAll(filepath.Dir(newDir), 0o755); err != nil {
+		return err
+	}
+	return os.Rename(oldDir, newDir)
+}
+
+func deleteDepMetaInstanceDir(repoRoot, instanceName string) error {
+	instanceName = strings.TrimSpace(instanceName)
+	if instanceName == "" {
+		return nil
+	}
+	return os.RemoveAll(depMetaInstanceDir(repoRoot, instanceName))
+}
+
+func renameDepMetaFile(repoRoot, instanceName string, oldDepID, newDepID yamlchart.DepID) error {
+	if strings.TrimSpace(repoRoot) == "" || strings.TrimSpace(instanceName) == "" {
+		return nil
+	}
+	if strings.TrimSpace(string(oldDepID)) == "" || strings.TrimSpace(string(newDepID)) == "" || oldDepID == newDepID {
+		return nil
+	}
+	oldP := depMetaPath(repoRoot, instanceName, oldDepID)
+	newP := depMetaPath(repoRoot, instanceName, newDepID)
+	if _, err := os.Stat(oldP); err != nil {
+		return nil
+	}
+	if _, err := os.Stat(newP); err == nil {
+		return fmt.Errorf("depmeta already exists for depID %q", newDepID)
+	}
+	if err := os.MkdirAll(filepath.Dir(newP), 0o755); err != nil {
+		return err
+	}
+	return os.Rename(oldP, newP)
+}
+
+func deleteDepMetaFile(repoRoot, instanceName string, depID yamlchart.DepID) error {
+	if strings.TrimSpace(repoRoot) == "" || strings.TrimSpace(instanceName) == "" || strings.TrimSpace(string(depID)) == "" {
+		return nil
+	}
+	_ = os.Remove(depMetaPath(repoRoot, instanceName, depID))
+	return nil
+}
+
 func writeDepSourceMeta(repoRoot, instanceName string, depID yamlchart.DepID, meta depSourceMeta) error {
 	if strings.TrimSpace(repoRoot) == "" || strings.TrimSpace(instanceName) == "" || strings.TrimSpace(string(depID)) == "" {
 		return fmt.Errorf("missing repoRoot/instanceName/depID")

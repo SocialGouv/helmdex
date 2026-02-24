@@ -98,6 +98,20 @@ func TestDepDetailTabsNonCatalogHidesSets(t *testing.T) {
 	}
 }
 
+func TestDepDetailTabsIncludesDependencyTab(t *testing.T) {
+	_, kinds := depDetailTabs(depSourceMeta{Kind: depSourceArbitrary}, true)
+	found := false
+	for _, k := range kinds {
+		if k == depDetailTabDependency {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected Dependency tab to be present")
+	}
+}
+
 func TestDepDetailSetsTabLeftRightSwitchTabs(t *testing.T) {
 	m := NewAppModel(Params{RepoRoot: "."})
 	m.depDetailOpen = true

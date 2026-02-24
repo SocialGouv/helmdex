@@ -34,6 +34,9 @@ const (
 	iconAHValues = "🧾"
 	iconSchema   = "🧬"
 	iconVersions = "🏷"
+	iconSettings = "🛠"
+	iconRename   = "✏"
+	iconTrash    = "🗑"
 
 	iconCmd    = "⌘"
 	iconFilter = "🔎"

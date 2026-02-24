@@ -93,6 +93,52 @@ func Remove(repoRoot, appsDir, name string) error {
 	return os.RemoveAll(dir)
 }
 
+// Rename renames an instance directory and updates the Chart.yaml name inside the
+// instance to match the new name.
+//
+// This does not update any repo-level metadata (such as TUI depmeta).
+func Rename(repoRoot, appsDir, oldName, newName string) (Instance, error) {
+	oldName = strings.TrimSpace(oldName)
+	newName = strings.TrimSpace(newName)
+	if oldName == "" || newName == "" {
+		return Instance{}, fmt.Errorf("instance name is required")
+	}
+	if strings.Contains(newName, string(os.PathSeparator)) {
+		return Instance{}, fmt.Errorf("invalid instance name %q", newName)
+	}
+	if oldName == newName {
+		inst, err := Get(repoRoot, appsDir, oldName)
+		if err != nil {
+			return Instance{}, err
+		}
+		return inst, nil
+	}
+
+	oldDir := instanceDir(repoRoot, appsDir, oldName)
+	newDir := instanceDir(repoRoot, appsDir, newName)
+	if _, err := os.Stat(oldDir); err != nil {
+		return Instance{}, err
+	}
+	if _, err := os.Stat(newDir); err == nil {
+		return Instance{}, fmt.Errorf("instance already exists at %s", newDir)
+	}
+	if err := os.Rename(oldDir, newDir); err != nil {
+		return Instance{}, err
+	}
+
+	chartPath := filepath.Join(newDir, "Chart.yaml")
+	c, err := yamlchart.ReadChart(chartPath)
+	if err != nil {
+		return Instance{}, err
+	}
+	c.Name = newName
+	if err := yamlchart.WriteChart(chartPath, c); err != nil {
+		return Instance{}, err
+	}
+
+	return Instance{Name: newName, Path: newDir}, nil
+}
+
 func RelockDependencies(ctx context.Context, repoRoot, instancePath string) error {
 	// Per-instance Helm env: prevents repo/cache accumulation across a monorepo.
 	env := helmutil.EnvForInstancePath(repoRoot, instancePath)
