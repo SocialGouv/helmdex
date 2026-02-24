@@ -1681,15 +1681,24 @@ func (m AppModel) saveSourcesCmd(name, gitURL, gitRef, platform string) tea.Cmd 
 			return sourcesSavedMsg{err: fmt.Errorf("platform name is required (needed for presets/sets)")}
 		}
 
-		// UX: if the user typed a local path, ensure it looks like a git repo.
-		// Sync uses `git clone`, so pointing at a plain directory like
-		// `fixtures/remote-source` will fail with an opaque exit status.
-		if filepath.IsAbs(gitURL) || strings.HasPrefix(gitURL, ".") || strings.HasPrefix(gitURL, string(os.PathSeparator)) {
+		// UX: allow local filesystem sources (plain directories without `.git`).
+		// Sync supports these by copying the directory into `.helmdex/cache/<source>`.
+		//
+		// We still validate that obvious local paths exist and are directories.
+		// For remote git URLs, we do not preflight existence.
+		looksLikeRemoteURL := strings.Contains(gitURL, "://") || strings.HasPrefix(gitURL, "git@")
+		looksLikeLocalPath := filepath.IsAbs(gitURL) || strings.HasPrefix(gitURL, ".") || strings.Contains(gitURL, string(os.PathSeparator))
+		if !looksLikeRemoteURL && looksLikeLocalPath {
 			st, err := os.Stat(gitURL)
-			if err == nil && st.IsDir() {
-				if _, err := os.Stat(filepath.Join(gitURL, ".git")); err != nil {
-					return sourcesSavedMsg{err: fmt.Errorf("git path %q is not a git repo (missing .git). For the built-in fixture, copy it to /tmp and run git init/commit as documented in README, then use that /tmp path.", gitURL)}
-				}
+			if err != nil {
+				return sourcesSavedMsg{err: fmt.Errorf("git path %q does not exist", gitURL)}
+			}
+			if !st.IsDir() {
+				return sourcesSavedMsg{err: fmt.Errorf("git path %q is not a directory", gitURL)}
+			}
+			// Filesystem sources ignore git refs/commits; clear ref to prevent confusion.
+			if _, err := os.Stat(filepath.Join(gitURL, ".git")); err != nil {
+				gitRef = ""
 			}
 		}
 

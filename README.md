@@ -48,6 +48,8 @@ You can use it in two ways:
 1) **Filesystem source (no git):** point `sources[].git.url` directly at `fixtures/remote-source`.
 2) **Local git repo (matches real-world sync behavior):** copy it to `/tmp`, `git init`, commit, and point `sources[].git.url` at that `/tmp` path.
 
+Note: for **filesystem sources** (local directories without a `.git` folder), `git.ref` is ignored during sync and the TUI will clear it on save to avoid confusion.
+
 1) (Option A) Use it directly as a filesystem source (no git required):
 
 ```yaml
