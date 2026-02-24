@@ -3813,6 +3813,18 @@ func (m AppModel) depDetailUpdate(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	// Sets tab.
 	if m.depDetailTab == setsTab {
+		// Allow tab navigation while the list is focused.
+		if key.Matches(msg, m.keys.TabLeft) {
+			m.depDetailTab = (m.depDetailTab - 1 + len(m.depDetailTabNames)) % len(m.depDetailTabNames)
+			m.depDetailPreview.SetContent(m.renderDepDetailBody())
+			return m, nil
+		}
+		if key.Matches(msg, m.keys.TabRight) {
+			m.depDetailTab = (m.depDetailTab + 1) % len(m.depDetailTabNames)
+			m.depDetailPreview.SetContent(m.renderDepDetailBody())
+			return m, nil
+		}
+
 		var cmd tea.Cmd
 		m.depDetailSets, cmd = m.depDetailSets.Update(msg)
 		if msg.Type == tea.KeySpace {

@@ -36,7 +36,6 @@ const (
 	iconVersions = "🏷"
 
 	iconCmd    = "⌘"
-	iconInsert = "✍"
 	iconFilter = "🔎"
 	iconBusy   = "⏳"
 	iconErr    = "✖"

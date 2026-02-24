@@ -100,9 +100,6 @@ func renderFooterStatusLine(m AppModel) string {
 	if m.paletteOpen {
 		flags = append(flags, styleInfo.Render(withIcon(iconCmd, "CMD")))
 	}
-	if m.creating || m.palette.QueryFocused() || (m.addingDep && m.depStep == depStepAHQuery) {
-		flags = append(flags, styleInfo.Render(withIcon(iconInsert, "INSERT")))
-	}
 	if m.isAnyFilterActive() {
 		flags = append(flags, styleInfo.Render(withIcon(iconFilter, "FILTER")))
 	}

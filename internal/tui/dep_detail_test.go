@@ -89,6 +89,26 @@ func TestDepDetailTabNamesIncludesSets(t *testing.T) {
 	}
 }
 
+func TestDepDetailSetsTabLeftRightSwitchTabs(t *testing.T) {
+	m := NewAppModel(Params{RepoRoot: "."})
+	m.depDetailOpen = true
+	m.depDetailTab = DepDetailTabSets
+
+	// Left should move away from Sets.
+	nm, _ := m.depDetailUpdate(tea.KeyMsg{Type: tea.KeyLeft})
+	mm := nm.(AppModel)
+	if mm.depDetailTab == DepDetailTabSets {
+		t.Fatalf("expected left to switch tabs away from Sets")
+	}
+
+	// Right should also switch (from whatever tab we landed on).
+	nm2, _ := mm.depDetailUpdate(tea.KeyMsg{Type: tea.KeyRight})
+	mm2 := nm2.(AppModel)
+	if mm2.depDetailTab == mm.depDetailTab {
+		t.Fatalf("expected right to switch tabs")
+	}
+}
+
 func TestDepActionsMenuOpensFromDepsTab(t *testing.T) {
 	m := NewAppModel(Params{RepoRoot: "."})
 	m.screen = ScreenInstance
