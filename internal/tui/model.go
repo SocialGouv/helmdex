@@ -92,13 +92,13 @@ type AppModel struct {
 
 	// catalog picker
 	catalogList    list.Model
-	catalogEntries []catalog.Entry
+	catalogEntries []catalog.EntryWithSource
 	// catalog wizard UX helpers
 	catalogWizardAutoSyncTried bool
 	catalogWizardSyncing       bool
 
 	// catalog detail (sets selection)
-	catalogDetailEntry *catalog.Entry
+	catalogDetailEntry *catalog.EntryWithSource
 	catalogSetList     list.Model
 	catalogSetsLoading bool
 
@@ -385,7 +385,7 @@ const (
 )
 
 type catalogSetsMsg struct {
-	entry catalog.Entry
+	entry catalog.EntryWithSource
 	sets  []setChoice
 	err   error
 }
@@ -738,7 +738,7 @@ type instancesMsg struct{ items []instances.Instance }
 
 type chartMsg struct{ chart yamlchart.Chart }
 
-type catalogMsg struct{ entries []catalog.Entry }
+	type catalogMsg struct{ entries []catalog.EntryWithSource }
 
 type catalogSyncDoneMsg struct{ err error }
 
@@ -840,13 +840,13 @@ func (m AppModel) depActionsUpdate(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	}
 
-func (m AppModel) loadCatalogSetsCmd(e catalog.Entry) tea.Cmd {
+func (m AppModel) loadCatalogSetsCmd(e catalog.EntryWithSource) tea.Cmd {
 	return func() tea.Msg {
 		if m.params.Config == nil {
 			return catalogSetsMsg{entry: e, sets: nil, err: fmt.Errorf("no config loaded; cannot resolve preset sets")}
 		}
 		// Resolve against the synced preset cache using presets.Resolve.
-		dep := yamlchart.Dependency{Name: e.Chart.Name, Repository: e.Chart.Repo, Version: e.Version}
+		dep := yamlchart.Dependency{Name: e.Entry.Chart.Name, Repository: e.Entry.Chart.Repo, Version: e.Entry.Version}
 		res, err := presets.Resolve(m.params.RepoRoot, *m.params.Config, []yamlchart.Dependency{dep})
 		if err != nil {
 			return catalogSetsMsg{entry: e, sets: nil, err: err}
@@ -861,7 +861,7 @@ func (m AppModel) loadCatalogSetsCmd(e catalog.Entry) tea.Cmd {
 		}
 		sort.Strings(setNames)
 		defaults := map[string]struct{}{}
-		for _, s := range e.DefaultSets {
+		for _, s := range e.Entry.DefaultSets {
 			s = strings.TrimSpace(s)
 			if s != "" {
 				defaults[s] = struct{}{}
@@ -1731,7 +1731,7 @@ func (m AppModel) loadChartCmd(inst instances.Instance) tea.Cmd {
 
 func (m AppModel) loadCatalogCmd() tea.Cmd {
 	return func() tea.Msg {
-		e, err := catalog.LoadLocalCatalogEntries(m.params.RepoRoot)
+		e, err := catalog.LoadLocalCatalogEntriesWithSource(m.params.RepoRoot)
 		if err != nil {
 			return errMsg{err}
 		}
@@ -2112,7 +2112,7 @@ func (m AppModel) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		// Ensure we're still on the matching entry.
-		if m.catalogDetailEntry == nil || m.catalogDetailEntry.ID != msg.entry.ID {
+		if m.catalogDetailEntry == nil || m.catalogDetailEntry.Entry.ID != msg.entry.Entry.ID {
 			return m, nil
 		}
 		items := make([]list.Item, 0, len(msg.sets))
@@ -2890,10 +2890,10 @@ func (m AppModel) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 					if m.catalogDetailEntry == nil {
 						return m, cmd
 					}
-					dep := yamlchart.Dependency{Name: m.catalogDetailEntry.Chart.Name, Repository: m.catalogDetailEntry.Chart.Repo, Version: m.catalogDetailEntry.Version}
+					dep := yamlchart.Dependency{Name: m.catalogDetailEntry.Entry.Chart.Name, Repository: m.catalogDetailEntry.Entry.Chart.Repo, Version: m.catalogDetailEntry.Entry.Version}
 					setNames := selectedSetNames(m.catalogSetList.Items())
 					// Persist dep source metadata.
-					_ = m.writeSelectedDepSourceMeta(dep, depSourceMeta{Kind: depSourceCatalog, CatalogID: m.catalogDetailEntry.ID})
+					_ = m.writeSelectedDepSourceMeta(dep, depSourceMeta{Kind: depSourceCatalog, CatalogID: m.catalogDetailEntry.Entry.ID, CatalogSource: m.catalogDetailEntry.SourceName})
 					// Collision check: same dependency name already exists.
 					if m.chart != nil {
 						for _, ex := range m.chart.Dependencies {
@@ -2944,7 +2944,7 @@ func (m AppModel) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 						return m, cmd
 					case collisionChoiceOverride:
 						dep := m.catalogCollisionDep
-						_ = m.writeSelectedDepSourceMeta(dep, depSourceMeta{Kind: depSourceCatalog, CatalogID: ""})
+						_ = m.writeSelectedDepSourceMeta(dep, depSourceMeta{Kind: depSourceCatalog, CatalogID: "", CatalogSource: ""})
 						// Override: keep same depID (name if no alias) and delete markers for that depID.
 						return m, tea.Batch(cmd, m.startApplyCmd(dep, m.catalogCollisionSets, applyOptions{Override: true, DeleteMarkersForDepID: true}))
 					case collisionChoiceAlias:
@@ -2955,7 +2955,7 @@ func (m AppModel) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 						}
 						dep := m.catalogCollisionDep
 						dep.Alias = alias
-						_ = m.writeSelectedDepSourceMeta(dep, depSourceMeta{Kind: depSourceCatalog, CatalogID: ""})
+						_ = m.writeSelectedDepSourceMeta(dep, depSourceMeta{Kind: depSourceCatalog, CatalogID: "", CatalogSource: ""})
 						return m, tea.Batch(cmd, m.startApplyCmd(dep, m.catalogCollisionSets, applyOptions{Override: false, DeleteMarkersForDepID: false}))
 					}
 				}
@@ -3576,14 +3576,14 @@ func (s sourceItem) Description() string { return "" }
 type catalogItem catalog.Entry
 
 // Wrap catalog.Entry (which has a `Description` field) to avoid method/field name collisions.
-type catalogListItem struct{ E catalog.Entry }
+type catalogListItem struct{ E catalog.EntryWithSource }
 
-func (c catalogListItem) Title() string { return withIcon(iconCatalog, c.E.ID) }
+func (c catalogListItem) Title() string { return withIcon(iconCatalog, c.E.Entry.ID) }
 func (c catalogListItem) Description() string {
-	return c.E.Chart.Repo + "@" + c.E.Version
+	return c.E.Entry.Chart.Repo + "@" + c.E.Entry.Version
 }
 func (c catalogListItem) FilterValue() string {
-	return c.E.ID + " " + c.E.Chart.Name + " " + c.E.Chart.Repo
+	return c.E.Entry.ID + " " + c.E.Entry.Chart.Name + " " + c.E.Entry.Chart.Repo
 }
 
 // Wrap PackageSummary (which has a `Description` field) to avoid method/field name collisions.
@@ -3796,11 +3796,11 @@ func renderAddDepView(m AppModel) string {
 		}
 		e := m.catalogDetailEntry
 		lines := []string{}
-		lines = append(lines, lipgloss.NewStyle().Bold(true).Render(withIcon(iconCatalog, e.ID)))
-		lines = append(lines, styleMuted.Render(e.Chart.Repo+"/"+e.Chart.Name+"@"+e.Version))
-		if strings.TrimSpace(e.Description) != "" {
+		lines = append(lines, lipgloss.NewStyle().Bold(true).Render(withIcon(iconCatalog, e.Entry.ID)))
+		lines = append(lines, styleMuted.Render(e.Entry.Chart.Repo+"/"+e.Entry.Chart.Name+"@"+e.Entry.Version))
+		if strings.TrimSpace(e.Entry.Description) != "" {
 			lines = append(lines, "")
-			lines = append(lines, e.Description)
+			lines = append(lines, e.Entry.Description)
 		}
 		lines = append(lines, "")
 		if m.catalogSetsLoading {
@@ -4108,6 +4108,13 @@ func (m AppModel) depDetailUpdate(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	// Close.
 	if msg.Type == tea.KeyEsc {
+		// Dependency tab: Esc cancels alias edit mode (do not close modal).
+		if activeKind == depDetailTabDependency && m.depDetailAliasInput.Focused() {
+			m.depDetailAliasInput.SetValue(strings.TrimSpace(m.depDetailDep.Alias))
+			m.depDetailAliasInput.Blur()
+			m.depDetailPreview.SetContent(m.renderDepDetailBody())
+			return m, nil
+		}
 		if m.depDetailDeleteConfirm {
 			m.depDetailDeleteConfirm = false
 			m.depDetailPreview.SetContent(m.renderDepDetailBody())
@@ -4136,9 +4143,8 @@ func (m AppModel) depDetailUpdate(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	// Dependency tab.
 	if activeKind == depDetailTabDependency {
-		if !m.depDetailAliasInput.Focused() {
-			m.depDetailAliasInput.Focus()
-		}
+		// Do not auto-focus the alias input. User must explicitly enter edit mode
+		// (Enter focuses; Esc blurs/reverts; Enter while focused applies).
 		// Confirmation flow.
 		if m.depDetailDeleteConfirm {
 			if msg.String() == "y" || msg.String() == "Y" {
@@ -4153,11 +4159,33 @@ func (m AppModel) depDetailUpdate(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 
-		var cmd tea.Cmd
-		m.depDetailAliasInput, cmd = m.depDetailAliasInput.Update(msg)
+		// Alias edit mode.
+		if msg.Type == tea.KeyEsc {
+			if m.depDetailAliasInput.Focused() {
+				m.depDetailAliasInput.SetValue(strings.TrimSpace(m.depDetailDep.Alias))
+				m.depDetailAliasInput.Blur()
+				m.depDetailPreview.SetContent(m.renderDepDetailBody())
+				return m, nil
+			}
+			// fall through: global Esc handling above closes modal
+		}
 		if msg.Type == tea.KeyEnter {
+			if !m.depDetailAliasInput.Focused() {
+				m.depDetailAliasInput.Focus()
+				m.depDetailPreview.SetContent(m.renderDepDetailBody())
+				return m, nil
+			}
+			// focused: apply
 			alias := strings.TrimSpace(m.depDetailAliasInput.Value())
-			return m, tea.Batch(cmd, m.beginBusy("Applying"), m.applyDepAliasFromDetailCmd(alias))
+			m.depDetailAliasInput.Blur()
+			m.depDetailPreview.SetContent(m.renderDepDetailBody())
+			return m, tea.Batch(m.beginBusy("Applying"), m.applyDepAliasFromDetailCmd(alias))
+		}
+
+		// While editing, update the input; otherwise ignore keystrokes.
+		var cmd tea.Cmd
+		if m.depDetailAliasInput.Focused() {
+			m.depDetailAliasInput, cmd = m.depDetailAliasInput.Update(msg)
 		}
 		if msg.String() == "d" || msg.String() == "D" {
 			m.depDetailDeleteConfirm = true
@@ -4398,18 +4426,21 @@ func (m AppModel) renderDepDetailBody() string {
 		return m.depConfigure.View(m.depDetailPreview.Width, m.depDetailPreview.Height)
 	case depDetailTabDependency:
 		lines := []string{}
-		lines = append(lines, lipgloss.NewStyle().Bold(true).Render(withIcon(iconDeps, "Dependency")))
+		lines = append(lines, lipgloss.NewStyle().Bold(true).Render(withIcon(iconDeps, "Settings")))
 		lines = append(lines, "")
-		lines = append(lines, styleMuted.Render("Rename alias (changes depID)"))
+		lines = append(lines, styleMuted.Render("Alias (changes depID)"))
 		lines = append(lines, m.depDetailAliasInput.View())
-		lines = append(lines, styleMuted.Render("enter: apply alias • leave empty to clear alias"))
+		if m.depDetailAliasInput.Focused() {
+			lines = append(lines, styleMuted.Render("enter: apply • esc: cancel"))
+		} else {
+			lines = append(lines, styleMuted.Render("enter: edit • (leave empty + enter to clear)"))
+		}
 		lines = append(lines, "")
 		if m.depDetailDeleteConfirm {
 			lines = append(lines, styleErrStrong.Render(withIcon(iconTrash, "Delete dependency?")))
 			lines = append(lines, styleMuted.Render("This will remove from Chart.yaml and delete depID-keyed data (values.instance.yaml key, values.dep-set markers, depmeta)."))
 			lines = append(lines, styleMuted.Render("y: delete • n: cancel"))
 		} else {
-			lines = append(lines, styleErrStrong.Render(withIcon(iconTrash, "Danger zone")))
 			lines = append(lines, styleMuted.Render("d: delete dependency"))
 		}
 		return strings.Join(lines, "\n")

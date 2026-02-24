@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"strings"
 	"testing"
 
 	"helmdex/internal/yamlchart"
@@ -82,10 +83,76 @@ func TestDepDetailVersionsEnterSetsPendingVersion(t *testing.T) {
 	}
 }
 
+func TestDepDetailDependencyTabEnterStartsAliasEditDoesNotApply(t *testing.T) {
+	// Ensure Enter on the Dependency/Settings tab focuses the alias input (edit mode)
+	// but does not apply immediately.
+	m := NewAppModel(Params{RepoRoot: "."})
+	dep := yamlchart.Dependency{Name: "nginx", Repository: "https://example.com", Version: "0.1.0", Alias: "old"}
+	m.depDetailOpen = true
+	m.depDetailDep = dep
+	m.depDetailLoading = false
+	// Force active tab kind to Dependency.
+	m.depDetailTabNames = []string{"Values", "Dependency"}
+	m.depDetailTabKinds = []depDetailTabKind{depDetailTabValues, depDetailTabDependency}
+	m.depDetailTab = 1
+	m.depDetailAliasInput.SetValue("new")
+	m.depDetailAliasInput.Blur()
+
+	nm, _ := m.depDetailUpdate(tea.KeyMsg{Type: tea.KeyEnter})
+	mm := nm.(AppModel)
+	if !mm.depDetailAliasInput.Focused() {
+		t.Fatalf("expected alias input to be focused after first enter")
+	}
+	if mm.depDetailDep.Alias != dep.Alias {
+		t.Fatalf("expected alias not to be applied on first enter; dep alias changed to %q", mm.depDetailDep.Alias)
+	}
+}
+
+func TestDepDetailDependencyTabEscWhileEditingBlursAndRevertsValue(t *testing.T) {
+	m := NewAppModel(Params{RepoRoot: "."})
+	dep := yamlchart.Dependency{Name: "nginx", Repository: "https://example.com", Version: "0.1.0", Alias: "keep"}
+	m.depDetailOpen = true
+	m.depDetailDep = dep
+	m.depDetailLoading = false
+	// Force active tab kind to Dependency.
+	m.depDetailTabNames = []string{"Values", "Dependency"}
+	m.depDetailTabKinds = []depDetailTabKind{depDetailTabValues, depDetailTabDependency}
+	m.depDetailTab = 1
+
+	// Start edit.
+	m.depDetailAliasInput.SetValue("changed")
+	m.depDetailAliasInput.Focus()
+
+	nm, _ := m.depDetailUpdate(tea.KeyMsg{Type: tea.KeyEsc})
+	mm := nm.(AppModel)
+	if mm.depDetailAliasInput.Focused() {
+		t.Fatalf("expected alias input to be blurred after esc")
+	}
+	if got := mm.depDetailAliasInput.Value(); got != "keep" {
+		t.Fatalf("expected alias input value to be reverted to %q, got %q", "keep", got)
+	}
+}
+
 func TestDepDetailTabsCatalogIncludesSetsFirst(t *testing.T) {
 	names, kinds := depDetailTabs(depSourceMeta{Kind: depSourceCatalog, CatalogID: "x"}, true)
 	if len(kinds) == 0 || kinds[0] != depDetailTabSets {
 		t.Fatalf("expected Sets to be first tab for catalog deps; kinds=%#v names=%#v", kinds, names)
+	}
+}
+
+func TestDepSourceTagAndLabel_CatalogShowsSourceAndEntryID(t *testing.T) {
+	tag, label := depSourceTagAndLabel(depSourceMeta{Kind: depSourceCatalog, CatalogID: "bitnami-nginx-15.0.0", CatalogSource: "remote-source"}, true)
+	if tag == "" || label == "" {
+		t.Fatalf("expected non-empty tag/label")
+	}
+	if want := "remote-source"; !strings.Contains(tag, want) {
+		t.Fatalf("expected tag to contain %q, got %q", want, tag)
+	}
+	if want := "remote-source"; !strings.Contains(label, want) {
+		t.Fatalf("expected label to contain %q, got %q", want, label)
+	}
+	if want := "bitnami-nginx-15.0.0"; !strings.Contains(label, want) {
+		t.Fatalf("expected label to contain %q, got %q", want, label)
 	}
 }
 

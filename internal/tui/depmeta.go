@@ -22,6 +22,9 @@ const (
 type depSourceMeta struct {
 	Kind     depSourceKind `yaml:"kind"`
 	CatalogID string       `yaml:"catalogID,omitempty"`
+	// CatalogSource is the configured source name that produced the catalog entry.
+	// It corresponds to the `.helmdex/catalog/<source>.yaml` filename.
+	CatalogSource string   `yaml:"catalogSource,omitempty"`
 }
 
 func depMetaPath(repoRoot, instanceName string, depID yamlchart.DepID) string {
@@ -131,10 +134,18 @@ func depSourceTagAndLabel(meta depSourceMeta, ok bool) (tag, label string) {
 	}
 	switch meta.Kind {
 	case depSourceCatalog:
-		if strings.TrimSpace(meta.CatalogID) != "" {
-			return withIcon(iconCatalog, "CAT"), withIcon(iconCatalog, "Catalog") + " (" + meta.CatalogID + ")"
+		src := strings.TrimSpace(meta.CatalogSource)
+		catID := strings.TrimSpace(meta.CatalogID)
+		tagText := "CAT"
+		labelText := "Catalog"
+		if src != "" {
+			tagText += " " + src
+			labelText += " " + src
 		}
-		return withIcon(iconCatalog, "CAT"), withIcon(iconCatalog, "Catalog")
+		if catID != "" {
+			labelText += " (" + catID + ")"
+		}
+		return withIcon(iconCatalog, tagText), withIcon(iconCatalog, labelText)
 	case depSourceArtifactHub:
 		return withIcon(iconAH, "AH"), withIcon(iconAH, "Artifact Hub")
 	case depSourceArbitrary:
