@@ -179,7 +179,10 @@ func loadDepInspectContent(ctx context.Context, repoRoot string, instPath string
 	ctx3, cancel3 := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel3()
 	if strings.HasPrefix(dep.Repository, "oci://") {
-		ref := strings.TrimRight(dep.Repository, "/") + "/" + dep.Name
+		ref, err := helmutil.OCIChartRef(dep.Repository, dep.Name)
+		if err != nil {
+			return "", err
+		}
 		if kind == kindReadme {
 			s, err := helmutil.ShowReadme(ctx3, env, ref, dep.Version)
 			if err != nil {
@@ -312,4 +315,3 @@ func newInstanceDepInspectSchemaCmd(f *rootFlags) *cobra.Command {
 	}
 	return cmd
 }
-

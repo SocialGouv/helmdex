@@ -177,6 +177,12 @@ helmdex instance dep values unset my-app nginx --path '$.replicaCount'
 # Add/update a dependency directly
 helmdex instance dep add my-app --repo https://charts.bitnami.com/bitnami --name nginx --version 15.0.0
 
+# Add/update an OCI dependency (recommended: use the full OCI chart ref in --repo)
+helmdex instance dep add my-app --repo oci://registry-1.docker.io/cloudpirates/postgres --name postgres --version 0.16.0
+
+# If the registry requires auth or you hit Docker Hub rate limits, login using helmdex-isolated creds:
+helmdex registry login registry-1.docker.io
+
 # Add from the local catalog cache
 helmdex catalog sync
 helmdex instance dep add-from-catalog my-app --id my-catalog-entry

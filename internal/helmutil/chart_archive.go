@@ -145,7 +145,10 @@ func PullChartArchive(ctx context.Context, env Env, repoURL, chartName, version 
 		return "", fmt.Errorf("version is required")
 	}
 	if strings.HasPrefix(repoURL, "oci://") {
-		ref := strings.TrimRight(repoURL, "/") + "/" + chartName
+		ref, err := OCIChartRef(repoURL, chartName)
+		if err != nil {
+			return "", err
+		}
 		// For OCI, helm pull stores <chartName>-<version>.tgz in dest.
 		dest := filepath.Join(env.CacheHome, "repository")
 		if err := env.EnsureDirs(); err != nil {

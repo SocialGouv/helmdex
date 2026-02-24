@@ -1369,7 +1369,10 @@ func (m AppModel) loadHelmPreviewsCmd(repoURL, chartName, version string) tea.Cm
 		defer cancel()
 		// OCI refs can be used directly.
 		if strings.HasPrefix(repoURL, "oci://") {
-			ref := strings.TrimRight(repoURL, "/") + "/" + chartName
+			ref, err := helmutil.OCIChartRef(repoURL, chartName)
+			if err != nil {
+				return errMsg{err}
+			}
 			// Try pulling archive first (reduces network calls and avoids show timeouts).
 			if tgzPath, err := helmutil.PullChartArchive(ctx, env, repoURL, chartName, version); err == nil {
 				if readme, values, err2 := helmutil.ReadChartArchiveFiles(tgzPath); err2 == nil {
@@ -1533,7 +1536,10 @@ func (m AppModel) loadDepDetailPreviewsCmd(dep yamlchart.Dependency) tea.Cmd {
 
 		// 4) Last resort: helm show.
 		if strings.HasPrefix(dep.Repository, "oci://") {
-			ref := strings.TrimRight(dep.Repository, "/") + "/" + dep.Name
+			ref, err := helmutil.OCIChartRef(dep.Repository, dep.Name)
+			if err != nil {
+				return errMsg{err}
+			}
 			readme, err := helmutil.ShowReadme(ctx, env, ref, dep.Version)
 			if err != nil {
 				return errMsg{err}
