@@ -136,13 +136,18 @@ type AppModel struct {
 	// dependency actions menu (Deps tab)
 	depActionsOpen bool
 	depActionsDep  yamlchart.Dependency
+	depActionsSource   depSourceMeta
+	depActionsSourceOK bool
 	depActionsList list.Model
 
 	// dependency detail modal (Deps tab)
 	depDetailOpen     bool
 	depDetailDep      yamlchart.Dependency
+	depDetailSource   depSourceMeta
+	depDetailSourceOK bool
 	depDetailTab      int
 	depDetailTabNames []string
+	depDetailTabKinds []depDetailTabKind
 	depDetailLoading  bool
 	depDetailMode     depEditMode // reuse enum: list vs manual
 	// depDetailSetsLoading is specific to the Sets tab.
@@ -209,24 +214,33 @@ func instanceTabNames() []string {
 	}
 }
 
-// Dependency detail modal tabs (Deps tab -> enter on a dependency).
-const (
-	DepDetailTabConfigure = iota
-	DepDetailTabReadme
-	DepDetailTabDefault
-	DepDetailTabSets
-	DepDetailTabVersions
-)
-
-func depDetailTabNames() []string {
-	// Centralized tab order definition.
-	return []string{
-		withIcon(iconSchema, "Configure"),
-		withIcon(iconReadme, "README"),
-		withIcon(iconAHValues, "Default"),
-		withIcon(iconPresets, "Sets"),
-		withIcon(iconVersions, "Versions"),
+// depDetailTabs returns the dynamic tabs list for the dependency detail modal.
+// Catalog-backed deps get Sets as the first tab.
+func depDetailTabs(source depSourceMeta, ok bool) (names []string, kinds []depDetailTabKind) {
+	// Base (non-catalog) order.
+	kinds = []depDetailTabKind{depDetailTabValues, depDetailTabDefault, depDetailTabReadme, depDetailTabVersions}
+	if ok && source.Kind == depSourceCatalog {
+		kinds = append([]depDetailTabKind{depDetailTabSets}, kinds...)
 	}
+
+	names = make([]string, 0, len(kinds))
+	for _, k := range kinds {
+		switch k {
+		case depDetailTabSets:
+			names = append(names, withIcon(iconPresets, "Sets"))
+		case depDetailTabValues:
+			names = append(names, withIcon(iconSchema, "Values"))
+		case depDetailTabDefault:
+			names = append(names, withIcon(iconAHValues, "Default"))
+		case depDetailTabReadme:
+			names = append(names, withIcon(iconReadme, "README"))
+		case depDetailTabVersions:
+			names = append(names, withIcon(iconVersions, "Versions"))
+		default:
+			names = append(names, "")
+		}
+	}
+	return names, kinds
 }
 
 type depEditMode int
@@ -234,6 +248,18 @@ type depEditMode int
 const (
 	depEditModeList depEditMode = iota
 	depEditModeManual
+)
+
+// depDetailTabKind is the semantic tab identity for the dependency detail modal.
+// We keep tab order dynamic, so logic should not rely on fixed numeric indices.
+type depDetailTabKind int
+
+const (
+	depDetailTabSets depDetailTabKind = iota
+	depDetailTabValues
+	depDetailTabDefault
+	depDetailTabReadme
+	depDetailTabVersions
 )
 
 type actionItem string
@@ -507,7 +533,7 @@ func NewAppModel(p Params) AppModel {
 		withIcon(iconAHValues, "Values"),
 		withIcon(iconVersions, "Versions"),
 	}
-	depDetailTabNames := depDetailTabNames()
+	depDetailTabNames, depDetailTabKinds := depDetailTabs(depSourceMeta{}, false)
 	vp := viewport.New(0, 0)
 	ahvp := viewport.New(0, 0)
 	depDetailVP := viewport.New(0, 0)
@@ -535,6 +561,7 @@ func NewAppModel(p Params) AppModel {
 		ahDetailTabNames:      ahDetailTabNames,
 		ahPreview:             ahvp,
 		depDetailTabNames:     depDetailTabNames,
+		depDetailTabKinds:     depDetailTabKinds,
 		depDetailVersions:     depDetailVersions,
 		depDetailVersionInput: depDetailVerInput,
 		depDetailPreview:      depDetailVP,
@@ -658,11 +685,26 @@ func (m AppModel) openDepActionsSelected() (tea.Model, tea.Cmd) {
 	if !ok {
 		return m, func() tea.Msg { return errMsg{fmt.Errorf("unexpected dependency item type")} }
 	}
-	dep := yamlchart.Dependency(di)
+	dep := di.Dep
+	// Load dep source metadata for display.
+	if m.selected != nil {
+		if meta, ok := readDepSourceMeta(m.params.RepoRoot, m.selected.Name, yamlchart.DependencyID(dep)); ok {
+			m.depActionsSource = meta
+			m.depActionsSourceOK = true
+		} else {
+			m.depActionsSource = depSourceMeta{}
+			m.depActionsSourceOK = false
+		}
+	}
 
 	m.depActionsOpen = true
 	m.depActionsDep = dep
 	m.modalErr = ""
+	// Ensure the list has a usable size even if we haven't received a
+	// tea.WindowSizeMsg yet.
+	if m.width > 0 && m.height > 0 {
+		m.depActionsList.SetSize(max(10, m.width-6), max(5, m.height-12))
+	}
 	m.depActionsList.SetItems([]list.Item{
 		depActionItem(depActionSyncPresets),
 		depActionItem(depActionChangeVer),
@@ -1795,6 +1837,7 @@ func (m AppModel) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.ahResults.SetSize(msg.Width-2, msg.Height-7)
 		m.ahVersions.SetSize(msg.Width-2, msg.Height-7)
 		m.depEditVersions.SetSize(max(10, msg.Width-6), max(5, msg.Height-12))
+		m.depActionsList.SetSize(max(10, msg.Width-6), max(5, msg.Height-12))
 		m.palette.SetSize(min(70, msg.Width-4), min(14, msg.Height-6))
 		m.depDetailPreview.Width = max(10, msg.Width-6)
 		// Dep detail is rendered as a full-body modal, but the overall app View()
@@ -1843,13 +1886,13 @@ func (m AppModel) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case chartMsg:
 		m.endBusy()
 		m.chart = &msg.chart
-		m.depsList.SetItems(depsToItems(msg.chart.Dependencies))
+		m.depsList.SetItems(m.depsToItems(msg.chart.Dependencies))
 		m.refreshInstanceView()
 		return m, nil
 	case depAppliedMsg:
 		m.endBusy()
 		m.chart = &msg.chart
-		m.depsList.SetItems(depsToItems(msg.chart.Dependencies))
+		m.depsList.SetItems(m.depsToItems(msg.chart.Dependencies))
 		m.addingDep = false
 		m.depEditOpen = false
 		m.depDetailOpen = false
@@ -1862,7 +1905,7 @@ func (m AppModel) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case depAppliedAndAppliedMsg:
 		m.endBusy()
 		m.chart = &msg.chart
-		m.depsList.SetItems(depsToItems(msg.chart.Dependencies))
+		m.depsList.SetItems(m.depsToItems(msg.chart.Dependencies))
 		m.addingDep = false
 		m.depEditOpen = false
 		if m.depDetailOpen {
@@ -2017,7 +2060,7 @@ func (m AppModel) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if msg.chart != nil {
 			m.chart = msg.chart
-			m.depsList.SetItems(depsToItems(msg.chart.Dependencies))
+			m.depsList.SetItems(m.depsToItems(msg.chart.Dependencies))
 		}
 		m.addingDep = false
 		m.depStep = depStepNone
@@ -2581,6 +2624,8 @@ func (m AppModel) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 					}
 					dep := yamlchart.Dependency{Name: m.catalogDetailEntry.Chart.Name, Repository: m.catalogDetailEntry.Chart.Repo, Version: m.catalogDetailEntry.Version}
 					setNames := selectedSetNames(m.catalogSetList.Items())
+					// Persist dep source metadata.
+					_ = m.writeSelectedDepSourceMeta(dep, depSourceMeta{Kind: depSourceCatalog, CatalogID: m.catalogDetailEntry.ID})
 					// Collision check: same dependency name already exists.
 					if m.chart != nil {
 						for _, ex := range m.chart.Dependencies {
@@ -2631,6 +2676,7 @@ func (m AppModel) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 						return m, cmd
 					case collisionChoiceOverride:
 						dep := m.catalogCollisionDep
+						_ = m.writeSelectedDepSourceMeta(dep, depSourceMeta{Kind: depSourceCatalog, CatalogID: ""})
 						// Override: keep same depID (name if no alias) and delete markers for that depID.
 						return m, tea.Batch(cmd, m.startApplyCmd(dep, m.catalogCollisionSets, applyOptions{Override: true, DeleteMarkersForDepID: true}))
 					case collisionChoiceAlias:
@@ -2641,6 +2687,7 @@ func (m AppModel) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 						}
 						dep := m.catalogCollisionDep
 						dep.Alias = alias
+						_ = m.writeSelectedDepSourceMeta(dep, depSourceMeta{Kind: depSourceCatalog, CatalogID: ""})
 						return m, tea.Batch(cmd, m.startApplyCmd(dep, m.catalogCollisionSets, applyOptions{Override: false, DeleteMarkersForDepID: false}))
 					}
 				}
@@ -2714,9 +2761,11 @@ func (m AppModel) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 						return m, tea.Batch(cmd, m.loadHelmPreviewsCmd(m.ahSelected.RepositoryURL, m.ahSelected.Name, v.Version))
 					}
 					if km.String() == "a" || km.String() == "A" {
-						if m.ahSelected != nil && m.ahSelectedVersion != "" {
-							return m, m.applyDependencyAndApplyInstanceCmd(yamlchart.Dependency{Name: m.ahSelected.Name, Repository: m.ahSelected.RepositoryURL, Version: m.ahSelectedVersion})
-						}
+				if m.ahSelected != nil && m.ahSelectedVersion != "" {
+					dep := yamlchart.Dependency{Name: m.ahSelected.Name, Repository: m.ahSelected.RepositoryURL, Version: m.ahSelectedVersion}
+					_ = m.writeSelectedDepSourceMeta(dep, depSourceMeta{Kind: depSourceArtifactHub})
+					return m, m.applyDependencyAndApplyInstanceCmd(dep)
+				}
 					}
 				}
 				return m, cmd
@@ -2725,9 +2774,11 @@ func (m AppModel) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// Non-versions tabs: allow quick add if a version is selected.
 			if km, ok := msg.(tea.KeyMsg); ok {
 				if km.String() == "a" || km.String() == "A" {
-					if m.ahSelected != nil && m.ahSelectedVersion != "" {
-						return m, m.applyDependencyAndApplyInstanceCmd(yamlchart.Dependency{Name: m.ahSelected.Name, Repository: m.ahSelected.RepositoryURL, Version: m.ahSelectedVersion})
-					}
+				if m.ahSelected != nil && m.ahSelectedVersion != "" {
+					dep := yamlchart.Dependency{Name: m.ahSelected.Name, Repository: m.ahSelected.RepositoryURL, Version: m.ahSelectedVersion}
+					_ = m.writeSelectedDepSourceMeta(dep, depSourceMeta{Kind: depSourceArtifactHub})
+					return m, m.applyDependencyAndApplyInstanceCmd(dep)
+				}
 				}
 			}
 			return m, nil
@@ -2746,9 +2797,11 @@ func (m AppModel) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if !ok {
 					return m, func() tea.Msg { return errMsg{fmt.Errorf("unexpected version item type")} }
 				}
-				v := artifacthub.Version(vi)
-				return m, m.applyDependencyDraft(yamlchart.Dependency{Name: m.ahSelected.Name, Repository: m.ahSelected.RepositoryURL, Version: v.Version})
-			}
+			v := artifacthub.Version(vi)
+			dep := yamlchart.Dependency{Name: m.ahSelected.Name, Repository: m.ahSelected.RepositoryURL, Version: v.Version}
+			_ = m.writeSelectedDepSourceMeta(dep, depSourceMeta{Kind: depSourceArtifactHub})
+			return m, m.applyDependencyDraft(dep)
+		}
 			return m, cmd
 		case depStepArbitrary:
 			// Simple focus cycling with tab.
@@ -2771,9 +2824,10 @@ func (m AppModel) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 					}
 				}
 				if km.Type == tea.KeyEnter {
-					dep := yamlchart.Dependency{Name: strings.TrimSpace(m.arbName.Value()), Repository: strings.TrimSpace(m.arbRepo.Value()), Version: strings.TrimSpace(m.arbVersion.Value()), Alias: strings.TrimSpace(m.arbAlias.Value())}
-					return m, m.applyDependencyDraft(dep)
-				}
+				dep := yamlchart.Dependency{Name: strings.TrimSpace(m.arbName.Value()), Repository: strings.TrimSpace(m.arbRepo.Value()), Version: strings.TrimSpace(m.arbVersion.Value()), Alias: strings.TrimSpace(m.arbAlias.Value())}
+				_ = m.writeSelectedDepSourceMeta(dep, depSourceMeta{Kind: depSourceArbitrary})
+				return m, m.applyDependencyDraft(dep)
+			}
 			}
 			var cmds []tea.Cmd
 			var cmd tea.Cmd
@@ -3271,23 +3325,40 @@ func (v ahVersionItem) Title() string       { return withIcon(iconVersions, v.Ve
 func (v ahVersionItem) Description() string { return "" }
 func (v ahVersionItem) FilterValue() string { return v.Version }
 
-func depsToItems(deps []yamlchart.Dependency) []list.Item {
+func (m AppModel) depsToItems(deps []yamlchart.Dependency) []list.Item {
 	items := make([]list.Item, 0, len(deps))
 	for _, d := range deps {
-		items = append(items, depItem(d))
+		var meta depSourceMeta
+		metaOK := false
+		if m.selected != nil && strings.TrimSpace(m.selected.Name) != "" {
+			id := yamlchart.DependencyID(d)
+			if m2, ok := readDepSourceMeta(m.params.RepoRoot, m.selected.Name, id); ok {
+				meta = m2
+				metaOK = true
+			}
+		}
+		items = append(items, depItem{Dep: d, Source: meta, SourceOK: metaOK})
 	}
 	return items
 }
 
-type depItem yamlchart.Dependency
+type depItem struct {
+	Dep      yamlchart.Dependency
+	Source   depSourceMeta
+	SourceOK bool
+}
 
 func (d depItem) Title() string {
-	id := yamlchart.DependencyID(yamlchart.Dependency(d))
-	return withIcon(iconDeps, string(id))
+	id := yamlchart.DependencyID(d.Dep)
+	base := withIcon(iconDeps, string(id))
+	if tag, _ := depSourceTagAndLabel(d.Source, d.SourceOK); strings.TrimSpace(tag) != "" {
+		return base + "  " + tag
+	}
+	return base
 }
 
 func (d depItem) Description() string {
-	dd := yamlchart.Dependency(d)
+	dd := d.Dep
 	return dd.Repository + " • " + dd.Name + " • " + dd.Version
 }
 
@@ -3641,7 +3712,18 @@ func (m AppModel) openDepDetailSelected() (tea.Model, tea.Cmd) {
 	if !ok {
 		return m, func() tea.Msg { return errMsg{fmt.Errorf("unexpected dependency item type")} }
 	}
-	dep := yamlchart.Dependency(di)
+	dep := di.Dep
+	// Load dep source metadata for display + dynamic tabs.
+	if m.selected != nil {
+		if meta, ok := readDepSourceMeta(m.params.RepoRoot, m.selected.Name, yamlchart.DependencyID(dep)); ok {
+			m.depDetailSource = meta
+			m.depDetailSourceOK = true
+		} else {
+			m.depDetailSource = depSourceMeta{}
+			m.depDetailSourceOK = false
+		}
+	}
+	m.depDetailTabNames, m.depDetailTabKinds = depDetailTabs(m.depDetailSource, m.depDetailSourceOK)
 
 	m.depDetailOpen = true
 	m.depDetailDep = dep
@@ -3690,8 +3772,10 @@ func (m AppModel) openDepDetailSelected() (tea.Model, tea.Cmd) {
 }
 
 func (m AppModel) depDetailUpdate(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	configureTab := DepDetailTabConfigure
-	setsTab := DepDetailTabSets
+	activeKind := depDetailTabValues
+	if m.depDetailTab >= 0 && m.depDetailTab < len(m.depDetailTabKinds) {
+		activeKind = m.depDetailTabKinds[m.depDetailTab]
+	}
 	versionsTab := len(m.depDetailTabNames) - 1
 
 	// Close.
@@ -3723,7 +3807,7 @@ func (m AppModel) depDetailUpdate(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// - ←/→ collapse/expand when possible
 	// - ←/→ also navigates tabs ONLY when cursor is on the root "$" row and the tree cannot
 	//   collapse/expand further in that direction.
-	if m.depDetailTab == configureTab {
+	if activeKind == depDetailTabValues {
 		// While editing, route keys to the active input.
 		if m.depConfigure.editing {
 			var cmd tea.Cmd
@@ -3812,7 +3896,7 @@ func (m AppModel) depDetailUpdate(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 
 	// Sets tab.
-	if m.depDetailTab == setsTab {
+	if activeKind == depDetailTabSets {
 		// Allow tab navigation while the list is focused.
 		if key.Matches(msg, m.keys.TabLeft) {
 			m.depDetailTab = (m.depDetailTab - 1 + len(m.depDetailTabNames)) % len(m.depDetailTabNames)
@@ -3937,21 +4021,24 @@ func (m AppModel) renderDepDetailBody() string {
 	if m.depDetailLoading {
 		return "Loading…"
 	}
-	switch m.depDetailTab {
-	case 0:
-		// Configure tab.
+	activeKind := depDetailTabValues
+	if m.depDetailTab >= 0 && m.depDetailTab < len(m.depDetailTabKinds) {
+		activeKind = m.depDetailTabKinds[m.depDetailTab]
+	}
+	switch activeKind {
+	case depDetailTabValues:
 		return m.depConfigure.View(m.depDetailPreview.Width, m.depDetailPreview.Height)
-	case DepDetailTabReadme:
+	case depDetailTabReadme:
 		if m.depDetailReadme == "" {
 			return "README not loaded."
 		}
 		return renderMarkdownForDisplay(m.depDetailPreview.Width, m.depDetailReadme)
-	case DepDetailTabDefault:
+	case depDetailTabDefault:
 		if m.depDetailDefaultValues == "" {
 			return "Default values not loaded."
 		}
 		return m.depDetailDefaultValues
-	case DepDetailTabSets:
+	case depDetailTabSets:
 		if m.depDetailSetsLoading {
 			return styleMuted.Render("Loading sets from preset cache…")
 		}
@@ -3964,7 +4051,7 @@ func (m AppModel) renderDepDetailBody() string {
 		lines = append(lines, "")
 		lines = append(lines, styleMuted.Render("space: toggle • s: save+apply • esc: close"))
 		return strings.Join(lines, "\n")
-	case DepDetailTabVersions:
+	case depDetailTabVersions:
 		// Versions are rendered by the modal renderer.
 		return ""
 	default:
@@ -4009,7 +4096,7 @@ func (m AppModel) openDepEditSelected() (tea.Model, tea.Cmd) {
 	if !ok {
 		return m, func() tea.Msg { return errMsg{fmt.Errorf("unexpected dependency item type")} }
 	}
-	dep := yamlchart.Dependency(di)
+	dep := di.Dep
 
 	m.depEditOpen = true
 	m.depEditDep = dep
@@ -4070,7 +4157,7 @@ func (m AppModel) upgradeSelectedDepCmd() (tea.Model, tea.Cmd) {
 	if !ok {
 		return m, func() tea.Msg { return errMsg{fmt.Errorf("unexpected dependency item type")} }
 	}
-	dep := yamlchart.Dependency(di)
+	dep := di.Dep
 	return m, tea.Batch(m.beginBusy("Upgrading"), m.upgradeDepToLatestCmd(dep))
 }
 

@@ -185,7 +185,11 @@ func renderDepActionsModal(m AppModel) string {
 	dep := m.depActionsDep
 	header := lipgloss.NewStyle().Bold(true).Render(withIcon(iconCmd, "Dependency actions"))
 	if strings.TrimSpace(dep.Name) != "" {
-		header += "\n" + styleMuted.Render(fmt.Sprintf("%s @ %s  (%s)", dep.Name, dep.Repository, dep.Version))
+		line := fmt.Sprintf("%s @ %s  (%s)", dep.Name, dep.Repository, dep.Version)
+		if _, label := depSourceTagAndLabel(m.depActionsSource, m.depActionsSourceOK); strings.TrimSpace(label) != "" {
+			line += "  •  " + label
+		}
+		header += "\n" + styleMuted.Render(line)
 	}
 	if m.modalErr != "" {
 		header += "\n" + styleErrStrong.Render(withIcon(iconErr, "Error:")+" "+m.modalErr)
@@ -207,6 +211,9 @@ func renderDepDetailModal(m AppModel) string {
 		depLabel = fmt.Sprintf("%s @ %s", dep.Name, dep.Repository)
 		if strings.TrimSpace(dep.Version) != "" {
 			depLabel += "  (" + dep.Version + ")"
+		}
+		if _, label := depSourceTagAndLabel(m.depDetailSource, m.depDetailSourceOK); strings.TrimSpace(label) != "" {
+			depLabel += "  •  " + label
 		}
 	}
 

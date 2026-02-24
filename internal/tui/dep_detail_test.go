@@ -1,7 +1,6 @@
 package tui
 
 import (
-	"strings"
 	"testing"
 
 	"helmdex/internal/yamlchart"
@@ -16,7 +15,7 @@ func TestDepsEnterOpensDepDetailModal(t *testing.T) {
 	m.activeTab = 0 // deps tab (Dependencies is first)
 
 	dep := yamlchart.Dependency{Name: "postgresql", Repository: "https://charts.bitnami.com/bitnami", Version: "1.2.3"}
-	m.depsList.SetItems([]list.Item{depItem(dep)})
+	m.depsList.SetItems([]list.Item{depItem{Dep: dep}})
 
 	// Press Enter while on deps tab.
 	nm, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
@@ -61,8 +60,16 @@ func TestDepDetailVersionsEnterSetsPendingVersion(t *testing.T) {
 	dep := yamlchart.Dependency{Name: "nginx", Repository: "https://example.com", Version: "0.1.0"}
 	m.depDetailOpen = true
 	m.depDetailDep = dep
-	// Versions tab is last (Configure was inserted before it).
+	// Versions tab is last.
 	m.depDetailTab = len(m.depDetailTabNames) - 1
+	if len(m.depDetailTabKinds) == 0 || m.depDetailTabKinds[m.depDetailTab] != depDetailTabVersions {
+		// In case default tabs change, force the last kind to versions for this test.
+		m.depDetailTabKinds = make([]depDetailTabKind, len(m.depDetailTabNames))
+		for i := range m.depDetailTabKinds {
+			m.depDetailTabKinds[i] = depDetailTabValues
+		}
+		m.depDetailTabKinds[m.depDetailTab] = depDetailTabVersions
+	}
 	m.depDetailMode = depEditModeList
 	m.depDetailVersions.SetItems([]list.Item{versionItem("1.0.0"), versionItem("1.1.0")})
 	m.depDetailVersions.Select(1)
@@ -75,29 +82,35 @@ func TestDepDetailVersionsEnterSetsPendingVersion(t *testing.T) {
 	}
 }
 
-func TestDepDetailTabNamesIncludesSets(t *testing.T) {
-	names := depDetailTabNames()
-	found := false
-	for _, n := range names {
-		if strings.Contains(n, "Sets") {
-			found = true
-			break
-		}
+func TestDepDetailTabsCatalogIncludesSetsFirst(t *testing.T) {
+	names, kinds := depDetailTabs(depSourceMeta{Kind: depSourceCatalog, CatalogID: "x"}, true)
+	if len(kinds) == 0 || kinds[0] != depDetailTabSets {
+		t.Fatalf("expected Sets to be first tab for catalog deps; kinds=%#v names=%#v", kinds, names)
 	}
-	if !found {
-		t.Fatalf("expected dep detail tab names to include Sets, got %#v", names)
+}
+
+func TestDepDetailTabsNonCatalogHidesSets(t *testing.T) {
+	_, kinds := depDetailTabs(depSourceMeta{Kind: depSourceArbitrary}, true)
+	for _, k := range kinds {
+		if k == depDetailTabSets {
+			t.Fatalf("expected Sets to be hidden for non-catalog deps")
+		}
 	}
 }
 
 func TestDepDetailSetsTabLeftRightSwitchTabs(t *testing.T) {
 	m := NewAppModel(Params{RepoRoot: "."})
 	m.depDetailOpen = true
-	m.depDetailTab = DepDetailTabSets
+	m.depDetailTabNames, m.depDetailTabKinds = depDetailTabs(depSourceMeta{Kind: depSourceCatalog, CatalogID: "x"}, true)
+	m.depDetailTab = 0
+	if len(m.depDetailTabKinds) == 0 || m.depDetailTabKinds[0] != depDetailTabSets {
+		t.Fatalf("test setup expected Sets first")
+	}
 
 	// Left should move away from Sets.
 	nm, _ := m.depDetailUpdate(tea.KeyMsg{Type: tea.KeyLeft})
 	mm := nm.(AppModel)
-	if mm.depDetailTab == DepDetailTabSets {
+	if mm.depDetailTabKinds[mm.depDetailTab] == depDetailTabSets {
 		t.Fatalf("expected left to switch tabs away from Sets")
 	}
 
@@ -115,7 +128,7 @@ func TestDepActionsMenuOpensFromDepsTab(t *testing.T) {
 	m.activeTab = InstanceTabDeps
 
 	dep := yamlchart.Dependency{Name: "nginx", Repository: "https://example.com", Version: "1.2.3"}
-	m.depsList.SetItems([]list.Item{depItem(dep)})
+	m.depsList.SetItems([]list.Item{depItem{Dep: dep}})
 
 	// Press x to open actions menu.
 	nm, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
