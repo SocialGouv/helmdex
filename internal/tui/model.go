@@ -93,6 +93,9 @@ type AppModel struct {
 	// catalog picker
 	catalogList    list.Model
 	catalogEntries []catalog.Entry
+	// catalog wizard UX helpers
+	catalogWizardAutoSyncTried bool
+	catalogWizardSyncing       bool
 
 	// catalog detail (sets selection)
 	catalogDetailEntry *catalog.Entry
@@ -206,6 +209,47 @@ type AppModel struct {
 	sourcesPlat textinput.Model
 	sourcesFocus int
 	sourcesErr  string
+}
+
+func hasCatalogEnabledSources(cfg *config.Config) bool {
+	if cfg == nil {
+		return false
+	}
+	for _, src := range cfg.Sources {
+		if src.Catalog.Enabled {
+			return true
+		}
+	}
+	return false
+}
+
+func (m *AppModel) openSourcesModal() {
+	m.paletteOpen = false
+	m.sourcesOpen = true
+	m.sourcesErr = ""
+	m.sourcesFocus = 0
+	// Prefill from config when available (first source).
+	if m.params.Config != nil {
+		m.sourcesPlat.SetValue(m.params.Config.Platform.Name)
+		if len(m.params.Config.Sources) > 0 {
+			m.sourcesName.SetValue(m.params.Config.Sources[0].Name)
+			m.sourcesGit.SetValue(m.params.Config.Sources[0].Git.URL)
+			m.sourcesRef.SetValue(m.params.Config.Sources[0].Git.Ref)
+		} else {
+			m.sourcesName.SetValue("")
+			m.sourcesGit.SetValue("")
+			m.sourcesRef.SetValue("")
+		}
+	} else {
+		m.sourcesName.SetValue("")
+		m.sourcesGit.SetValue("")
+		m.sourcesRef.SetValue("")
+		m.sourcesPlat.SetValue("")
+	}
+	m.sourcesName.Focus()
+	m.sourcesGit.Blur()
+	m.sourcesRef.Blur()
+	m.sourcesPlat.Blur()
 }
 
 // Instance tabs (ScreenInstance).
@@ -1980,6 +2024,8 @@ func (m AppModel) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.chart = &msg.chart
 		m.depsList.SetItems(m.depsToItems(msg.chart.Dependencies))
 		m.addingDep = false
+		m.catalogWizardAutoSyncTried = false
+		m.catalogWizardSyncing = false
 		m.depEditOpen = false
 		m.depDetailOpen = false
 		m.depStep = depStepNone
@@ -1993,6 +2039,8 @@ func (m AppModel) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.chart = &msg.chart
 		m.depsList.SetItems(m.depsToItems(msg.chart.Dependencies))
 		m.addingDep = false
+		m.catalogWizardAutoSyncTried = false
+		m.catalogWizardSyncing = false
 		m.depEditOpen = false
 		if m.depDetailOpen {
 			// Keep modal open and refresh its data using the updated chart.
@@ -2021,12 +2069,21 @@ func (m AppModel) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case catalogSyncDoneMsg:
 		m.endBusy()
+		m.catalogWizardSyncing = false
 		if msg.err != nil {
-			m.statusErr = msg.err.Error()
-			m.statusErrAt = time.Now()
+			// Prefer showing the error inside the modal when sync was triggered from the wizard.
+			if m.addingDep {
+				m.modalErr = msg.err.Error()
+			} else {
+				m.statusErr = msg.err.Error()
+				m.statusErrAt = time.Now()
+			}
 			return m, nil
 		}
 		m.statusErr = ""
+		if m.addingDep {
+			m.modalErr = ""
+		}
 		// Refresh catalog list in case we're in the add-dep wizard.
 		return m, tea.Batch(m.beginBusy("Loading catalog"), m.loadCatalogCmd())
 	case depPresetsSyncDoneMsg:
@@ -2159,6 +2216,8 @@ func (m AppModel) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.depsList.SetItems(m.depsToItems(msg.chart.Dependencies))
 		}
 		m.addingDep = false
+		m.catalogWizardAutoSyncTried = false
+		m.catalogWizardSyncing = false
 		m.depStep = depStepNone
 		m.modalErr = ""
 		m.statusErr = ""
@@ -2176,6 +2235,16 @@ func (m AppModel) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.sourcesGit.Blur()
 		m.sourcesPlat.Blur()
 		m.params.Config = msg.cfg
+		// UX: if the user is in the add-dep wizard and just configured a source,
+		// sync immediately so the catalog becomes usable without leaving the wizard.
+		if m.addingDep {
+			if hasCatalogEnabledSources(m.params.Config) {
+				m.catalogWizardAutoSyncTried = true
+				m.catalogWizardSyncing = true
+				m.modalErr = ""
+				return m, tea.Batch(m.beginBusy("Syncing catalog"), m.catalogSyncCmd())
+			}
+		}
 		return m, nil
 	case ahSearchMsg:
 		m.endBusy()
@@ -2422,14 +2491,16 @@ func (m AppModel) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.creating = false
 				return m, nil
 			}
-		if m.addingDep {
-			// Step-wise back inside the wizard.
-			switch m.depStep {
-			case depStepChooseSource:
-				m.addingDep = false
-				m.depStep = depStepNone
-				m.modalErr = ""
-				return m, nil
+			if m.addingDep {
+				// Step-wise back inside the wizard.
+				switch m.depStep {
+				case depStepChooseSource:
+					m.addingDep = false
+					m.catalogWizardAutoSyncTried = false
+					m.catalogWizardSyncing = false
+					m.depStep = depStepNone
+					m.modalErr = ""
+					return m, nil
 		case depStepCatalog, depStepCatalogDetail, depStepCatalogCollision, depStepAHQuery, depStepArbitrary:
 			m.depStep = depStepChooseSource
 			m.modalErr = ""
@@ -2449,6 +2520,8 @@ func (m AppModel) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 					return m, nil
 				default:
 					m.addingDep = false
+					m.catalogWizardAutoSyncTried = false
+					m.catalogWizardSyncing = false
 					m.depStep = depStepNone
 					m.modalErr = ""
 					return m, nil
@@ -2464,6 +2537,23 @@ func (m AppModel) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.screen = ScreenDashboard
 				m.selected = nil
 				return m, nil
+			}
+		}
+
+		// Wizard helpers (only when the add-dep wizard is open and we're in Catalog step).
+		// This allows recovery from "no catalog" without having to open the command palette.
+		if m.addingDep && m.depStep == depStepCatalog && len(m.catalogEntries) == 0 {
+			switch msg.String() {
+			case "c", "C":
+				m.openSourcesModal()
+				return m, nil
+			case "s", "S":
+				if !m.catalogWizardSyncing && hasCatalogEnabledSources(m.params.Config) {
+					m.catalogWizardAutoSyncTried = true
+					m.catalogWizardSyncing = true
+					m.modalErr = ""
+					return m, tea.Batch(m.beginBusy("Syncing catalog"), m.catalogSyncCmd())
+				}
 			}
 		}
 
@@ -2586,6 +2676,8 @@ func (m AppModel) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if key.Matches(msg, m.keys.AddDep) {
 			if m.screen == ScreenInstance && !m.addingDep {
 				m.addingDep = true
+				m.catalogWizardAutoSyncTried = false
+				m.catalogWizardSyncing = false
 				m.depStep = depStepChooseSource
 				m.modalErr = ""
 				return m, tea.Batch(m.beginBusy("Loading catalog"), m.loadCatalogCmd())
@@ -2713,6 +2805,16 @@ func (m AppModel) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 				switch s {
 				case "Predefined catalog":
 					m.depStep = depStepCatalog
+					// If there are no local catalog entries yet, attempt a one-time sync
+					// to populate `.helmdex/catalog/*.yaml` from configured sources.
+					if len(m.catalogEntries) == 0 && !m.catalogWizardAutoSyncTried {
+						m.catalogWizardAutoSyncTried = true
+						if hasCatalogEnabledSources(m.params.Config) {
+							m.catalogWizardSyncing = true
+							m.modalErr = ""
+							return m, tea.Batch(cmd, m.beginBusy("Syncing catalog"), m.catalogSyncCmd())
+						}
+					}
 				case "Artifact Hub":
 					m.depStep = depStepAHQuery
 					m.ahQuery.SetValue("")
@@ -3115,32 +3217,7 @@ func (m AppModel) paletteUpdate(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				}
 				return m, nil
 			case palSources:
-				m.paletteOpen = false
-				m.sourcesOpen = true
-				m.sourcesErr = ""
-				m.sourcesFocus = 0
-				// Prefill from config when available (first source).
-				if m.params.Config != nil {
-					m.sourcesPlat.SetValue(m.params.Config.Platform.Name)
-					if len(m.params.Config.Sources) > 0 {
-						m.sourcesName.SetValue(m.params.Config.Sources[0].Name)
-						m.sourcesGit.SetValue(m.params.Config.Sources[0].Git.URL)
-						m.sourcesRef.SetValue(m.params.Config.Sources[0].Git.Ref)
-					} else {
-						m.sourcesName.SetValue("")
-						m.sourcesGit.SetValue("")
-						m.sourcesRef.SetValue("")
-					}
-				} else {
-					m.sourcesName.SetValue("")
-					m.sourcesGit.SetValue("")
-					m.sourcesRef.SetValue("")
-					m.sourcesPlat.SetValue("")
-				}
-				m.sourcesName.Focus()
-				m.sourcesGit.Blur()
-				m.sourcesRef.Blur()
-				m.sourcesPlat.Blur()
+				m.openSourcesModal()
 				return m, nil
 			case palCatalogSync:
 				m.paletteOpen = false
@@ -3686,8 +3763,31 @@ func renderAddDepView(m AppModel) string {
 		return header + "\n\n" + m.depSource.View()
 	case depStepCatalog:
 		if len(m.catalogEntries) == 0 {
-			msg := styleMuted.Render("No local catalog entries. Run `helmdex catalog sync` (or command palette: Catalog sync) then retry.")
-			return header + "\n\n" + msg
+			lines := []string{}
+			if m.params.Config == nil {
+				lines = append(lines, styleMuted.Render("No config loaded (helmdex.yaml)."))
+				lines = append(lines, styleMuted.Render("Catalog requires at least one configured source."))
+				lines = append(lines, "")
+				lines = append(lines, styleMuted.Render("c: configure sources • esc: back"))
+				return header + "\n\n" + strings.Join(lines, "\n")
+			}
+			if !hasCatalogEnabledSources(m.params.Config) {
+				lines = append(lines, styleMuted.Render("No catalog-enabled sources configured."))
+				lines = append(lines, "")
+				lines = append(lines, styleMuted.Render("c: configure sources • esc: back"))
+				return header + "\n\n" + strings.Join(lines, "\n")
+			}
+			if m.catalogWizardSyncing {
+				lines = append(lines, styleMuted.Render("Syncing catalog into .helmdex/catalog…"))
+				lines = append(lines, "")
+				lines = append(lines, styleMuted.Render("esc: back"))
+				return header + "\n\n" + strings.Join(lines, "\n")
+			}
+			lines = append(lines, styleMuted.Render("No local catalog entries."))
+			lines = append(lines, styleMuted.Render("Catalog entries are read from .helmdex/catalog/*.yaml."))
+			lines = append(lines, "")
+			lines = append(lines, styleMuted.Render("s: sync catalog • c: configure sources • esc: back"))
+			return header + "\n\n" + strings.Join(lines, "\n")
 		}
 		return header + "\n\n" + m.catalogList.View()
 	case depStepCatalogDetail:

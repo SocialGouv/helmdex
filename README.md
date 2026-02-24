@@ -131,7 +131,10 @@ After a dependency has been added, you can:
 - press `x` on a dependency to open the dependency actions menu
   - choose **Sync presets** to fetch the latest preset cache (git fetch/checkout using `git.ref`), remove orphan set markers, re-import presets, and regenerate merged values
 
-If you see “No local catalog entries”, it means you haven’t run sync yet (TUI reads from `.helmdex/catalog/*.yaml` via [`LoadLocalCatalogEntries()`](internal/catalog/load.go:14)).
+If you see “No local catalog entries”, it means you haven’t synced sources yet (TUI reads from `.helmdex/catalog/*.yaml` via [`LoadLocalCatalogEntries()`](internal/catalog/load.go:14)).
+
+In the TUI, when you enter **Add dependency → Predefined catalog** and the local catalog is empty, helmdex will attempt a one-time **Catalog sync** automatically (per wizard session) as long as you have at least one catalog-enabled source configured.
+If there is no config / no sources, the wizard provides shortcuts to open **Configure sources** and to retry sync.
 
 ## Non-interactive CLI parity (scriptable)
 
