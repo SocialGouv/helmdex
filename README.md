@@ -10,6 +10,12 @@ Launch the interactive dashboard:
 helmdex tui
 ```
 
+The TUI updates the terminal window title to show the current breadcrumb:
+
+`🧭 HelmDex — Dashboard › Instance › <name> › <task>`
+
+Opt-out by setting `HELMDEX_NO_TITLE=1`.
+
 ### Catalog + sets (presets)
 
 helmdex supports a **remote catalog** (curated chart/version targets) and downloadable **sets** (YAML values files) that can be selected when adding a dependency.

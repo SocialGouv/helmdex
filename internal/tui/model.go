@@ -175,6 +175,14 @@ type AppModel struct {
 	width  int
 	height int
 
+	// lastWindowTitle is used to avoid emitting redundant window-title updates.
+	lastWindowTitle string
+
+	// skipWindowTitleOnce is set for returns where we don't want to batch window
+	// title updates with the command (notably: quit commands, so tests and Bubble
+	// Tea behavior remain predictable).
+	skipWindowTitleOnce bool
+
 	keys keyMap
 
 	// sources config modal
@@ -556,15 +564,25 @@ func NewAppModel(p Params) AppModel {
 		catalogCollisionChoice: collisionChoiceAlias,
 	}
 
+	// Initialize the window title cache so the first Update() doesn't re-emit the
+	// same title we set in Init().
+	if windowTitleEnabled() {
+		m.lastWindowTitle = buildWindowTitle(m)
+	}
+
 	return m
 }
 
 func (m AppModel) Init() tea.Cmd {
-	return tea.Batch(
+	cmds := []tea.Cmd{
 		m.beginBusy("Reloading"),
 		m.reloadInstancesCmd(),
 		tea.Tick(versionsRefreshInterval, func(t time.Time) tea.Msg { return versionsRefreshTickMsg{now: t} }),
-	)
+	}
+	if windowTitleEnabled() {
+		cmds = append(cmds, tea.SetWindowTitle(m.lastWindowTitle))
+	}
+	return tea.Batch(cmds...)
 }
 
 func selectedSetNames(items []list.Item) []string {
@@ -1726,6 +1744,11 @@ func (m AppModel) renderAHDetailBody() string {
 }
 
 func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	model, cmd := m.updateInner(msg)
+	return wrapWithWindowTitle(model, cmd)
+}
+
+func (m AppModel) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// Help overlay has highest priority.
 	if km, ok := msg.(tea.KeyMsg); ok && m.helpOpen {
 		if km.Type == tea.KeyEsc || key.Matches(km, m.keys.Help) {
@@ -2239,11 +2262,13 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Always honor hard quit keys, even when a text input is focused.
 		// Otherwise the user can get stuck in inputs (e.g. Artifact Hub query).
 		if msg.Type == tea.KeyCtrlC || msg.String() == "ctrl+c" {
+			m.skipWindowTitleOnce = true
 			return m, tea.Quit
 		}
 		// Bubble Tea may or may not decode Ctrl+D as a dedicated key type depending
 		// on terminal/reader; matching by string keeps it robust.
 		if msg.Type == tea.KeyCtrlD || msg.String() == "ctrl+d" {
+			m.skipWindowTitleOnce = true
 			return m, tea.Quit
 		}
 
@@ -2304,6 +2329,7 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 		if key.Matches(msg, m.keys.Quit) {
+			m.skipWindowTitleOnce = true
 			return m, tea.Quit
 		}
 		if key.Matches(msg, m.keys.Reload) {
@@ -2814,6 +2840,7 @@ func (m AppModel) paletteUpdate(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	if msg.Type == tea.KeyCtrlC {
+		m.skipWindowTitleOnce = true
 		return m, tea.Quit
 	}
 	cmd, didEnter := m.palette.Update(msg)
@@ -2821,8 +2848,9 @@ func (m AppModel) paletteUpdate(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		it, ok := m.palette.selected()
 		if ok {
 			switch it.ID {
-			case palQuit:
-				return m, tea.Quit
+				case palQuit:
+					m.skipWindowTitleOnce = true
+					return m, tea.Quit
 			case palReload:
 				m.paletteOpen = false
 				return m, tea.Batch(m.beginBusy("Reloading"), m.reloadInstancesCmd())
