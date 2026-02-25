@@ -46,7 +46,7 @@ type AppModel struct {
 	palette     paletteModel
 
 	statusErr   string
-	statusErrAt time.Time
+	statusOK    string
 
 	// create instance
 	creating bool
@@ -211,6 +211,39 @@ type AppModel struct {
 	sourcesErr  string
 }
 
+func (m *AppModel) setStatusErr(msg string) {
+	msg = strings.TrimSpace(msg)
+	m.statusErr = msg
+	if msg != "" {
+		// Errors take precedence over OK status.
+		m.statusOK = ""
+	}
+}
+
+func (m *AppModel) clearStatusErr() { m.statusErr = "" }
+
+func (m *AppModel) setStatusOK(msg string) {
+	msg = strings.TrimSpace(msg)
+	m.statusOK = msg
+	if msg != "" {
+		// A successful operation clears any previous error.
+		m.statusErr = ""
+	}
+}
+
+func (m AppModel) noModalOpen() bool {
+	// Keep this conservative: any overlay/modal-like state counts as a modal.
+	return !m.helpOpen &&
+		!m.paletteOpen &&
+		!m.sourcesOpen &&
+		!m.instanceManageOpen &&
+		!m.depActionsOpen &&
+		!m.depDetailOpen &&
+		!m.depEditOpen &&
+		!m.valuesPreviewOpen &&
+		!m.applyOpen
+}
+
 func hasCatalogEnabledSources(cfg *config.Config) bool {
 	if cfg == nil {
 		return false
@@ -290,7 +323,7 @@ func depDetailTabs(source depSourceMeta, ok bool) (names []string, kinds []depDe
 		case depDetailTabSets:
 			names = append(names, withIcon(iconPresets, "Sets"))
 		case depDetailTabValues:
-			names = append(names, withIcon(iconSchema, "Values"))
+			names = append(names, withIcon(iconSchema, "Configure"))
 		case depDetailTabDependency:
 			names = append(names, withIcon(iconDeps, "Settings"))
 		case depDetailTabDefault:
@@ -602,7 +635,7 @@ func NewAppModel(p Params) AppModel {
 	tabNames := instanceTabNames()
 	ahDetailTabNames := []string{
 		withIcon(iconReadme, "README"),
-		withIcon(iconAHValues, "Values"),
+		withIcon(iconAHValues, "Configure"),
 		withIcon(iconVersions, "Versions"),
 	}
 	depDetailTabNames, depDetailTabKinds := depDetailTabs(depSourceMeta{}, false)
@@ -1891,6 +1924,11 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m AppModel) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
+	// Clear transient OK feedback on the next user input.
+	if _, ok := msg.(tea.KeyMsg); ok {
+		m.statusOK = ""
+	}
+
 	// Help overlay has highest priority.
 	if km, ok := msg.(tea.KeyMsg); ok && m.helpOpen {
 		if km.Type == tea.KeyEsc || key.Matches(km, m.keys.Help) {
@@ -2031,7 +2069,8 @@ func (m AppModel) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.depStep = depStepNone
 		m.modalErr = ""
 		m.depConfigure = depConfigureModel{}
-		m.statusErr = ""
+		m.clearStatusErr()
+		m.setStatusOK("Dependency applied")
 		m.refreshInstanceView()
 		return m, nil
 	case depAppliedAndAppliedMsg:
@@ -2058,13 +2097,15 @@ func (m AppModel) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 				cmds = append(cmds, m.loadDepDetailVersionsCmd(m.depDetailDep))
 			}
 			m.depStep = depStepNone
-			m.statusErr = ""
+			m.clearStatusErr()
+			m.setStatusOK("Dependency applied")
 			m.refreshInstanceView()
 			return m, tea.Batch(cmds...)
 		}
 		m.depStep = depStepNone
 		m.modalErr = ""
-		m.statusErr = ""
+		m.clearStatusErr()
+		m.setStatusOK("Dependency applied")
 		m.refreshInstanceView()
 		return m, nil
 	case catalogSyncDoneMsg:
@@ -2075,12 +2116,12 @@ func (m AppModel) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.addingDep {
 				m.modalErr = msg.err.Error()
 			} else {
-				m.statusErr = msg.err.Error()
-				m.statusErrAt = time.Now()
+				m.setStatusErr(msg.err.Error())
 			}
 			return m, nil
 		}
-		m.statusErr = ""
+		m.clearStatusErr()
+		m.setStatusOK("Catalog synced")
 		if m.addingDep {
 			m.modalErr = ""
 		}
@@ -2089,11 +2130,11 @@ func (m AppModel) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case depPresetsSyncDoneMsg:
 		m.endBusy()
 		if msg.err != nil {
-			m.statusErr = msg.err.Error()
-			m.statusErrAt = time.Now()
+			m.setStatusErr(msg.err.Error())
 			return m, nil
 		}
-		m.statusErr = ""
+		m.clearStatusErr()
+		m.setStatusOK("Presets synced")
 		m.refreshValuesList()
 		m.refreshInstanceView()
 		// If the dep detail modal is open for this dependency, reload sets.
@@ -2161,13 +2202,15 @@ func (m AppModel) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.modalErr = ""
 		m.depDetailDeleteConfirm = false
-		m.statusErr = ""
+		m.clearStatusErr()
+		m.setStatusOK("Saved")
 		m.refreshValuesList()
 		m.depDetailPreview.SetContent(m.renderDepDetailBody())
 		return m, nil
 	case regenDoneMsg:
 		m.endBusy()
-		m.statusErr = ""
+		m.clearStatusErr()
+		m.setStatusOK("Values regenerated")
 		m.refreshValuesList()
 		if m.valuesPreviewOpen {
 			return m, m.loadValuesPreviewCmd(m.valuesPreviewPath)
@@ -2189,6 +2232,8 @@ func (m AppModel) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case appliedMsg:
 		m.endBusy()
+		m.clearStatusErr()
+		m.setStatusOK("Applied")
 		m.refreshInstanceView()
 		return m, nil
 	case catalogMsg:
@@ -2215,6 +2260,7 @@ func (m AppModel) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if msg.err != nil {
 			m.modalErr = msg.err.Error()
+			m.setStatusErr(msg.err.Error())
 			return m, nil
 		}
 		if msg.chart != nil {
@@ -2226,7 +2272,8 @@ func (m AppModel) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.catalogWizardSyncing = false
 		m.depStep = depStepNone
 		m.modalErr = ""
-		m.statusErr = ""
+		m.clearStatusErr()
+		m.setStatusOK("Dependency applied")
 		m.refreshInstanceView()
 		return m, nil
 	case sourcesSavedMsg:
@@ -2384,8 +2431,7 @@ func (m AppModel) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case errMsg:
 		m.endBusy()
-		m.statusErr = msg.err.Error()
-		m.statusErrAt = time.Now()
+		m.setStatusErr(msg.err.Error())
 		if m.depDetailOpen {
 			m.modalErr = msg.err.Error()
 			m.depDetailLoading = false
@@ -2404,13 +2450,7 @@ func (m AppModel) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.depEditLoading = false
 			return m, nil
 		}
-		// Otherwise show error in the instance viewport for now.
-		m.screen = ScreenInstance
-		if m.selected != nil {
-			m.content.SetContent("Error: " + msg.err.Error())
-		} else {
-			m.content.SetContent("Error: " + msg.err.Error())
-		}
+		// Otherwise: keep user on the current screen; surface the error via footer.
 		return m, nil
 	case tea.KeyMsg:
 		// Apply overlay has highest priority and blocks all other input.
@@ -2491,6 +2531,11 @@ func (m AppModel) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if key.Matches(msg, m.keys.Back) || msg.Type == tea.KeyEsc {
 			// First: if any filter is active, clear it.
 			if m.clearAnyActiveFilter() {
+				return m, nil
+			}
+			// Next: when no modal is open, Esc dismisses a persistent error.
+			if msg.Type == tea.KeyEsc && m.noModalOpen() && strings.TrimSpace(m.statusErr) != "" {
+				m.clearStatusErr()
 				return m, nil
 			}
 			if m.creating {
@@ -2616,15 +2661,16 @@ func (m AppModel) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if key.Matches(msg, m.keys.EditValues) {
 			if m.screen == ScreenInstance && !m.addingDep {
-					// Values tab: only allow editing values.instance.yaml.
-					if m.activeTab == InstanceTabValues {
-						if it := m.valuesList.SelectedItem(); it != nil {
-							if vf, ok := it.(valuesFileItem); ok && string(vf) == "values.instance.yaml" {
-								return m, m.editInstanceValuesCmd()
-							}
+				// Values tab: only allow editing values.instance.yaml.
+				if m.activeTab == InstanceTabValues {
+					if it := m.valuesList.SelectedItem(); it != nil {
+						if vf, ok := it.(valuesFileItem); ok && string(vf) == "values.instance.yaml" {
+							return m, m.editInstanceValuesCmd()
 						}
-						return m, nil
 					}
+					m.setStatusErr("Select values.instance.yaml in the list to edit")
+					return m, nil
+				}
 				return m, m.editInstanceValuesCmd()
 			}
 		}
@@ -2871,8 +2917,8 @@ func (m AppModel) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 						}
 					}
 				}
-				// 'd' toggles all defaults.
-				if km.String() == "d" || km.String() == "D" {
+				// 'D' toggles all defaults. Reserve lowercase 'd' for destructive actions.
+				if km.String() == "D" {
 					items := m.catalogSetList.Items()
 					anyOff := false
 					for _, it := range items {
@@ -3035,11 +3081,13 @@ func (m AppModel) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 						return m, tea.Batch(cmd, m.loadHelmPreviewsCmd(m.ahSelected.RepositoryURL, m.ahSelected.Name, v.Version))
 					}
 					if km.String() == "a" || km.String() == "A" {
-				if m.ahSelected != nil && m.ahSelectedVersion != "" {
-					dep := yamlchart.Dependency{Name: m.ahSelected.Name, Repository: m.ahSelected.RepositoryURL, Version: m.ahSelectedVersion}
-					_ = m.writeSelectedDepSourceMeta(dep, depSourceMeta{Kind: depSourceArtifactHub})
-					return m, m.applyDependencyAndApplyInstanceCmd(dep)
-				}
+						if m.ahSelected != nil && m.ahSelectedVersion != "" {
+							dep := yamlchart.Dependency{Name: m.ahSelected.Name, Repository: m.ahSelected.RepositoryURL, Version: m.ahSelectedVersion}
+							_ = m.writeSelectedDepSourceMeta(dep, depSourceMeta{Kind: depSourceArtifactHub})
+							return m, m.applyDependencyAndApplyInstanceCmd(dep)
+						}
+						m.modalErr = "select a version (Enter) before adding"
+						return m, cmd
 					}
 				}
 				return m, cmd
@@ -3048,11 +3096,13 @@ func (m AppModel) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// Non-versions tabs: allow quick add if a version is selected.
 			if km, ok := msg.(tea.KeyMsg); ok {
 				if km.String() == "a" || km.String() == "A" {
-				if m.ahSelected != nil && m.ahSelectedVersion != "" {
-					dep := yamlchart.Dependency{Name: m.ahSelected.Name, Repository: m.ahSelected.RepositoryURL, Version: m.ahSelectedVersion}
-					_ = m.writeSelectedDepSourceMeta(dep, depSourceMeta{Kind: depSourceArtifactHub})
-					return m, m.applyDependencyAndApplyInstanceCmd(dep)
-				}
+					if m.ahSelected != nil && m.ahSelectedVersion != "" {
+						dep := yamlchart.Dependency{Name: m.ahSelected.Name, Repository: m.ahSelected.RepositoryURL, Version: m.ahSelectedVersion}
+						_ = m.writeSelectedDepSourceMeta(dep, depSourceMeta{Kind: depSourceArtifactHub})
+						return m, m.applyDependencyAndApplyInstanceCmd(dep)
+					}
+					m.modalErr = "select a version in the Versions tab first"
+					return m, nil
 				}
 			}
 			return m, nil
@@ -3311,6 +3361,11 @@ func (m AppModel) sourcesUpdate(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m AppModel) isAnyFilterActive() bool {
+	// Note: list.FilterState distinguishes between:
+	// - Unfiltered
+	// - Filtering (user typing)
+	// - FilterApplied
+	// The footer indicator should be true for both Filtering and FilterApplied.
 	if m.instList.FilterState() != list.Unfiltered {
 		return true
 	}
@@ -3318,6 +3373,19 @@ func (m AppModel) isAnyFilterActive() bool {
 		return true
 	}
 	if m.depSource.FilterState() != list.Unfiltered {
+		return true
+	}
+	if m.depsList.FilterState() != list.Unfiltered {
+		return true
+	}
+	if m.valuesList.FilterState() != list.Unfiltered {
+		return true
+	}
+	// Version lists in modals.
+	if m.depEditVersions.FilterState() != list.Unfiltered {
+		return true
+	}
+	if m.depDetailVersions.FilterState() != list.Unfiltered {
 		return true
 	}
 	return false
@@ -3511,7 +3579,7 @@ func (m AppModel) contextHelpLine() string {
 		return "type to search • ↑/↓ select • enter run • esc close"
 	}
 	if m.sourcesOpen {
-		return "tab: next field • enter: save • esc: close"
+		return "tab: next field • shift+tab: prev field • enter: save • esc: close"
 	}
 	if m.creating {
 		return "enter create • esc cancel"
@@ -3527,10 +3595,82 @@ func (m AppModel) contextHelpLine() string {
 	}
 	if m.screen == ScreenInstance {
 		if m.addingDep {
-			return "esc close • enter select • ←/→ tabs • a add"
+			// Add-dependency wizard is step-aware so the help matches what Enter does.
+			switch m.depStep {
+			case depStepChooseSource:
+				return "esc back • ↑/↓ select • enter: next"
+			case depStepCatalog:
+				if len(m.catalogEntries) == 0 {
+					if m.catalogWizardSyncing {
+						return "esc back"
+					}
+					return "s: sync catalog • c: configure sources • esc back"
+				}
+				return "/ filter • ↑/↓ select • enter: next • esc back"
+		case depStepCatalogDetail:
+			if m.catalogSetsLoading {
+				return "esc back"
+			}
+			if len(m.catalogSetList.Items()) == 0 {
+				return "enter: add+apply • esc back"
+			}
+			return "space toggle • D toggle defaults • enter: add+apply • esc back"
+			case depStepCatalogCollision:
+				return "↑/↓ select • enter confirm • esc back"
+			case depStepAHQuery:
+				return "type query • enter: search • esc back"
+			case depStepAHResults:
+				return "↑/↓ select • enter: details • esc back"
+			case depStepAHVersions:
+				return "↑/↓ select • enter: draft • esc back"
+			case depStepAHDetail:
+				// Detail tabs: Enter loads README/values in Versions tab.
+				if m.ahDetailTab == 2 {
+					// Filtering is intentionally disabled in the versions list here.
+					return "←/→ tabs • ↑/↓ select • enter: load details • a add • esc back"
+				}
+				return "←/→ tabs • a add • esc back"
+			case depStepArbitrary:
+				return "tab next field • enter: draft • esc back"
+			default:
+				return "esc back"
+			}
 		}
 	if m.depDetailOpen {
-		return "esc close • ←/→ tabs • / filter • enter apply"
+		// Dependency detail modal: help is tab-aware so Enter is accurate.
+		activeKind := depDetailTabValues
+		if m.depDetailTab >= 0 && m.depDetailTab < len(m.depDetailTabKinds) {
+			activeKind = m.depDetailTabKinds[m.depDetailTab]
+		}
+		versionsTab := len(m.depDetailTabNames) - 1
+		if m.depDetailTab == versionsTab {
+			switch m.depDetailMode {
+			case depEditModeManual:
+				return "←/→ tabs • enter: apply version • esc close"
+			default:
+				return "←/→ tabs • / filter • enter: apply version • esc close"
+			}
+		}
+		switch activeKind {
+		case depDetailTabDependency:
+			if m.depDetailDeleteConfirm {
+				return "y delete • n cancel • esc cancel"
+			}
+			if m.depDetailAliasInput.Focused() {
+				return "enter: apply alias • esc cancel"
+			}
+			return "←/→ tabs • enter: edit alias • d remove • esc close"
+		case depDetailTabSets:
+			return "←/→ tabs • space toggle • enter: apply • esc close"
+		case depDetailTabValues:
+			// Configure tab.
+			if m.depConfigure.editing {
+				return "enter: apply edit • esc cancel edit"
+			}
+			return "←/→ tabs • ↑/↓ move • enter edit/toggle • s save • esc close"
+		default:
+			return "←/→ tabs • esc close"
+		}
 	}
 	if m.depActionsOpen {
 		return "esc close • ↑/↓ select • enter run"
@@ -3651,17 +3791,44 @@ type depItem struct {
 }
 
 func (d depItem) Title() string {
-	id := yamlchart.DependencyID(d.Dep)
-	base := withIcon(iconDeps, string(id))
-	if tag, _ := depSourceTagAndLabel(d.Source, d.SourceOK); strings.TrimSpace(tag) != "" {
-		return base + "  " + tag
+	dd := d.Dep
+	id := string(yamlchart.DependencyID(dd))
+	name := strings.TrimSpace(dd.Name)
+	alias := strings.TrimSpace(dd.Alias)
+	ver := strings.TrimSpace(dd.Version)
+
+	// Title is the scan-friendly identity line: depID + name/alias + version.
+	// (Repo/source are pushed into Description.)
+	parts := []string{}
+	if id != "" {
+		parts = append(parts, withIcon(iconDeps, id))
 	}
-	return base
+	if alias != "" {
+		// Show both for clarity when alias is used.
+		if name != "" && alias != name {
+			parts = append(parts, name+" as "+alias)
+		} else {
+			parts = append(parts, alias)
+		}
+	} else if name != "" {
+		parts = append(parts, name)
+	}
+	if ver != "" {
+		parts = append(parts, "@ "+ver)
+	}
+	return strings.Join(parts, "  ")
 }
 
 func (d depItem) Description() string {
 	dd := d.Dep
-	return dd.Repository + " • " + dd.Name + " • " + dd.Version
+	parts := []string{}
+	if tag, _ := depSourceTagAndLabel(d.Source, d.SourceOK); strings.TrimSpace(tag) != "" {
+		parts = append(parts, tag)
+	}
+	if strings.TrimSpace(dd.Repository) != "" {
+		parts = append(parts, dd.Repository)
+	}
+	return strings.Join(parts, " • ")
 }
 
 func (d depItem) FilterValue() string { return d.Title() + " " + d.Description() }
@@ -3818,7 +3985,7 @@ func renderAddDepView(m AppModel) string {
 				lines = append(lines, lipgloss.NewStyle().Bold(true).Render("Sets:"))
 				lines = append(lines, m.catalogSetList.View())
 				lines = append(lines, "")
-				lines = append(lines, styleMuted.Render("space: toggle • d: toggle defaults • enter: add+apply"))
+				lines = append(lines, styleMuted.Render("space: toggle • D: toggle defaults • enter: add+apply"))
 			}
 		}
 		return header + "\n\n" + strings.Join(lines, "\n")

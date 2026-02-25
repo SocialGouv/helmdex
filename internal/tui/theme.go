@@ -1,5 +1,10 @@
 package tui
 
+import (
+	"os"
+	"strings"
+)
+
 import "github.com/charmbracelet/lipgloss"
 
 // Centralized colors + icons for the TUI.
@@ -67,6 +72,11 @@ var (
 )
 
 func withIcon(ic, label string) string {
+	// Emoji/icon rendering can be disabled to mitigate terminal width/alignment
+	// issues (some terminals treat emoji as double-width).
+	if strings.TrimSpace(os.Getenv("HELMDEX_NO_ICONS")) == "1" {
+		return label
+	}
 	if ic == "" {
 		return label
 	}

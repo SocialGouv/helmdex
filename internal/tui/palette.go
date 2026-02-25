@@ -71,7 +71,7 @@ func (p *paletteModel) QueryFocused() bool { return p.query.Focused() }
 
 func (p *paletteModel) View() string {
 	box := lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).Padding(1, 2)
-	content := lipgloss.NewStyle().Bold(true).Render(withIcon(iconCmd, "Command palette")) + "\n\n" + p.query.View() + "\n\n" + p.list.View() + "\n" + styleMuted.Render("esc: close • enter: run")
+	content := lipgloss.NewStyle().Bold(true).Render(withIcon(iconCmd, "Command palette")) + "\n\n" + p.query.View() + "\n\n" + p.list.View() + "\n" + styleMuted.Render("type to search • ↑/↓ select • enter run • esc close")
 	return box.Render(content)
 }
 

@@ -3,7 +3,6 @@ package tui
 import (
 	"fmt"
 	"strings"
-	"time"
 
 	"github.com/charmbracelet/lipgloss"
 )
@@ -42,11 +41,13 @@ func renderHelpOverlay(m AppModel) string {
 	lines = append(lines, "  /     filter (lists)")
 	lines = append(lines, "  esc   back / close / clear filter")
 	lines = append(lines, "  q     quit")
+	lines = append(lines, "  ctrl+d quit")
 	lines = append(lines, "")
 	lines = append(lines, "Navigation:")
 	lines = append(lines, "  ↑/↓ or j/k   move")
 	lines = append(lines, "  enter        open / confirm")
 	lines = append(lines, "  ←/→ or h/l   tabs")
+	lines = append(lines, "  shift+tab    previous field")
 	lines = append(lines, "")
 	lines = append(lines, "Context:")
 	lines = append(lines, "  "+m.contextHelpLine())
@@ -67,7 +68,13 @@ func renderBreadcrumbBar(m AppModel) string {
 			// Instance names are user content; keep them readable and unstyled.
 			parts = append(parts, withIcon(iconFolder, m.selected.Name))
 		}
-		if m.addingDep {
+		// When no full-screen modal/wizard is open, include the active instance tab.
+		// This makes it obvious what "screen" we're in (Deps/Values/Instance).
+		if m.noModalOpen() {
+			if m.activeTab >= 0 && m.activeTab < len(m.tabNames) {
+				parts = append(parts, m.tabNames[m.activeTab])
+			}
+		} else if m.addingDep {
 			parts = append(parts, withIcon(iconAdd, "Add dep"))
 		}
 	}
@@ -111,16 +118,12 @@ func renderFooterStatusLine(m AppModel) string {
 		flags = append(flags, withIcon(iconBusy, m.spin.View()+" "+label))
 	}
 
-	err := ""
-	if m.statusErr != "" && time.Since(m.statusErrAt) < 6*time.Second {
-		err = withIcon(iconErr, "ERR") + " " + m.statusErr
-	}
-
-	left := ""
-	if err != "" {
-		left = styleErrStrong.Render(err)
-	} else {
-		left = styleMuted.Render(" ")
+	// Left side: status line (error or OK). Errors persist until dismissed.
+	left := styleMuted.Render(" ")
+	if strings.TrimSpace(m.statusErr) != "" {
+		left = styleErrStrong.Render(withIcon(iconErr, "ERR") + " " + m.statusErr)
+	} else if strings.TrimSpace(m.statusOK) != "" {
+		left = styleInfo.Render(withIcon("", "OK") + " " + m.statusOK)
 	}
 
 	right := strings.Join(flags, " ")
