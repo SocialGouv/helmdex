@@ -56,6 +56,12 @@ const (
 	colText     = lipgloss.Color("252")
 	colTextHi   = lipgloss.Color("231")
 	colErr      = lipgloss.Color("9")
+	colDiffAdd  = lipgloss.Color("10")
+	colDiffDel  = lipgloss.Color("9")
+	colDiffHdr  = lipgloss.Color("39")
+	// Intraline highlights (backgrounds for changed substrings).
+	colDiffAddIntraBg = lipgloss.Color("22")
+	colDiffDelIntraBg = lipgloss.Color("52")
 	colInfo     = lipgloss.Color("81")
 )
 
@@ -64,6 +70,14 @@ var (
 	styleMuted     = lipgloss.NewStyle().Faint(true)
 	styleErrStrong = lipgloss.NewStyle().Foreground(colErr).Bold(true)
 	styleInfo      = lipgloss.NewStyle().Foreground(colInfo)
+
+	// Diff styles (git-like).
+	styleDiffAdd = lipgloss.NewStyle().Foreground(colDiffAdd)
+	styleDiffDel = lipgloss.NewStyle().Foreground(colDiffDel)
+	styleDiffHdr = lipgloss.NewStyle().Foreground(colDiffHdr).Faint(true)
+	// Intraline highlights: keep foreground consistent, add background.
+	styleDiffAddIntra = lipgloss.NewStyle().Foreground(colDiffAdd).Background(colDiffAddIntraBg)
+	styleDiffDelIntra = lipgloss.NewStyle().Foreground(colDiffDel).Background(colDiffDelIntraBg)
 
 	styleCrumbBar    = lipgloss.NewStyle().Background(colBgSubtle).Padding(0, 1)
 	styleCrumbSep    = lipgloss.NewStyle().Foreground(colSep)

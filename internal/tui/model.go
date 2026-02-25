@@ -177,6 +177,25 @@ type AppModel struct {
 	depDetailPendingVersion  string
 	depConfigure             depConfigureModel
 
+	// dependency upgrade diff modal (Deps tab)
+	depDiffOpen    bool
+	depDiffLoading bool
+	depDiffTab     int
+	depDiffTabNames []string
+	depDiffSideBySide bool
+	depDiffSideBySideUser bool
+	depDiffWrap bool
+	depDiffWrapUser bool
+	depDiffOldDep  yamlchart.Dependency
+	depDiffNewDep  yamlchart.Dependency
+	depDiffSchemaText string
+	depDiffValuesText string
+	depDiffSchemaRows []diffRow
+	depDiffValuesRows []diffRow
+	depDiffCountsText string
+	depDiffPreview viewport.Model
+	depDiffErr string
+
 	// versions refresh (disk cache + periodic background refresh)
 	versionsWatched  map[string]versionsWatch
 	versionsInFlight map[string]bool
@@ -352,6 +371,7 @@ func (m AppModel) noModalOpen() bool {
 		!m.sourcesOpen &&
 		!m.instanceManageOpen &&
 		!m.depActionsOpen &&
+		!m.depDiffOpen &&
 		!m.depDetailOpen &&
 		!m.depEditOpen &&
 		!m.valuesPreviewOpen &&
@@ -757,6 +777,7 @@ func NewAppModel(p Params) AppModel {
 	vp := viewport.New(0, 0)
 	ahvp := viewport.New(0, 0)
 	depDetailVP := viewport.New(0, 0)
+	depDiffVP := viewport.New(0, 0)
 	valsPrev := viewport.New(0, 0)
 	valsPrev.SetContent("No file selected")
 
@@ -786,6 +807,8 @@ func NewAppModel(p Params) AppModel {
 		depDetailVersionInput: depDetailVerInput,
 		depDetailAliasInput:   depDetailAlias,
 		depDetailPreview:      depDetailVP,
+		depDiffPreview:        depDiffVP,
+		depDiffTabNames:       []string{withIcon(iconSchema, "Schema"), withIcon(iconAHValues, "Values")},
 		spin:                  sp,
 		newName:               newName,
 		instanceManageName:    instManageName,
@@ -2102,6 +2125,21 @@ func (m AppModel) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Conservative "chrome" height inside the dep detail modal (border+padding + header/tabs/footer + blank separators).
 		depDetailChromeH := 12
 		m.depDetailPreview.Height = max(5, modalMaxH-depDetailChromeH)
+		// Dep diff modal uses similar full-body layout.
+		oldDiffOff := m.depDiffPreview.YOffset
+		m.depDiffPreview.Width = max(10, msg.Width-6)
+		m.depDiffPreview.Height = max(5, modalMaxH-depDetailChromeH)
+		// Auto-enable side-by-side when wide enough, unless user toggled.
+		if !m.depDiffSideBySideUser {
+			m.depDiffSideBySide = m.depDiffPreview.Width >= 120
+		}
+		// Auto-wrap only for unified view, unless user toggled.
+		if !m.depDiffWrapUser {
+			m.depDiffWrap = !m.depDiffSideBySide && m.depDiffPreview.Width < 140
+		}
+		// Re-emit content at new width but preserve scroll offset.
+		m.depDiffPreview.SetContent(m.depDiffActiveBody())
+		m.depDiffPreview.SetYOffset(oldDiffOff)
 		m.depDetailSets.SetSize(m.depDetailPreview.Width, max(5, m.depDetailPreview.Height-2))
 		// Dep detail modal has a header + tab bar + footer around its body.
 		// Keep the versions list height aligned with the preview viewport height
@@ -2319,8 +2357,39 @@ func (m AppModel) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case depVersionValidatedMsg:
 		m.endBusy()
-		// Keep modal open; close only after apply succeeds.
-		return m, tea.Batch(m.beginBusy("Applying"), m.applyDependencyAndApplyInstanceCmd(msg.dep))
+		// Keep the originating modal open (version picker / dep detail). Instead of
+		// applying immediately, open the diff modal and require confirmation.
+		oldDep := yamlchart.Dependency{}
+		if m.depDetailOpen {
+			oldDep = m.depDetailDep
+		} else if m.depEditOpen {
+			oldDep = m.depEditDep
+		}
+		if oldDep.Name == "" {
+			// Fallback: best-effort use dependency list selection.
+			if it := m.depsList.SelectedItem(); it != nil {
+				if di, ok := it.(depItem); ok {
+					oldDep = di.Dep
+				}
+			}
+		}
+		m.depDiffOpen = true
+		m.depDiffLoading = true
+		m.depDiffErr = ""
+		m.depDiffOldDep = oldDep
+		m.depDiffNewDep = msg.dep
+		m.depDiffSchemaText = ""
+		m.depDiffValuesText = ""
+		m.depDiffSchemaRows = nil
+		m.depDiffValuesRows = nil
+		m.depDiffSideBySide = false
+		m.depDiffSideBySideUser = false
+		m.depDiffWrap = false
+		m.depDiffWrapUser = false
+		m.depDiffCountsText = ""
+		m.depDiffTab = 0
+		m.depDiffPreview.SetContent(styleMuted.Render("Loading diff…"))
+		return m, tea.Batch(m.beginBusy("Loading diff"), m.loadDepDiffCmd(oldDep, msg.dep))
 	case depAliasAppliedMsg:
 		m.endBusy()
 		m.chart = &msg.chart
@@ -2375,6 +2444,50 @@ func (m AppModel) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 			items = append(items, catalogListItem{E: e})
 		}
 		m.setCatalogListItemsPreserveSelection(items)
+		return m, nil
+	case depDiffLoadedMsg:
+		m.endBusy()
+		m.depDiffLoading = false
+		if msg.err != nil {
+			m.depDiffErr = msg.err.Error()
+			m.depDiffPreview.SetContent(m.depDiffActiveBody())
+			return m, nil
+		}
+		// Ignore stale load if modal closed or dep mismatch.
+		if !m.depDiffOpen {
+			return m, nil
+		}
+		if yamlchart.DependencyID(m.depDiffOldDep) != yamlchart.DependencyID(msg.oldDep) {
+			return m, nil
+		}
+		if yamlchart.DependencyID(m.depDiffNewDep) != yamlchart.DependencyID(msg.newDep) {
+			return m, nil
+		}
+
+		m.depDiffSchemaText = msg.schemaText
+		m.depDiffValuesText = msg.valuesText
+		m.depDiffSchemaRows = msg.schemaRows
+		m.depDiffValuesRows = msg.valuesRows
+		m.depDiffErr = ""
+		m.depDiffCountsText = "Schema " + msg.schemaCounts.String() + " • Values " + msg.valuesCounts.String()
+		// Default tab: schema when available, else values.
+		if msg.usedSchema {
+			m.depDiffTab = 0
+		} else {
+			m.depDiffTab = 1
+		}
+		// Side-by-side defaults:
+		// - auto-enable when wide enough
+		// - but allow user override via `t`
+		auto := m.depDiffPreview.Width >= 120
+		m.depDiffSideBySide = auto
+		m.depDiffSideBySideUser = false
+		// Wrap defaults:
+		// - unified: wrap on when narrow
+		// - side-by-side: wrap off by default (cells already truncate)
+		m.depDiffWrap = !m.depDiffSideBySide && m.depDiffPreview.Width < 140
+		m.depDiffWrapUser = false
+		m.depDiffPreview.SetContent(m.depDiffActiveBody())
 		return m, nil
 	case applyDoneMsg:
 		// Ignore stale apply results.
@@ -2618,6 +2731,11 @@ func (m AppModel) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			// Ignore all other keys while applying.
 			return m, nil
+		}
+
+		// Dep diff modal has the highest priority while open.
+		if m.depDiffOpen {
+			return m.depDiffUpdate(msg)
 		}
 
 		// Dep detail modal has the highest priority while open.
@@ -3498,6 +3616,9 @@ func (m AppModel) View() string {
 	} else if m.depActionsOpen {
 		// Dep actions is a full-body modal.
 		body = renderDepActionsModal(m)
+	} else if m.depDiffOpen {
+		// Dep diff modal is a full-body modal.
+		body = renderDepDiffModal(m)
 	} else if m.depDetailOpen {
 		// Dependency detail modal should be full-screen (like dep version editor).
 		body = renderDepDetailModal(m)
@@ -3658,6 +3779,9 @@ func (m AppModel) contextHelpLine() string {
 	}
 	if m.paletteOpen {
 		return "type to search • ↑/↓ select • enter run • esc close"
+	}
+	if m.depDiffOpen {
+		return "←/→ tabs • t toggle view • w wrap • j/k or ↑/↓ scroll • y apply • n/esc cancel"
 	}
 	if m.sourcesOpen {
 		return "tab: next field • shift+tab: prev field • enter: save • esc: close"
@@ -4805,6 +4929,196 @@ type depVersionValidatedMsg struct {
 	dep yamlchart.Dependency
 }
 
+type depDiffLoadedMsg struct {
+	oldDep yamlchart.Dependency
+	newDep yamlchart.Dependency
+	schemaText string
+	valuesText string
+	schemaRows []diffRow
+	valuesRows []diffRow
+	schemaCounts diffCounts
+	valuesCounts diffCounts
+	usedSchema bool
+	err error
+}
+
+func (m AppModel) loadDepDiffCmd(oldDep, newDep yamlchart.Dependency) tea.Cmd {
+	return func() tea.Msg {
+		if m.selected == nil {
+			return depDiffLoadedMsg{err: fmt.Errorf("no instance selected")}
+		}
+		ctx, cancel := context.WithTimeout(contextBG(), 75*time.Second)
+		defer cancel()
+
+		// For diff, allow using vendored artifacts for the currently selected instance.
+		oldArt, err := loadChartArtifactsBestEffort(ctx, m.params.RepoRoot, m.selected.Path, oldDep, oldDep.Version, true)
+		if err != nil {
+			return depDiffLoadedMsg{oldDep: oldDep, newDep: newDep, err: err}
+		}
+		newArt, err := loadChartArtifactsBestEffort(ctx, m.params.RepoRoot, m.selected.Path, newDep, newDep.Version, false)
+		if err != nil {
+			return depDiffLoadedMsg{oldDep: oldDep, newDep: newDep, err: err}
+		}
+
+		schemaText, schemaCounts, schemaOK, err := DiffJSONSchema(oldArt.Schema, newArt.Schema)
+		if err != nil {
+			return depDiffLoadedMsg{oldDep: oldDep, newDep: newDep, err: err}
+		}
+		schemaRows, _, schemaRowsOK, err := DiffJSONSchemaRows(oldArt.Schema, newArt.Schema)
+		if err != nil {
+			return depDiffLoadedMsg{oldDep: oldDep, newDep: newDep, err: err}
+		}
+		if !schemaRowsOK {
+			schemaRows = nil
+		}
+		valuesText, valuesCounts, valuesOK, err := DiffYAMLValues(oldArt.Values, newArt.Values)
+		if err != nil {
+			return depDiffLoadedMsg{oldDep: oldDep, newDep: newDep, err: err}
+		}
+		valuesRows, _, valuesRowsOK, err := DiffYAMLValuesRows(oldArt.Values, newArt.Values)
+		if err != nil {
+			return depDiffLoadedMsg{oldDep: oldDep, newDep: newDep, err: err}
+		}
+		if !valuesRowsOK {
+			valuesRows = nil
+		}
+		// If schema is missing on either side, schemaOK will be false and we fallback to values.
+		usedSchema := schemaOK
+		if !valuesOK {
+			// Still return something usable.
+			valuesText = "(default values not available)\n"
+		}
+		if !schemaOK {
+			schemaText = "(values.schema.json not available on one or both versions; showing values diff instead)\n"
+		}
+		return depDiffLoadedMsg{
+			oldDep: oldDep,
+			newDep: newDep,
+			schemaText: schemaText,
+			valuesText: valuesText,
+			schemaRows: schemaRows,
+			valuesRows: valuesRows,
+			schemaCounts: schemaCounts,
+			valuesCounts: valuesCounts,
+			usedSchema: usedSchema,
+			err: nil,
+		}
+	}
+}
+
+func (m AppModel) depDiffUpdate(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	// Close/cancel.
+	if msg.Type == tea.KeyEsc || msg.String() == "n" || msg.String() == "N" {
+		m.depDiffOpen = false
+		m.depDiffLoading = false
+		m.depDiffErr = ""
+		m.depDiffSchemaText = ""
+		m.depDiffValuesText = ""
+		m.depDiffSchemaRows = nil
+		m.depDiffValuesRows = nil
+		m.depDiffSideBySide = false
+		m.depDiffSideBySideUser = false
+		m.depDiffWrap = false
+		m.depDiffWrapUser = false
+		m.depDiffCountsText = ""
+		m.depDiffOldDep = yamlchart.Dependency{}
+		m.depDiffNewDep = yamlchart.Dependency{}
+		m.depDiffPreview.SetContent("")
+		return m, nil
+	}
+	// Toggle view mode.
+	if msg.String() == "t" || msg.String() == "T" {
+		m.depDiffSideBySide = !m.depDiffSideBySide
+		m.depDiffSideBySideUser = true
+		// Update wrap default when toggling, unless user forced wrap.
+		if !m.depDiffWrapUser {
+			m.depDiffWrap = !m.depDiffSideBySide && m.depDiffPreview.Width < 140
+		}
+		m.depDiffPreview.SetContent(m.depDiffActiveBody())
+		return m, nil
+	}
+	// Toggle wrap.
+	if msg.String() == "w" || msg.String() == "W" {
+		m.depDiffWrap = !m.depDiffWrap
+		m.depDiffWrapUser = true
+		m.depDiffPreview.SetContent(m.depDiffActiveBody())
+		return m, nil
+	}
+	// Apply.
+	if msg.String() == "y" || msg.String() == "Y" {
+		dep := m.depDiffNewDep
+		m.depDiffOpen = false
+		m.depDiffLoading = false
+		m.depDiffErr = ""
+		return m, tea.Batch(m.beginBusy("Applying"), m.applyDependencyAndApplyInstanceCmd(dep))
+	}
+
+	// Tab switch.
+	if key.Matches(msg, m.keys.TabLeft) {
+		m.depDiffTab = (m.depDiffTab - 1 + len(m.depDiffTabNames)) % len(m.depDiffTabNames)
+		m.depDiffPreview.SetContent(m.depDiffActiveBody())
+		return m, nil
+	}
+	if key.Matches(msg, m.keys.TabRight) {
+		m.depDiffTab = (m.depDiffTab + 1) % len(m.depDiffTabNames)
+		m.depDiffPreview.SetContent(m.depDiffActiveBody())
+		return m, nil
+	}
+
+	// Scroll helpers.
+	if msg.String() == "j" {
+		msg = tea.KeyMsg{Type: tea.KeyDown}
+	}
+	if msg.String() == "k" {
+		msg = tea.KeyMsg{Type: tea.KeyUp}
+	}
+
+	var cmd tea.Cmd
+	m.depDiffPreview, cmd = m.depDiffPreview.Update(msg)
+	return m, cmd
+}
+
+func (m AppModel) depDiffActiveBody() string {
+	if m.depDiffLoading {
+		return styleMuted.Render("Loading diff…")
+	}
+	if strings.TrimSpace(m.depDiffErr) != "" {
+		return styleErrStrong.Render(withIcon(iconErr, "Error:") + " " + m.depDiffErr)
+	}
+	// Side-by-side when enabled.
+	if m.depDiffSideBySide {
+		if m.depDiffTab == 0 {
+			if m.depDiffSchemaRows == nil {
+				return styleMuted.Render("No schema diff.")
+			}
+			return renderSideBySide(m.depDiffSchemaRows, m.depDiffPreview.Width, m.depDiffWrap)
+		}
+		if m.depDiffValuesRows == nil {
+			return styleMuted.Render("No values diff.")
+		}
+		return renderSideBySide(m.depDiffValuesRows, m.depDiffPreview.Width, m.depDiffWrap)
+	}
+	// Unified.
+	// Note: wrapping must happen on *plain* strings (no ANSI), otherwise width
+	// calculation breaks. Prefer row-based rendering when rows are available.
+	if m.depDiffTab == 0 {
+		if m.depDiffSchemaRows != nil {
+			return renderUnifiedRows(m.depDiffSchemaRows, m.depDiffPreview.Width, m.depDiffWrap)
+		}
+		if strings.TrimSpace(m.depDiffSchemaText) == "" {
+			return styleMuted.Render("No schema diff.")
+		}
+		return m.depDiffSchemaText
+	}
+	if m.depDiffValuesRows != nil {
+		return renderUnifiedRows(m.depDiffValuesRows, m.depDiffPreview.Width, m.depDiffWrap)
+	}
+	if strings.TrimSpace(m.depDiffValuesText) == "" {
+		return styleMuted.Render("No values diff.")
+	}
+	return m.depDiffValuesText
+}
+
 type depAliasAppliedMsg struct{
 	chart yamlchart.Chart
 	dep   yamlchart.Dependency
@@ -4902,8 +5216,10 @@ func (m AppModel) upgradeDepToLatestCmd(dep yamlchart.Dependency) tea.Cmd {
 		if strings.TrimSpace(best) == strings.TrimSpace(dep.Version) {
 			return noopMsg{}
 		}
-		dep.Version = best
-		return m.applyDependencyAndApplyInstanceCmd(dep)()
+		newDep := dep
+		newDep.Version = best
+		// Open diff modal + confirm before applying.
+		return depVersionValidatedMsg{dep: newDep}
 	}
 }
 

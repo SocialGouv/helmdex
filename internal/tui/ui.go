@@ -267,6 +267,49 @@ func renderDepDetailModal(m AppModel) string {
 	return box.Render(header + "\n\n" + tabsLine + "\n\n" + body + "\n\n" + footer)
 }
 
+func renderDepDiffModal(m AppModel) string {
+	box := lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).Padding(1, 2)
+	box = box.Height(modalMaxHeight(m))
+	if !m.depDiffOpen {
+		return ""
+	}
+	oldV := strings.TrimSpace(m.depDiffOldDep.Version)
+	newV := strings.TrimSpace(m.depDiffNewDep.Version)
+	dep := m.depDiffNewDep
+	label := ""
+	if strings.TrimSpace(dep.Name) != "" {
+		label = fmt.Sprintf("%s @ %s", dep.Name, dep.Repository)
+	}
+	change := ""
+	if oldV != "" || newV != "" {
+		change = fmt.Sprintf("%s → %s", oldV, newV)
+	}
+
+	header := lipgloss.NewStyle().Bold(true).Render(withIcon(iconVersions, "Upgrade diff"))
+	if label != "" {
+		header += "\n" + styleMuted.Render(label)
+	}
+	if change != "" {
+		header += "\n" + styleMuted.Render(change)
+	}
+	if strings.TrimSpace(m.depDiffCountsText) != "" {
+		header += "\n" + styleMuted.Render(m.depDiffCountsText)
+	}
+	if strings.TrimSpace(m.depDiffErr) != "" {
+		header += "\n" + styleErrStrong.Render(withIcon(iconErr, "Error:")+" "+m.depDiffErr)
+	}
+
+	tabsLine := renderTabs(m.depDiffTabNames, m.depDiffTab)
+	var body string
+	if m.depDiffLoading {
+		body = styleMuted.Render("Loading diff…")
+	} else {
+		body = m.depDiffPreview.View()
+	}
+	footer := styleMuted.Render("←/→ tabs • t toggle view • w wrap • j/k or ↑/↓ scroll • y apply • n/esc cancel")
+	return box.Render(header + "\n\n" + tabsLine + "\n\n" + body + "\n\n" + footer)
+}
+
 func renderValuesPreviewModal(m AppModel) string {
 	box := lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).Padding(1, 2)
 	// Clamp modal height so its top border never scrolls off-screen.
