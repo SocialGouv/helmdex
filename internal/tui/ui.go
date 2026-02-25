@@ -41,7 +41,7 @@ func renderHelpOverlay(m AppModel) string {
 	lines = append(lines, "  /     filter (lists)")
 	lines = append(lines, "  esc   back / close / clear filter")
 	lines = append(lines, "  q     quit")
-	lines = append(lines, "  ctrl+c quit")
+	lines = append(lines, "  ctrl+c ctrl+c quit")
 	lines = append(lines, "  ctrl+d quit")
 	lines = append(lines, "")
 	lines = append(lines, "Navigation:")
@@ -125,6 +125,8 @@ func renderFooterStatusLine(m AppModel) string {
 		left = styleErrStrong.Render(withIcon(iconErr, "ERR") + " " + m.statusErr)
 	} else if strings.TrimSpace(m.statusOK) != "" {
 		left = styleInfo.Render(withIcon("", "OK") + " " + m.statusOK)
+	} else if m.quitArmed {
+		left = styleInfo.Render("Press Ctrl+C again to quit")
 	}
 
 	right := strings.Join(flags, " ")

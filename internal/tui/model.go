@@ -48,6 +48,11 @@ type AppModel struct {
 	statusErr   string
 	statusOK    string
 
+	// quit UX: Ctrl+C must be pressed twice within a short window.
+	quitArmed   bool
+	quitArmedAt time.Time
+	quitArmID   int
+
 	// create instance
 	creating bool
 	newName  textinput.Model
@@ -229,6 +234,10 @@ type AppModel struct {
 	sourcesFocus int
 	sourcesErr  string
 }
+
+// quitArmExpiredMsg is emitted by a tea.Tick started when Ctrl+C arms quit.
+// The id is used to ignore stale ticks if the user re-arms before expiry.
+type quitArmExpiredMsg struct{ id int }
 
 func (m *AppModel) setStatusErr(msg string) {
 	msg = strings.TrimSpace(msg)
@@ -629,7 +638,7 @@ func (k keyMap) FullHelp() [][]key.Binding {
 
 func NewAppModel(p Params) AppModel {
 	keys := keyMap{
-		Quit:        key.NewBinding(key.WithKeys("q", "ctrl+c"), key.WithHelp("q", "quit")),
+		Quit:        key.NewBinding(key.WithKeys("q"), key.WithHelp("q", "quit")),
 		Back:        key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "back")),
 		Open:        key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "open")),
 		Reload:      key.NewBinding(key.WithKeys("ctrl+r", "f5"), key.WithHelp("ctrl+r", "reload")),
@@ -2062,6 +2071,38 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m AppModel) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
+	// Global quit keys must work anywhere, including when overlays/modals are
+	// open (some of them consume all input) and even when a text input is focused.
+	//
+	// Ctrl+C: double-press within 1s.
+	// Ctrl+D: immediate.
+	if km, ok := msg.(tea.KeyMsg); ok {
+		isCtrlC := km.Type == tea.KeyCtrlC || km.String() == "ctrl+c"
+		isCtrlD := km.Type == tea.KeyCtrlD || km.String() == "ctrl+d"
+		if isCtrlD {
+			m.skipWindowTitleOnce = true
+			return m, tea.Quit
+		}
+		if isCtrlC {
+			now := time.Now()
+			if m.quitArmed && now.Sub(m.quitArmedAt) <= 1*time.Second {
+				m.skipWindowTitleOnce = true
+				return m, tea.Quit
+			}
+			// Arm quit.
+			m.quitArmed = true
+			m.quitArmedAt = now
+			m.quitArmID++
+			armID := m.quitArmID
+			// Disarm automatically after 1s.
+			return m, tea.Tick(1*time.Second, func(time.Time) tea.Msg { return quitArmExpiredMsg{id: armID} })
+		}
+		// Any other key clears the Ctrl+C armed state.
+		if m.quitArmed {
+			m.quitArmed = false
+		}
+	}
+
 	// Clear transient OK feedback on the next user input.
 	if _, ok := msg.(tea.KeyMsg); ok {
 		m.statusOK = ""
@@ -2078,6 +2119,11 @@ func (m AppModel) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	switch msg := msg.(type) {
+	case quitArmExpiredMsg:
+		if m.quitArmed && msg.id == m.quitArmID {
+			m.quitArmed = false
+		}
+		return m, nil
 	case spinner.TickMsg:
 		var cmd tea.Cmd
 		m.spin, cmd = m.spin.Update(msg)
@@ -2771,18 +2817,8 @@ func (m AppModel) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, cmd
 		}
 
-		// Always honor hard quit keys, even when a text input is focused.
-		// Otherwise the user can get stuck in inputs (e.g. Artifact Hub query).
-		if msg.Type == tea.KeyCtrlC || msg.String() == "ctrl+c" {
-			m.skipWindowTitleOnce = true
-			return m, tea.Quit
-		}
-		// Bubble Tea may or may not decode Ctrl+D as a dedicated key type depending
-		// on terminal/reader; matching by string keeps it robust.
-		if msg.Type == tea.KeyCtrlD || msg.String() == "ctrl+d" {
-			m.skipWindowTitleOnce = true
-			return m, tea.Quit
-		}
+		// Hard quit keys are handled at the top of updateInner() so they work even
+		// while overlays/modals are open.
 
 		// Always handle Esc/back before deferring to focused inputs.
 		// Esc should first clear any active list filtering, then navigate back.
@@ -3416,10 +3452,6 @@ func (m AppModel) paletteUpdate(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.paletteOpen = false
 		return m, nil
 	}
-	if msg.Type == tea.KeyCtrlC {
-		m.skipWindowTitleOnce = true
-		return m, tea.Quit
-	}
 	cmd, didEnter := m.palette.Update(msg)
 	if didEnter {
 		it, ok := m.palette.selected()
@@ -3493,9 +3525,6 @@ func (m AppModel) sourcesUpdate(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.sourcesRef.Blur()
 		m.sourcesPlat.Blur()
 		return m, nil
-	}
-	if msg.Type == tea.KeyCtrlC || msg.String() == "ctrl+c" {
-		return m, tea.Quit
 	}
 
 	// Focus cycling.
