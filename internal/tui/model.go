@@ -2153,6 +2153,12 @@ func (m AppModel) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.endBusy()
 		m.chart = &msg.chart
 		m.depsList.SetItems(m.depsToItems(msg.chart.Dependencies))
+		// Keep dep detail modal pointed at the updated dependency (alias affects depID).
+		if m.depDetailOpen {
+			m.depDetailDep = msg.dep
+			m.depDetailAliasInput.SetValue(strings.TrimSpace(msg.dep.Alias))
+			m.depDetailAliasInput.Blur()
+		}
 		m.modalErr = ""
 		m.depDetailDeleteConfirm = false
 		m.statusErr = ""
@@ -4530,6 +4536,7 @@ type depVersionValidatedMsg struct {
 
 type depAliasAppliedMsg struct{
 	chart yamlchart.Chart
+	dep   yamlchart.Dependency
 }
 
 func (m AppModel) openDepEditSelected() (tea.Model, tea.Cmd) {
@@ -4909,7 +4916,7 @@ func (m AppModel) applyDepAliasFromDetailCmd(alias string) tea.Cmd {
 		}
 
 		// Keep modal in sync.
-		return depAliasAppliedMsg{chart: c}
+		return depAliasAppliedMsg{chart: c, dep: newDep}
 	}
 }
 

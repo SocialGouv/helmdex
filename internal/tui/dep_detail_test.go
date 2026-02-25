@@ -133,6 +133,21 @@ func TestDepDetailDependencyTabEscWhileEditingBlursAndRevertsValue(t *testing.T)
 	}
 }
 
+func TestDepAliasAppliedMsgKeepsDepDetailDepInSync(t *testing.T) {
+	m := NewAppModel(Params{RepoRoot: "."})
+	m.depDetailOpen = true
+	m.depDetailDep = yamlchart.Dependency{Name: "nginx", Repository: "https://example.com", Version: "1.0.0", Alias: "old"}
+
+	updated := yamlchart.Dependency{Name: "nginx", Repository: "https://example.com", Version: "1.0.0", Alias: "new"}
+	chart := yamlchart.Chart{Dependencies: []yamlchart.Dependency{updated}}
+
+	nm, _ := m.Update(depAliasAppliedMsg{chart: chart, dep: updated})
+	mm := nm.(AppModel)
+	if got := mm.depDetailDep.Alias; got != "new" {
+		t.Fatalf("expected depDetailDep alias to be updated, got %q", got)
+	}
+}
+
 func TestDepDetailTabsCatalogIncludesSetsFirst(t *testing.T) {
 	names, kinds := depDetailTabs(depSourceMeta{Kind: depSourceCatalog, CatalogID: "x"}, true)
 	if len(kinds) == 0 || kinds[0] != depDetailTabSets {
