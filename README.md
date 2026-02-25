@@ -16,6 +16,8 @@ The TUI updates the terminal window title to show the current breadcrumb:
 
 Opt-out by setting `HELMDEX_NO_TITLE=1`.
 
+Icons/emojis can render with inconsistent width across terminals. Opt-out by setting `HELMDEX_NO_ICONS=1`.
+
 ### Catalog + sets (presets)
 
 helmdex supports a **remote catalog** (curated chart/version targets) and downloadable **sets** (YAML values files) that can be selected when adding a dependency.
@@ -121,7 +123,7 @@ helmdex tui
 - select an entry → `enter`
 - in the detail step:
   - `space` toggles a set
-  - `d` toggles all default sets
+  - `D` toggles all default sets
   - `enter` adds + applies
 
 After a dependency has been added, you can:

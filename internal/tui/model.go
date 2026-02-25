@@ -222,6 +222,120 @@ func (m *AppModel) setStatusErr(msg string) {
 
 func (m *AppModel) clearStatusErr() { m.statusErr = "" }
 
+func (m AppModel) handleEscChain(msg tea.KeyMsg) (AppModel, tea.Cmd, bool) {
+	// Esc should first clear any active list filtering, then navigate back.
+	if key.Matches(msg, m.keys.Back) || msg.Type == tea.KeyEsc {
+		// First: if any filter is active, clear it.
+		if m.clearAnyActiveFilter() {
+			return m, nil, true
+		}
+		// Next: when no modal is open, Esc dismisses a persistent error.
+		if msg.Type == tea.KeyEsc && m.noModalOpen() && strings.TrimSpace(m.statusErr) != "" {
+			m.clearStatusErr()
+			return m, nil, true
+		}
+		if m.creating {
+			m.creating = false
+			return m, nil, true
+		}
+		if m.addingDep {
+			// Step-wise back inside the wizard.
+			switch m.depStep {
+			case depStepChooseSource:
+				m.addingDep = false
+				m.catalogWizardAutoSyncTried = false
+				m.catalogWizardSyncing = false
+				m.depStep = depStepNone
+				m.modalErr = ""
+				return m, nil, true
+			case depStepCatalog, depStepCatalogDetail, depStepCatalogCollision, depStepAHQuery, depStepArbitrary:
+				m.depStep = depStepChooseSource
+				m.modalErr = ""
+				return m, nil, true
+			case depStepAHResults:
+				m.depStep = depStepAHQuery
+				m.ahQuery.Focus()
+				m.modalErr = ""
+				return m, nil, true
+			case depStepAHVersions:
+				m.depStep = depStepAHResults
+				m.modalErr = ""
+				return m, nil, true
+			case depStepAHDetail:
+				m.depStep = depStepAHResults
+				m.modalErr = ""
+				return m, nil, true
+			default:
+				m.addingDep = false
+				m.catalogWizardAutoSyncTried = false
+				m.catalogWizardSyncing = false
+				m.depStep = depStepNone
+				m.modalErr = ""
+				return m, nil, true
+			}
+		}
+		if m.instanceManageOpen {
+			m.instanceManageOpen = false
+			m.instanceManageConfirm = false
+			m.instanceManageName.Blur()
+			return m, nil, true
+		}
+		if m.screen == ScreenInstance {
+			m.screen = ScreenDashboard
+			m.selected = nil
+			return m, nil, true
+		}
+	}
+	return m, nil, false
+}
+
+func (m *AppModel) setCatalogListItemsPreserveSelection(items []list.Item) {
+	prevID := ""
+	if it := m.catalogList.SelectedItem(); it != nil {
+		if cli, ok := it.(catalogListItem); ok {
+			prevID = cli.E.Entry.ID
+		}
+	}
+	idx := 0
+	if prevID != "" {
+		for i, it := range items {
+			cli, ok := it.(catalogListItem)
+			if ok && cli.E.Entry.ID == prevID {
+				idx = i
+				break
+			}
+		}
+	}
+	m.catalogList.SetItems(items)
+	if len(items) > 0 {
+		m.catalogList.Select(idx)
+	}
+}
+
+func (m *AppModel) setDepsListFromChartPreserveSelection(deps []yamlchart.Dependency) {
+	prevID := yamlchart.DependencyID(yamlchart.Dependency{})
+	if it := m.depsList.SelectedItem(); it != nil {
+		if di, ok := it.(depItem); ok {
+			prevID = yamlchart.DependencyID(di.Dep)
+		}
+	}
+	items := m.depsToItems(deps)
+	idx := 0
+	if prevID != "" {
+		for i, it := range items {
+			di, ok := it.(depItem)
+			if ok && yamlchart.DependencyID(di.Dep) == prevID {
+				idx = i
+				break
+			}
+		}
+	}
+	m.depsList.SetItems(items)
+	if len(items) > 0 {
+		m.depsList.Select(idx)
+	}
+}
+
 func (m *AppModel) setStatusOK(msg string) {
 	msg = strings.TrimSpace(msg)
 	m.statusOK = msg
@@ -241,7 +355,8 @@ func (m AppModel) noModalOpen() bool {
 		!m.depDetailOpen &&
 		!m.depEditOpen &&
 		!m.valuesPreviewOpen &&
-		!m.applyOpen
+		!m.applyOpen &&
+		!m.addingDep
 }
 
 func hasCatalogEnabledSources(cfg *config.Config) bool {
@@ -1889,7 +2004,7 @@ func (m AppModel) ahVersionsCmd(repoID, pkg string) tea.Cmd {
 
 func (m AppModel) renderAHDetailBody() string {
 	if m.ahSelected == nil {
-		return "No selection"
+		return "Select a chart (↑/↓) then press Enter."
 	}
 	if m.ahLoading {
 		return "Loading chart details via helm…"
@@ -2019,6 +2134,22 @@ func (m AppModel) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 		for _, inst := range msg.items {
 			items = append(items, instanceItem(inst))
 		}
+		// Medium UX improvement: augment the selected row with a scan-friendly
+		// secondary info line (dependency count), without preloading every instance.
+		if si, ok := m.instList.SelectedItem().(instanceItem); ok {
+			inst := instances.Instance(si)
+			if strings.TrimSpace(inst.Path) != "" {
+				chartPath := filepath.Join(inst.Path, "Chart.yaml")
+				if c, err := yamlchart.ReadChart(chartPath); err == nil {
+					for i := range items {
+						if ii, ok := items[i].(instanceItem); ok && instances.Instance(ii).Name == inst.Name {
+							items[i] = instanceListItem{Inst: inst, DepCount: len(c.Dependencies), DepCountOK: true}
+							break
+						}
+					}
+				}
+			}
+		}
 		m.instList.SetItems(items)
 		return m, nil
 	case instanceRenameRequest:
@@ -2054,13 +2185,13 @@ func (m AppModel) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case chartMsg:
 		m.endBusy()
 		m.chart = &msg.chart
-		m.depsList.SetItems(m.depsToItems(msg.chart.Dependencies))
+		m.setDepsListFromChartPreserveSelection(msg.chart.Dependencies)
 		m.refreshInstanceView()
 		return m, nil
 	case depAppliedMsg:
 		m.endBusy()
 		m.chart = &msg.chart
-		m.depsList.SetItems(m.depsToItems(msg.chart.Dependencies))
+		m.setDepsListFromChartPreserveSelection(msg.chart.Dependencies)
 		m.addingDep = false
 		m.catalogWizardAutoSyncTried = false
 		m.catalogWizardSyncing = false
@@ -2076,7 +2207,7 @@ func (m AppModel) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case depAppliedAndAppliedMsg:
 		m.endBusy()
 		m.chart = &msg.chart
-		m.depsList.SetItems(m.depsToItems(msg.chart.Dependencies))
+		m.setDepsListFromChartPreserveSelection(msg.chart.Dependencies)
 		m.addingDep = false
 		m.catalogWizardAutoSyncTried = false
 		m.catalogWizardSyncing = false
@@ -2193,7 +2324,7 @@ func (m AppModel) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case depAliasAppliedMsg:
 		m.endBusy()
 		m.chart = &msg.chart
-		m.depsList.SetItems(m.depsToItems(msg.chart.Dependencies))
+		m.setDepsListFromChartPreserveSelection(msg.chart.Dependencies)
 		// Keep dep detail modal pointed at the updated dependency (alias affects depID).
 		if m.depDetailOpen {
 			m.depDetailDep = msg.dep
@@ -2243,7 +2374,7 @@ func (m AppModel) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 		for _, e := range msg.entries {
 			items = append(items, catalogListItem{E: e})
 		}
-		m.catalogList.SetItems(items)
+		m.setCatalogListItemsPreserveSelection(items)
 		return m, nil
 	case applyDoneMsg:
 		// Ignore stale apply results.
@@ -2260,12 +2391,16 @@ func (m AppModel) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if msg.err != nil {
 			m.modalErr = msg.err.Error()
-			m.setStatusErr(msg.err.Error())
+			// UX: avoid duplicated error surfaces. If the wizard is open, prefer the
+			// modal-local error; otherwise, surface it in the footer.
+			if !m.addingDep {
+				m.setStatusErr(msg.err.Error())
+			}
 			return m, nil
 		}
 		if msg.chart != nil {
 			m.chart = msg.chart
-			m.depsList.SetItems(m.depsToItems(msg.chart.Dependencies))
+			m.setDepsListFromChartPreserveSelection(msg.chart.Dependencies)
 		}
 		m.addingDep = false
 		m.catalogWizardAutoSyncTried = false
@@ -2431,7 +2566,12 @@ func (m AppModel) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case errMsg:
 		m.endBusy()
-		m.setStatusErr(msg.err.Error())
+		// UX: avoid duplicated error surfaces.
+		// - If a modal/wizard is open, prefer showing error in the modal header.
+		// - Otherwise, show it in the global footer.
+		if m.noModalOpen() {
+			m.setStatusErr(msg.err.Error())
+		}
 		if m.depDetailOpen {
 			m.modalErr = msg.err.Error()
 			m.depDetailLoading = false
@@ -2528,67 +2668,8 @@ func (m AppModel) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		// Always handle Esc/back before deferring to focused inputs.
 		// Esc should first clear any active list filtering, then navigate back.
-		if key.Matches(msg, m.keys.Back) || msg.Type == tea.KeyEsc {
-			// First: if any filter is active, clear it.
-			if m.clearAnyActiveFilter() {
-				return m, nil
-			}
-			// Next: when no modal is open, Esc dismisses a persistent error.
-			if msg.Type == tea.KeyEsc && m.noModalOpen() && strings.TrimSpace(m.statusErr) != "" {
-				m.clearStatusErr()
-				return m, nil
-			}
-			if m.creating {
-				m.creating = false
-				return m, nil
-			}
-			if m.addingDep {
-				// Step-wise back inside the wizard.
-				switch m.depStep {
-				case depStepChooseSource:
-					m.addingDep = false
-					m.catalogWizardAutoSyncTried = false
-					m.catalogWizardSyncing = false
-					m.depStep = depStepNone
-					m.modalErr = ""
-					return m, nil
-		case depStepCatalog, depStepCatalogDetail, depStepCatalogCollision, depStepAHQuery, depStepArbitrary:
-			m.depStep = depStepChooseSource
-			m.modalErr = ""
-			return m, nil
-				case depStepAHResults:
-					m.depStep = depStepAHQuery
-					m.ahQuery.Focus()
-					m.modalErr = ""
-					return m, nil
-				case depStepAHVersions:
-					m.depStep = depStepAHResults
-					m.modalErr = ""
-					return m, nil
-				case depStepAHDetail:
-					m.depStep = depStepAHResults
-					m.modalErr = ""
-					return m, nil
-				default:
-					m.addingDep = false
-					m.catalogWizardAutoSyncTried = false
-					m.catalogWizardSyncing = false
-					m.depStep = depStepNone
-					m.modalErr = ""
-					return m, nil
-				}
-			}
-			if m.instanceManageOpen {
-				m.instanceManageOpen = false
-				m.instanceManageConfirm = false
-				m.instanceManageName.Blur()
-				return m, nil
-			}
-			if m.screen == ScreenInstance {
-				m.screen = ScreenDashboard
-				m.selected = nil
-				return m, nil
-			}
+		if m2, cmd, handled := m.handleEscChain(msg); handled {
+			return m2, cmd
 		}
 
 		// Wizard helpers (only when the add-dep wizard is open and we're in Catalog step).
@@ -3504,7 +3585,7 @@ func (m AppModel) renderSourcesModal() string {
 	lines = append(lines, m.sourcesRef.View())
 	lines = append(lines, m.sourcesPlat.View())
 	lines = append(lines, "")
-	lines = append(lines, styleMuted.Render("tab: next field • enter: save • esc: close"))
+	lines = append(lines, styleMuted.Render("tab: next field • shift+tab: prev field • enter: save • esc: close"))
 	return box.Render(strings.Join(lines, "\n"))
 }
 
@@ -3697,6 +3778,26 @@ func (i instanceItem) Description() string {
 		return ""
 	}
 	return i.Path
+}
+
+// instanceListItem augments an instance list row with lightweight derived info.
+// It is intentionally populated only for the currently selected row.
+type instanceListItem struct {
+	Inst       instances.Instance
+	DepCount   int
+	DepCountOK bool
+}
+
+func (i instanceListItem) FilterValue() string { return i.Inst.Name }
+func (i instanceListItem) Title() string       { return withIcon(iconInstance, i.Inst.Name) }
+func (i instanceListItem) Description() string {
+	if i.Inst.Path == "" {
+		return ""
+	}
+	if i.DepCountOK {
+		return i.Inst.Path + "  •  deps: " + fmt.Sprintf("%d", i.DepCount)
+	}
+	return i.Inst.Path
 }
 
 type sourceItem string
@@ -3956,7 +4057,7 @@ func renderAddDepView(m AppModel) string {
 				lines = append(lines, styleMuted.Render("esc: back"))
 				return header + "\n\n" + strings.Join(lines, "\n")
 			}
-			lines = append(lines, styleMuted.Render("No local catalog entries."))
+			lines = append(lines, styleMuted.Render("Catalog is empty. Press `s` to sync or `c` to configure sources."))
 			lines = append(lines, styleMuted.Render("Catalog entries are read from .helmdex/catalog/*.yaml."))
 			lines = append(lines, "")
 			lines = append(lines, styleMuted.Render("s: sync catalog • c: configure sources • esc: back"))
@@ -4093,6 +4194,9 @@ func (m AppModel) inputCapturesKeys() bool {
 		return true
 	}
 	if m.depsList.FilterState() == list.Filtering {
+		return true
+	}
+	if m.valuesList.FilterState() == list.Filtering {
 		return true
 	}
 	return false

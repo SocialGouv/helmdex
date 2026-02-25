@@ -41,6 +41,7 @@ func renderHelpOverlay(m AppModel) string {
 	lines = append(lines, "  /     filter (lists)")
 	lines = append(lines, "  esc   back / close / clear filter")
 	lines = append(lines, "  q     quit")
+	lines = append(lines, "  ctrl+c quit")
 	lines = append(lines, "  ctrl+d quit")
 	lines = append(lines, "")
 	lines = append(lines, "Navigation:")
@@ -250,7 +251,8 @@ func renderDepDetailModal(m AppModel) string {
 				if m.depDetailVersionsLoading {
 					refreshing = "  " + styleMuted.Render("(refreshing…)")
 				}
-				body = m.depDetailVersions.View() + refreshing + "\n" + styleMuted.Render(withIcon(iconFilter, "/: filter")+" • enter: apply • esc: cancel")
+				body = m.depDetailVersions.View() + refreshing + "\n" + styleMuted.Render(withIcon(iconFilter, "/: filter")+" • enter: apply • esc: cancel") +
+					"\n" + styleMuted.Render("Hint: this is the in-context version picker (same as `v` from Dependencies).")
 			}
 		}
 	} else {
