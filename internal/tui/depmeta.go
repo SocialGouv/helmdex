@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"helmdex/internal/yamlchart"
+	"helmdex/internal/catalog"
 
 	"gopkg.in/yaml.v3"
 )
@@ -124,6 +125,19 @@ func readDepSourceMeta(repoRoot, instanceName string, depID yamlchart.DepID) (de
 	}
 	if strings.TrimSpace(string(m.Kind)) == "" {
 		return depSourceMeta{}, false
+	}
+	// Backfill for legacy catalog deps that predate CatalogSource.
+	if m.Kind == depSourceCatalog && strings.TrimSpace(m.CatalogSource) == "" && strings.TrimSpace(m.CatalogID) != "" {
+		if entries, err := catalog.LoadLocalCatalogEntriesWithSource(repoRoot); err == nil {
+			for _, e := range entries {
+				if e.Entry.ID == strings.TrimSpace(m.CatalogID) {
+					m.CatalogSource = e.SourceName
+					// Best-effort persist so subsequent loads and dep list rendering show it.
+					_ = writeDepSourceMeta(repoRoot, instanceName, depID, m)
+					break
+				}
+			}
+		}
 	}
 	return m, true
 }

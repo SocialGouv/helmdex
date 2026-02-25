@@ -292,7 +292,7 @@ func depDetailTabs(source depSourceMeta, ok bool) (names []string, kinds []depDe
 		case depDetailTabValues:
 			names = append(names, withIcon(iconSchema, "Values"))
 		case depDetailTabDependency:
-			names = append(names, withIcon(iconDeps, "Dependency"))
+			names = append(names, withIcon(iconDeps, "Settings"))
 		case depDetailTabDefault:
 			names = append(names, withIcon(iconAHValues, "Default"))
 		case depDetailTabReadme:
@@ -4143,6 +4143,31 @@ func (m AppModel) depDetailUpdate(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	// Dependency tab.
 	if activeKind == depDetailTabDependency {
+		// Allow tab navigation with ←/→ while not editing the alias.
+		// When editing (input focused), let the text input consume arrow keys.
+		if !m.depDetailAliasInput.Focused() {
+			if key.Matches(msg, m.keys.TabLeft) {
+				m.depDetailTab = (m.depDetailTab - 1 + len(m.depDetailTabNames)) % len(m.depDetailTabNames)
+				if m.depDetailTab == versionsTab && m.depDetailMode == depEditModeManual {
+					m.depDetailVersionInput.Focus()
+				} else {
+					m.depDetailVersionInput.Blur()
+				}
+				m.depDetailPreview.SetContent(m.renderDepDetailBody())
+				return m, nil
+			}
+			if key.Matches(msg, m.keys.TabRight) {
+				m.depDetailTab = (m.depDetailTab + 1) % len(m.depDetailTabNames)
+				if m.depDetailTab == versionsTab && m.depDetailMode == depEditModeManual {
+					m.depDetailVersionInput.Focus()
+				} else {
+					m.depDetailVersionInput.Blur()
+				}
+				m.depDetailPreview.SetContent(m.renderDepDetailBody())
+				return m, nil
+			}
+		}
+
 		// Do not auto-focus the alias input. User must explicitly enter edit mode
 		// (Enter focuses; Esc blurs/reverts; Enter while focused applies).
 		// Confirmation flow.

@@ -175,7 +175,24 @@ func TestDepDetailTabsIncludesDependencyTab(t *testing.T) {
 		}
 	}
 	if !found {
-		t.Fatalf("expected Dependency tab to be present")
+		t.Fatalf("expected Settings tab (depDetailTabDependency kind) to be present")
+	}
+}
+
+func TestDepDetailTabsRenamesDependencyTabToSettings(t *testing.T) {
+	names, kinds := depDetailTabs(depSourceMeta{Kind: depSourceArbitrary}, true)
+	idx := -1
+	for i, k := range kinds {
+		if k == depDetailTabDependency {
+			idx = i
+			break
+		}
+	}
+	if idx < 0 {
+		t.Fatalf("expected Settings tab to be present")
+	}
+	if !strings.Contains(names[idx], "Settings") {
+		t.Fatalf("expected Settings tab label, got %q", names[idx])
 	}
 }
 
