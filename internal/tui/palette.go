@@ -6,7 +6,6 @@ import (
 	"github.com/charmbracelet/bubbles/list"
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 )
 
 type paletteCmdID string
@@ -70,8 +69,8 @@ func (p *paletteModel) Open(m AppModel) {
 func (p *paletteModel) QueryFocused() bool { return p.query.Focused() }
 
 func (p *paletteModel) View() string {
-	box := lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).Padding(1, 2)
-	content := lipgloss.NewStyle().Bold(true).Render(withIcon(iconCmd, "Command palette")) + "\n\n" + p.query.View() + "\n\n" + p.list.View() + "\n" + styleMuted.Render("type to search • ↑/↓ select • enter run • esc close")
+	box := stylePanelBox
+	content := styleHeading.Render(withIcon(iconCmd, "Command palette")) + "\n\n" + p.query.View() + "\n\n" + p.list.View() + "\n" + styleMuted.Render("type to search • ↑/↓ select • enter run • esc close")
 	return box.Render(content)
 }
 

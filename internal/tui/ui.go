@@ -30,10 +30,10 @@ func renderWithModal(m AppModel, body, modal string) string {
 }
 
 func renderHelpOverlay(m AppModel) string {
-	panel := lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).Padding(1, 2)
+	panel := stylePanelBox
 
 	lines := []string{}
-	lines = append(lines, lipgloss.NewStyle().Bold(true).Render("Help"))
+	lines = append(lines, styleHeading.Render("Help"))
 	lines = append(lines, "")
 	lines = append(lines, "Global:")
 	lines = append(lines, "  m     commands")
@@ -53,7 +53,7 @@ func renderHelpOverlay(m AppModel) string {
 	lines = append(lines, "Context:")
 	lines = append(lines, "  "+m.contextHelpLine())
 	lines = append(lines, "")
-	lines = append(lines, lipgloss.NewStyle().Faint(true).Render("esc or ? to close"))
+	lines = append(lines, styleMuted.Render("esc or ? to close"))
 
 	return panel.Render(strings.Join(lines, "\n"))
 }
@@ -142,7 +142,7 @@ func renderFooterStatusLine(m AppModel) string {
 }
 
 func renderDepEditModal(m AppModel) string {
-	box := lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).Padding(1, 2)
+	box := stylePanelBox
 	// Clamp modal height so its top border never scrolls off-screen.
 	// The global View() renders: header + breadcrumb + body + contextHelp + status,
 	// all inside a padded base style.
@@ -151,7 +151,7 @@ func renderDepEditModal(m AppModel) string {
 		return ""
 	}
 
-	header := lipgloss.NewStyle().Bold(true).Render(withIcon(iconVersions, "Change dependency version"))
+	header := styleHeading.Render(withIcon(iconVersions, "Change dependency version"))
 	if m.depEditDep.Name != "" {
 		header += "\n" + styleMuted.Render(fmt.Sprintf("%s @ %s", m.depEditDep.Name, m.depEditDep.Repository))
 	}
@@ -183,13 +183,13 @@ func renderDepEditModal(m AppModel) string {
 }
 
 func renderDepActionsModal(m AppModel) string {
-	box := lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).Padding(1, 2)
+	box := stylePanelBox
 	box = box.Height(modalMaxHeight(m))
 	if !m.depActionsOpen {
 		return ""
 	}
 	dep := m.depActionsDep
-	header := lipgloss.NewStyle().Bold(true).Render(withIcon(iconCmd, "Dependency actions"))
+	header := styleHeading.Render(withIcon(iconCmd, "Dependency actions"))
 	if strings.TrimSpace(dep.Name) != "" {
 		line := fmt.Sprintf("%s @ %s  (%s)", dep.Name, dep.Repository, dep.Version)
 		if _, label := depSourceTagAndLabel(m.depActionsSource, m.depActionsSourceOK); strings.TrimSpace(label) != "" {
@@ -205,7 +205,7 @@ func renderDepActionsModal(m AppModel) string {
 }
 
 func renderDepDetailModal(m AppModel) string {
-	box := lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).Padding(1, 2)
+	box := stylePanelBox
 	// Clamp modal height so its top border never scrolls off-screen.
 	box = box.Height(modalMaxHeight(m))
 	if !m.depDetailOpen {
@@ -223,7 +223,7 @@ func renderDepDetailModal(m AppModel) string {
 		}
 	}
 
-	header := lipgloss.NewStyle().Bold(true).Render(withIcon(iconDeps, "Dependency"))
+	header := styleHeading.Render(withIcon(iconDeps, "Dependency"))
 	if depLabel != "" {
 		header += "\n" + styleMuted.Render(depLabel)
 	}
@@ -270,7 +270,7 @@ func renderDepDetailModal(m AppModel) string {
 }
 
 func renderDepDiffModal(m AppModel) string {
-	box := lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).Padding(1, 2)
+	box := stylePanelBox
 	box = box.Height(modalMaxHeight(m))
 	if !m.depDiffOpen {
 		return ""
@@ -287,7 +287,7 @@ func renderDepDiffModal(m AppModel) string {
 		change = fmt.Sprintf("%s → %s", oldV, newV)
 	}
 
-	header := lipgloss.NewStyle().Bold(true).Render(withIcon(iconVersions, "Upgrade diff"))
+	header := styleHeading.Render(withIcon(iconVersions, "Upgrade diff"))
 	if label != "" {
 		header += "\n" + styleMuted.Render(label)
 	}
@@ -313,7 +313,7 @@ func renderDepDiffModal(m AppModel) string {
 }
 
 func renderValuesPreviewModal(m AppModel) string {
-	box := lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).Padding(1, 2)
+	box := stylePanelBox
 	// Clamp modal height so its top border never scrolls off-screen.
 	box = box.Height(modalMaxHeight(m))
 	if !m.valuesPreviewOpen {
@@ -323,7 +323,7 @@ func renderValuesPreviewModal(m AppModel) string {
 	if strings.TrimSpace(m.valuesPreviewPath) != "" {
 		label = m.valuesPreviewPath
 	}
-	header := lipgloss.NewStyle().Bold(true).Render(withIcon(iconValues, label))
+	header := styleHeading.Render(withIcon(iconValues, label))
 	body := m.valuesPreview.View()
 	footer := styleMuted.Render("esc close")
 	return box.Render(header + "\n\n" + body + "\n\n" + footer)

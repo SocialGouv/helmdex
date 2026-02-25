@@ -13,7 +13,6 @@ import (
 	"helmdex/internal/values"
 
 	"github.com/charmbracelet/bubbles/textinput"
-	"github.com/charmbracelet/lipgloss"
 	"gopkg.in/yaml.v3"
 )
 
@@ -386,7 +385,7 @@ func (m *depConfigureModel) View(width, height int) string {
 		if strings.TrimSpace(path) == "" {
 			path = "$"
 		}
-		header := lipgloss.NewStyle().Bold(true).Render(withIcon(iconSchema, "Edit")) + "\n" + styleMuted.Render(path)
+		header := styleHeading.Render(withIcon(iconSchema, "Edit")) + "\n" + styleMuted.Render(path)
 		// Schema metadata block.
 		metaLines := []string{}
 		if m.editSchema != nil {
@@ -394,7 +393,7 @@ func (m *depConfigureModel) View(width, height int) string {
 			desc := strings.TrimSpace(m.editSchema.Description)
 			typeLabel := schemaTypeLabel(m.editSchema)
 			if title != "" {
-				metaLines = append(metaLines, lipgloss.NewStyle().Bold(true).Render(title))
+				metaLines = append(metaLines, styleHeading.Render(title))
 			}
 			if typeLabel != "" {
 				metaLines = append(metaLines, styleMuted.Render("type: "+typeLabel))

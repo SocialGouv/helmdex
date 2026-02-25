@@ -67,6 +67,19 @@ const (
 
 // Shared styles.
 var (
+	// Global layout.
+	styleBase = lipgloss.NewStyle().Padding(1, 1)
+	// Headings (panel headers, section titles).
+	styleHeading = lipgloss.NewStyle().Bold(true)
+	// Common bordered panels/modals.
+	stylePanelBox = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).Padding(1, 2)
+	// Tabs.
+	styleTabActive   = lipgloss.NewStyle().Bold(true).Underline(true)
+	styleTabInactive = lipgloss.NewStyle().Faint(true)
+	// Decorative ASCII art.
+	styleLogoArt    = lipgloss.NewStyle().Foreground(colSep).Faint(true)
+	styleLogoAccent = lipgloss.NewStyle().Foreground(colInfo).Bold(true)
+
 	styleMuted     = lipgloss.NewStyle().Faint(true)
 	styleErrStrong = lipgloss.NewStyle().Foreground(colErr).Bold(true)
 	styleInfo      = lipgloss.NewStyle().Foreground(colInfo)

@@ -3620,11 +3620,11 @@ func (m AppModel) isAnyFilterActive() bool {
 }
 
 func (m AppModel) View() string {
-	base := lipgloss.NewStyle().Padding(1, 1)
+	base := styleBase
 
-	header := lipgloss.NewStyle().Bold(true).Render("helmdex")
+	header := styleHeading.Render("helmdex")
 	if m.params.RepoRoot != "" {
-		header += "  " + lipgloss.NewStyle().Faint(true).Render(m.params.RepoRoot)
+		header += "  " + styleMuted.Render(m.params.RepoRoot)
 	}
 
 	// Persistent navigation context (instance breadcrumbs) under the header.
@@ -3665,7 +3665,7 @@ func (m AppModel) View() string {
 		body = m.currentBodyView()
 	}
 
-	contextHelp := lipgloss.NewStyle().Faint(true).Render(m.contextHelpLine())
+	contextHelp := styleMuted.Render(m.contextHelpLine())
 	status := renderFooterStatusLine(m)
 
 	return base.Render(strings.TrimRight(header+"\n"+breadcrumb+"\n\n"+body+"\n\n"+contextHelp+"\n"+status, "\n"))
@@ -3675,9 +3675,17 @@ func (m AppModel) currentBodyView() string {
 	switch m.screen {
 	case ScreenDashboard:
 		if m.creating {
-			return lipgloss.NewStyle().Bold(true).Render("New instance") + "\n\n" + m.newName.View() + "\n\n(enter to create, esc to cancel)"
+			return styleHeading.Render("New instance") + "\n\n" + m.newName.View() + "\n\n(enter to create, esc to cancel)"
 		}
-		return m.instList.View()
+		body := m.instList.View()
+		if shouldShowDashboardLogo(m) {
+			w := m.instList.Width()
+			if w <= 0 {
+				w = max(0, m.width-2)
+			}
+			body = overlayDashboardLogoOnView(body, w)
+		}
+		return body
 	case ScreenInstance:
 		if m.addingDep {
 			return renderAddDepView(m)
@@ -3692,7 +3700,7 @@ func (m AppModel) currentBodyView() string {
 		}
 		if m.activeTab == InstanceTabInstance {
 			lines := []string{}
-			lines = append(lines, lipgloss.NewStyle().Bold(true).Render(withIcon(iconSettings, "Instance")))
+			lines = append(lines, styleHeading.Render(withIcon(iconSettings, "Instance")))
 			if m.selected != nil {
 				lines = append(lines, styleMuted.Render("Name: "+m.selected.Name))
 				lines = append(lines, styleMuted.Render("Path: "+m.selected.Path))
@@ -3708,24 +3716,22 @@ func (m AppModel) currentBodyView() string {
 }
 
 func renderTabs(names []string, active int) string {
-	activeStyle := lipgloss.NewStyle().Bold(true).Underline(true)
-	inactiveStyle := lipgloss.NewStyle().Faint(true)
 	parts := make([]string, 0, len(names))
 	for i, n := range names {
 		if i == active {
-			parts = append(parts, activeStyle.Render(n))
+			parts = append(parts, styleTabActive.Render(n))
 		} else {
-			parts = append(parts, inactiveStyle.Render(n))
+			parts = append(parts, styleTabInactive.Render(n))
 		}
 	}
 	return strings.Join(parts, "  ")
 }
 
 func (m AppModel) renderSourcesModal() string {
-	box := lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).Padding(1, 2)
+	box := stylePanelBox
 	box = box.Height(modalMaxHeight(m))
 	lines := []string{}
-	lines = append(lines, lipgloss.NewStyle().Bold(true).Render(withIcon(iconCmd, "Configure sources")))
+	lines = append(lines, styleHeading.Render(withIcon(iconCmd, "Configure sources")))
 	if strings.TrimSpace(m.sourcesErr) != "" {
 		lines = append(lines, styleErrStrong.Render(withIcon(iconErr, "Error:")+" "+m.sourcesErr))
 	}
@@ -3740,7 +3746,7 @@ func (m AppModel) renderSourcesModal() string {
 }
 
 func (m AppModel) renderInstanceManageModal() string {
-	box := lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).Padding(1, 2)
+	box := stylePanelBox
 	box = box.Height(modalMaxHeight(m))
 	if !m.instanceManageOpen {
 		return ""
@@ -3752,14 +3758,14 @@ func (m AppModel) renderInstanceManageModal() string {
 
 	switch m.instanceManageMode {
 	case instanceManageRename:
-		header := lipgloss.NewStyle().Bold(true).Render(withIcon(iconRename, "Rename instance"))
+		header := styleHeading.Render(withIcon(iconRename, "Rename instance"))
 		if strings.TrimSpace(instName) != "" {
 			header += "\n" + styleMuted.Render("Current: "+instName)
 		}
 		body := m.instanceManageName.View() + "\n\n" + styleMuted.Render("enter rename • esc cancel")
 		return box.Render(header + "\n\n" + body)
 	case instanceManageDelete:
-		header := lipgloss.NewStyle().Bold(true).Render(withIcon(iconTrash, "Delete instance"))
+		header := styleHeading.Render(withIcon(iconTrash, "Delete instance"))
 		if strings.TrimSpace(instName) != "" {
 			header += "\n" + styleMuted.Render(instName)
 		}
@@ -3771,10 +3777,10 @@ func (m AppModel) renderInstanceManageModal() string {
 }
 
 func (m AppModel) renderApplyOverlay() string {
-	box := lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).Padding(1, 2)
+	box := stylePanelBox
 	box = box.Height(modalMaxHeight(m))
 	lines := []string{}
-	lines = append(lines, lipgloss.NewStyle().Bold(true).Render(withIcon(iconBusy, "Applying")))
+	lines = append(lines, styleHeading.Render(withIcon(iconBusy, "Applying")))
 	if strings.TrimSpace(m.busyLabel) != "" {
 		lines = append(lines, styleMuted.Render(m.spin.View()+" "+m.busyLabel))
 	} else {
@@ -4178,7 +4184,7 @@ func (m *AppModel) refreshValuesList() {
 }
 
 func renderAddDepView(m AppModel) string {
-	header := lipgloss.NewStyle().Bold(true).Render(withIcon(iconAdd, "Add dependency"))
+	header := styleHeading.Render(withIcon(iconAdd, "Add dependency"))
 
 	if m.modalErr != "" {
 		errLine := styleErrStrong.Render(withIcon(iconErr, "Error:") + " " + m.modalErr)
@@ -4223,7 +4229,7 @@ func renderAddDepView(m AppModel) string {
 		}
 		e := m.catalogDetailEntry
 		lines := []string{}
-		lines = append(lines, lipgloss.NewStyle().Bold(true).Render(withIcon(iconCatalog, e.Entry.ID)))
+		lines = append(lines, styleHeading.Render(withIcon(iconCatalog, e.Entry.ID)))
 		lines = append(lines, styleMuted.Render(e.Entry.Chart.Repo+"/"+e.Entry.Chart.Name+"@"+e.Entry.Version))
 		if strings.TrimSpace(e.Entry.Description) != "" {
 			lines = append(lines, "")
@@ -4236,7 +4242,7 @@ func renderAddDepView(m AppModel) string {
 			if len(m.catalogSetList.Items()) == 0 {
 				lines = append(lines, styleMuted.Render("No sets found for this chart/version in the preset cache."))
 			} else {
-				lines = append(lines, lipgloss.NewStyle().Bold(true).Render("Sets:"))
+				lines = append(lines, styleHeading.Render("Sets:"))
 				lines = append(lines, m.catalogSetList.View())
 				lines = append(lines, "")
 				lines = append(lines, styleMuted.Render("space: toggle • D: toggle defaults • enter: add+apply"))
@@ -4245,10 +4251,10 @@ func renderAddDepView(m AppModel) string {
 		return header + "\n\n" + strings.Join(lines, "\n")
 	case depStepCatalogCollision:
 		lines := []string{}
-		lines = append(lines, lipgloss.NewStyle().Bold(true).Render(withIcon(iconErr, "Dependency already exists")))
+		lines = append(lines, styleHeading.Render(withIcon(iconErr, "Dependency already exists")))
 		lines = append(lines, styleMuted.Render(fmt.Sprintf("A dependency named %q already exists in this instance.", m.catalogCollisionDep.Name)))
 		lines = append(lines, "")
-		lines = append(lines, lipgloss.NewStyle().Bold(true).Render("Choose:"))
+		lines = append(lines, styleHeading.Render("Choose:"))
 		aliasLine := "( ) Alias (recommended)"
 		overrideLine := "( ) Override existing"
 		cancelLine := "( ) Cancel"
@@ -4881,7 +4887,7 @@ func (m AppModel) renderDepDetailBody() string {
 		return m.depConfigure.View(m.depDetailPreview.Width, m.depDetailPreview.Height)
 	case depDetailTabDependency:
 		lines := []string{}
-		lines = append(lines, lipgloss.NewStyle().Bold(true).Render(withIcon(iconDeps, "Settings")))
+		lines = append(lines, styleHeading.Render(withIcon(iconDeps, "Settings")))
 		lines = append(lines, "")
 		lines = append(lines, styleMuted.Render("Alias (changes depID)"))
 		lines = append(lines, m.depDetailAliasInput.View())
@@ -4917,7 +4923,7 @@ func (m AppModel) renderDepDetailBody() string {
 			return styleMuted.Render("No preset sets found for this dependency/version in the preset cache.")
 		}
 		lines := []string{}
-		lines = append(lines, lipgloss.NewStyle().Bold(true).Render("Sets:"))
+		lines = append(lines, styleHeading.Render("Sets:"))
 		lines = append(lines, m.depDetailSets.View())
 		lines = append(lines, "")
 		lines = append(lines, styleMuted.Render("space: toggle • s: save+apply • esc: close"))
