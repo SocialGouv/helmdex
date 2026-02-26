@@ -188,28 +188,6 @@ func renderDepEditModal(m AppModel) string {
 	return box.Render(header + "\n\n" + body)
 }
 
-func renderDepActionsModal(m AppModel) string {
-	box := stylePanelBox
-	box = box.Height(modalMaxHeight(m))
-	if !m.depActionsOpen {
-		return ""
-	}
-	dep := m.depActionsDep
-	header := styleHeading.Render(withIcon(iconCmd, "Dependency actions"))
-	if strings.TrimSpace(dep.Name) != "" {
-		line := fmt.Sprintf("%s @ %s  (%s)", dep.Name, dep.Repository, dep.Version)
-		if _, label := depSourceTagAndLabel(m.depActionsSource, m.depActionsSourceOK); strings.TrimSpace(label) != "" {
-			line += "  •  " + label
-		}
-		header += "\n" + styleMuted.Render(line)
-	}
-	if m.modalErr != "" {
-		header += "\n" + styleErrStrong.Render(withIcon(iconErr, "Error:")+" "+m.modalErr)
-	}
-	body := m.depActionsList.View() + "\n" + styleMuted.Render("enter run • esc close")
-	return box.Render(header + "\n\n" + body)
-}
-
 func renderDepDetailModal(m AppModel) string {
 	box := stylePanelBox
 	// Clamp modal height so its top border never scrolls off-screen.

@@ -1,9 +1,10 @@
 package cli
 
 import (
-	"path/filepath"
 	"os"
+	"path/filepath"
 
+	"helmdex/internal/appinfo"
 	"helmdex/internal/config"
 	"helmdex/internal/repo"
 	"helmdex/internal/tui"
@@ -21,8 +22,8 @@ func NewRootCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "helmdex",
-		Short: "helmdex scaffolds and maintains GitOps-friendly Helm umbrella chart instances",
-		Long: "helmdex is a TUI-first organizer for Helm umbrella chart instances (no template rendering, no deploy).",
+		Short: appinfo.Short,
+		Long:  appinfo.Long,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			repoRoot, err := repo.ResolveRoot(f.RepoRoot)
 			if err != nil {

@@ -8,7 +8,8 @@ import (
 
 func TestCtrlCWorksWhileHelpOverlayOpen(t *testing.T) {
 	m := NewAppModel(Params{RepoRoot: "."})
-	m.helpOpen = true
+	m.infoOpen = true
+	m.infoTab = 0
 
 	// First Ctrl+C should arm.
 	nm, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlC})

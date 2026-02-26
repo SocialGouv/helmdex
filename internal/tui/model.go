@@ -40,7 +40,8 @@ type AppModel struct {
 	insts    []instances.Instance
 
 	// overlays
-	helpOpen bool
+	infoOpen bool
+	infoTab  int
 
 	paletteOpen bool
 	palette     paletteModel
@@ -155,13 +156,6 @@ type AppModel struct {
 	depEditVersions     list.Model
 	depEditVersionsData []string
 	depEditVersionInput textinput.Model
-
-	// dependency actions menu (Deps tab)
-	depActionsOpen bool
-	depActionsDep  yamlchart.Dependency
-	depActionsSource   depSourceMeta
-	depActionsSourceOK bool
-	depActionsList list.Model
 
 	// dependency detail modal (Deps tab)
 	depDetailOpen     bool
@@ -406,12 +400,11 @@ func (m *AppModel) setStatusOK(msg string) {
 
 func (m AppModel) noModalOpen() bool {
 	// Keep this conservative: any overlay/modal-like state counts as a modal.
-	return !m.helpOpen &&
+	return !m.infoOpen &&
 		!m.paletteOpen &&
 		!m.sourcesOpen &&
 		!m.confirmOpen &&
 		!m.instanceManageOpen &&
-		!m.depActionsOpen &&
 		!m.depDiffOpen &&
 		!m.depDetailOpen &&
 		!m.depEditOpen &&
@@ -593,20 +586,6 @@ const (
 	actionNewInstance          = "New instance"
 	actionReloadInstances      = "Reload"
 	actionForceRefreshAHDetail = "Force refresh chart detail"
-)
-
-type depActionItem string
-
-func (a depActionItem) Title() string       { return string(a) }
-func (a depActionItem) Description() string { return "" }
-func (a depActionItem) FilterValue() string { return string(a) }
-
-const (
-	depActionSyncPresets  depActionItem = "Sync presets"
-	depActionDetachCatalog depActionItem = "Detach from catalog"
-	depActionChangeVer    depActionItem = "Change version"
-	depActionUpgrade      depActionItem = "Upgrade to latest"
-	depActionRemove       depActionItem = "Remove"
 )
 
 type depDetachedMsg struct {
@@ -794,11 +773,6 @@ func NewAppModel(p Params) AppModel {
 	depVers.SetFilteringEnabled(true)
 	depVers.SetShowHelp(false)
 
-	depActions := list.New([]list.Item{}, list.NewDefaultDelegate(), 0, 0)
-	depActions.Title = withIcon(iconCmd, "Dependency actions")
-	depActions.SetShowHelp(false)
-	depActions.SetFilteringEnabled(false)
-
 	newName := textinput.New()
 	newName.Placeholder = "instance name"
 	newName.Prompt = "> "
@@ -892,7 +866,6 @@ func NewAppModel(p Params) AppModel {
 		ahResults:             ahRes,
 		ahVersions:            ahVers,
 		depEditVersions:       depVers,
-		depActionsList:        depActions,
 		depEditVersionInput:   depVerInput,
 		ahDetailTabNames:      ahDetailTabNames,
 		ahPreview:             ahvp,
@@ -1123,104 +1096,8 @@ type ahVersionsMsg struct{ versions []artifacthub.Version }
 
 type ahDetailMsg struct{ readme, values string }
 
-func (m AppModel) openDepActionsSelected() (tea.Model, tea.Cmd) {
-	it := m.depsList.SelectedItem()
-	if it == nil {
-		return m, nil
-	}
-	di, ok := it.(depItem)
-	if !ok {
-		return m, func() tea.Msg { return errMsg{fmt.Errorf("unexpected dependency item type")} }
-	}
-	dep := di.Dep
-	// Load dep source metadata for display.
-	if m.selected != nil {
-		if meta, ok := readDepSourceMeta(m.params.RepoRoot, m.selected.Name, yamlchart.DependencyID(dep)); ok {
-			m.depActionsSource = meta
-			m.depActionsSourceOK = true
-		} else {
-			m.depActionsSource = depSourceMeta{}
-			m.depActionsSourceOK = false
-		}
-	}
-
-	m.depActionsOpen = true
-	m.depActionsDep = dep
-	m.modalErr = ""
-	// Ensure the list has a usable size even if we haven't received a
-	// tea.WindowSizeMsg yet.
-	if m.width > 0 && m.height > 0 {
-		m.depActionsList.SetSize(max(10, m.width-6), max(5, m.height-12))
-	}
-	m.depActionsList.SetItems([]list.Item{
-		depActionItem(depActionSyncPresets),
-		// Detach action is conditionally inserted below.
-		depActionItem(depActionChangeVer),
-		depActionItem(depActionUpgrade),
-		depActionItem(depActionRemove),
-	})
-	if m.depActionsSourceOK && m.depActionsSource.Kind == depSourceCatalog {
-		items := m.depActionsList.Items()
-		out := make([]list.Item, 0, len(items)+1)
-		for _, it := range items {
-			if it == depActionItem(depActionChangeVer) {
-				out = append(out, depActionItem(depActionDetachCatalog))
-			}
-			out = append(out, it)
-		}
-		m.depActionsList.SetItems(out)
-	}
-	m.depActionsList.Select(0)
-	return m, nil
-}
-
-func (m AppModel) depActionsUpdate(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	// Close.
-	if msg.Type == tea.KeyEsc {
-		m.depActionsOpen = false
-		m.depActionsDep = yamlchart.Dependency{}
-		m.modalErr = ""
-		return m, nil
-	}
-
-	// Global detach shortcut (works on any tab, including Versions).
-	if (msg.String() == "D") && m.depDetailSourceOK && m.depDetailSource.Kind == depSourceCatalog {
-		return m, tea.Batch(m.beginBusy("Detaching"), m.detachDepFromCatalogCmd(m.depDetailDep))
-	}
-
-	var cmd tea.Cmd
-	m.depActionsList, cmd = m.depActionsList.Update(msg)
-	if msg.Type != tea.KeyEnter {
-		return m, cmd
-	}
-	it := m.depActionsList.SelectedItem()
-	if it == nil {
-		return m, cmd
-	}
-	ai, ok := it.(depActionItem)
-	if !ok {
-		return m, func() tea.Msg { return errMsg{fmt.Errorf("unexpected dep action item type")} }
-	}
-
-		// Close menu before launching the chosen action.
-		m.depActionsOpen = false
-
-		switch ai {
-		case depActionItem(depActionRemove):
-			m.openConfirmDeleteDependency(m.depActionsDep)
-			return m, nil
-		case depActionItem(depActionUpgrade):
-			return m.upgradeSelectedDepCmd()
-		case depActionItem(depActionChangeVer):
-			return m.openDepEditSelected()
-		case depActionItem(depActionSyncPresets):
-			return m, tea.Batch(m.beginBusy("Syncing"), m.syncSelectedDepPresetsCmd())
-		case depActionItem(depActionDetachCatalog):
-			return m, tea.Batch(m.beginBusy("Detaching"), m.detachDepFromCatalogCmd(m.depActionsDep))
-		default:
-			return m, cmd
-		}
-	}
+// Dep actions modal removed; actions are exposed via direct shortcuts and
+// contextual command palette entries.
 
 func (m AppModel) loadCatalogSetsCmd(e catalog.EntryWithSource) tea.Cmd {
 	return func() tea.Msg {
@@ -1561,15 +1438,14 @@ func (m AppModel) applyDepDetailSetsCmd() tea.Cmd {
 	}
 }
 
-func (m AppModel) syncSelectedDepPresetsCmd() tea.Cmd {
+func (m AppModel) syncSelectedDepPresetsCmd(dep yamlchart.Dependency) tea.Cmd {
 	return func() tea.Msg {
 		if m.selected == nil {
-			return depPresetsSyncDoneMsg{dep: m.depActionsDep, err: fmt.Errorf("no instance selected")}
+			return depPresetsSyncDoneMsg{dep: dep, err: fmt.Errorf("no instance selected")}
 		}
 		if m.params.Config == nil {
-			return depPresetsSyncDoneMsg{dep: m.depActionsDep, err: fmt.Errorf("no config loaded")}
+			return depPresetsSyncDoneMsg{dep: dep, err: fmt.Errorf("no config loaded")}
 		}
-		dep := m.depActionsDep
 		depID := yamlchart.DependencyID(dep)
 
 		// Sync only sources that have presets enabled. (We can't reliably map a dep
@@ -2340,13 +2216,22 @@ func (m AppModel) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.statusOK = ""
 	}
 
-	// Help overlay has highest priority.
-	if km, ok := msg.(tea.KeyMsg); ok && m.helpOpen {
+	// Info overlay (Help/About tabs) consumes most input.
+	if km, ok := msg.(tea.KeyMsg); ok && m.infoOpen {
+		// Close.
 		if km.Type == tea.KeyEsc || key.Matches(km, m.keys.Help) {
-			m.helpOpen = false
+			m.infoOpen = false
 			return m, nil
 		}
-		// Consume all input while help is open.
+		// Switch tabs.
+		if key.Matches(km, m.keys.TabLeft) {
+			m.infoTab = (m.infoTab - 1 + 2) % 2
+			return m, nil
+		}
+		if key.Matches(km, m.keys.TabRight) {
+			m.infoTab = (m.infoTab + 1) % 2
+			return m, nil
+		}
 		return m, nil
 	}
 
@@ -2391,7 +2276,6 @@ func (m AppModel) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.ahResults.SetSize(msg.Width-2, msg.Height-7)
 		m.ahVersions.SetSize(msg.Width-2, msg.Height-7)
 		m.depEditVersions.SetSize(max(10, msg.Width-6), max(5, msg.Height-12))
-		m.depActionsList.SetSize(max(10, msg.Width-6), max(5, msg.Height-12))
 		m.palette.SetSize(min(70, msg.Width-4), min(14, msg.Height-6))
 		m.depDetailPreview.Width = max(10, msg.Width-6)
 		// Dep detail is rendered as a full-body modal, but the overall app View()
@@ -3048,10 +2932,6 @@ func (m AppModel) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.depDetailOpen {
 			return m.depDetailUpdate(msg)
 		}
-		// Dep actions menu modal has priority over other input.
-		if m.depActionsOpen {
-			return m.depActionsUpdate(msg)
-		}
 		// Dep version editor modal has priority over global shortcuts.
 		if m.depEditOpen {
 			return m.depEditUpdate(msg)
@@ -3172,10 +3052,6 @@ func (m AppModel) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		// Deps tab actions.
 		if m.screen == ScreenInstance && !m.addingDep && m.activeTab == InstanceTabDeps {
-			// Actions menu.
-			if msg.String() == "x" || msg.String() == "X" {
-				return m.openDepActionsSelected()
-			}
 			// Delete dependency.
 			if msg.String() == "d" || msg.String() == "D" {
 				it := m.depsList.SelectedItem()
@@ -3204,7 +3080,8 @@ func (m AppModel) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		if key.Matches(msg, m.keys.Help) {
-			m.helpOpen = true
+			m.infoOpen = true
+			m.infoTab = 0
 			return m, nil
 		}
 		if key.Matches(msg, m.keys.NewInstance) {
@@ -3643,6 +3520,21 @@ func (m AppModel) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 	// Delegate to focused widget.
 	if m.screen == ScreenDashboard {
+		// Dashboard: delete highlighted instance.
+		if km, ok := msg.(tea.KeyMsg); ok {
+			if km.String() == "d" || km.String() == "D" {
+				it := m.instList.SelectedItem()
+				if it == nil {
+					return m, nil
+				}
+				if ii, ok := it.(instanceItem); ok {
+					inst := instances.Instance(ii)
+					m.selected = &inst
+					m.openConfirmDeleteInstance()
+					return m, nil
+				}
+			}
+		}
 		var cmd tea.Cmd
 		m.instList, cmd = m.instList.Update(msg)
 		return m, cmd
@@ -3700,6 +3592,29 @@ func (m AppModel) paletteUpdate(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				case palQuit:
 					m.skipWindowTitleOnce = true
 					return m, tea.Quit
+				case palAbout:
+					m.paletteOpen = false
+					m.infoOpen = true
+					m.infoTab = 1 // About
+					return m, nil
+				case palDepSyncPresets:
+					m.paletteOpen = false
+					if m.screen == ScreenInstance && !m.addingDep && m.activeTab == InstanceTabDeps {
+						it := m.depsList.SelectedItem()
+						if di, ok := it.(depItem); ok {
+							return m, tea.Batch(m.beginBusy("Syncing"), m.syncSelectedDepPresetsCmd(di.Dep))
+						}
+					}
+					return m, nil
+				case palDepDetachCatalog:
+					m.paletteOpen = false
+					if m.screen == ScreenInstance && !m.addingDep && m.activeTab == InstanceTabDeps {
+						it := m.depsList.SelectedItem()
+						if di, ok := it.(depItem); ok {
+							return m, tea.Batch(m.beginBusy("Detaching"), m.detachDepFromCatalogCmd(di.Dep))
+						}
+					}
+					return m, nil
 			case palReload:
 				m.paletteOpen = false
 				return m, tea.Batch(m.beginBusy("Reloading"), m.reloadInstancesCmd())
@@ -3871,9 +3786,9 @@ func (m AppModel) View() string {
 	breadcrumb := renderBreadcrumbBar(m)
 
 	var body string
-	if m.helpOpen {
-		// Help fully replaces the body.
-		body = renderHelpOverlay(m)
+	if m.infoOpen {
+		// Info (Help/About) fully replaces the body.
+		body = renderInfoOverlay(m)
 	} else if m.paletteOpen {
 		// Palette is a full-body modal so it can't be pushed off-screen by the body.
 		body = m.palette.View()
@@ -3884,9 +3799,6 @@ func (m AppModel) View() string {
 		body = renderConfirmModal(m)
 	} else if m.instanceManageOpen {
 		body = m.renderInstanceManageModal()
-	} else if m.depActionsOpen {
-		// Dep actions is a full-body modal.
-		body = renderDepActionsModal(m)
 	} else if m.depDiffOpen {
 		// Dep diff modal is a full-body modal.
 		body = renderDepDiffModal(m)
@@ -4044,8 +3956,8 @@ func shortHelp(k keyMap) string {
 }
 
 func (m AppModel) contextHelpLine() string {
-	if m.helpOpen {
-		return "esc/? close help"
+	if m.infoOpen {
+		return "←/→ tabs • esc/? close"
 	}
 	if m.paletteOpen {
 		return "type to search • ↑/↓ select • enter run • esc close"
@@ -4069,7 +3981,7 @@ func (m AppModel) contextHelpLine() string {
 		return "esc cancel"
 	}
 	if m.screen == ScreenDashboard {
-		return "/ filter • enter open • n new • m commands • q quit"
+		return "/ filter • enter open • n new • d delete • ? help/about • m commands • q quit"
 	}
 	if m.screen == ScreenInstance {
 		if m.addingDep {
@@ -4147,11 +4059,8 @@ func (m AppModel) contextHelpLine() string {
 			return "←/→ tabs • esc close"
 		}
 	}
-	if m.depActionsOpen {
-		return "esc close • ↑/↓ select • enter run"
-	}
 	if m.activeTab == InstanceTabDeps {
-		return "←/→ tabs • x actions • d remove • v version • u upgrade • a add dep • m commands • esc back • q quit"
+		return "←/→ tabs • d remove • v version • u upgrade • a add dep • m commands • esc back • q quit"
 	}
 	if m.activeTab == InstanceTabInstance {
 		return "←/→ tabs • r rename • d delete • esc back • q quit"

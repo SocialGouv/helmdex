@@ -14,6 +14,8 @@ import (
 func TestShouldShowDashboardLogo_SizeThreshold(t *testing.T) {
 	m := NewAppModel(Params{RepoRoot: "."})
 	m.screen = ScreenDashboard
+	// Must be empty to show logo.
+	m.insts = nil
 	// noModalOpen() should be true by default
 
 	// Too small.
@@ -40,6 +42,7 @@ func TestShouldShowDashboardLogo_DisabledByEnv(t *testing.T) {
 
 	m := NewAppModel(Params{RepoRoot: "."})
 	m.screen = ScreenDashboard
+	m.insts = nil
 	m.width, m.height = 120, 40
 
 	if shouldShowDashboardLogo(m) {
@@ -50,6 +53,8 @@ func TestShouldShowDashboardLogo_DisabledByEnv(t *testing.T) {
 func TestShouldShowDashboardLogo_HidesWhenFiltering(t *testing.T) {
 	m := NewAppModel(Params{RepoRoot: "."})
 	m.screen = ScreenDashboard
+	// Make sure the logo would otherwise be eligible.
+	m.insts = nil
 	m.width, m.height = 120, 40
 
 	// Ensure list has items + size so it can enter filtering.
@@ -65,6 +70,17 @@ func TestShouldShowDashboardLogo_HidesWhenFiltering(t *testing.T) {
 	}
 	if shouldShowDashboardLogo(mm) {
 		t.Fatalf("expected logo hidden while filtering")
+	}
+}
+
+func TestShouldShowDashboardLogo_HidesWhenInstancesExist(t *testing.T) {
+	m := NewAppModel(Params{RepoRoot: "."})
+	m.screen = ScreenDashboard
+	m.width, m.height = 120, 40
+	m.insts = []instances.Instance{{Name: "x", Path: "apps/x"}}
+
+	if shouldShowDashboardLogo(m) {
+		t.Fatalf("expected logo hidden when instances exist")
 	}
 }
 

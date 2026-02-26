@@ -47,6 +47,8 @@ const (
 	iconFilter = "🔎"
 	iconBusy   = "⏳"
 	iconErr    = "✖"
+	iconInfo   = "ℹ"
+	iconHelp   = "?"
 )
 
 // Color palette (ANSI 256).

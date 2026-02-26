@@ -15,6 +15,9 @@ const (
 	palReload       paletteCmdID = "reload"
 	palSources      paletteCmdID = "sources"
 	palCatalogSync  paletteCmdID = "catalog-sync"
+	palAbout        paletteCmdID = "about"
+	palDepSyncPresets paletteCmdID = "dep-sync-presets"
+	palDepDetachCatalog paletteCmdID = "dep-detach-catalog"
 	palQuit         paletteCmdID = "quit"
 	palBack         paletteCmdID = "back"
 	palAddDep       paletteCmdID = "add-dep"
@@ -116,7 +119,19 @@ func paletteItemsFor(m AppModel) []paletteItem {
 		paletteItem{ID: palNewInstance, Icon: iconAdd, Name: "New instance", Desc: "Create a new instance"},
 		paletteItem{ID: palSources, Icon: iconCmd, Name: "Configure sources", Desc: "Edit helmdex.yaml sources (catalog/presets)"},
 		paletteItem{ID: palCatalogSync, Icon: iconReload, Name: "Catalog sync", Desc: "Sync remote sources into .helmdex and refresh catalog"},
+		paletteItem{ID: palAbout, Icon: iconInfo, Name: "About", Desc: "Show version and project info"},
 	)
+
+	// Dependency context actions (only meaningful when an instance is open on Deps tab).
+	if m.screen == ScreenInstance && !m.addingDep && m.activeTab == InstanceTabDeps {
+		items = append(items,
+			paletteItem{ID: palDepSyncPresets, Icon: iconReload, Name: "Sync presets (selected dep)", Desc: "Sync preset cache and regenerate values"},
+		)
+		// Detach only makes sense for catalog-attached deps; enable opportunistically.
+		items = append(items,
+			paletteItem{ID: palDepDetachCatalog, Icon: iconBack, Name: "Detach from catalog (selected dep)", Desc: "Allow any version (switch to arbitrary source)"},
+		)
+	}
 
 	if m.screen == ScreenInstance {
 		items = append(items,

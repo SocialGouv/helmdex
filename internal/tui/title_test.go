@@ -37,9 +37,9 @@ func TestBuildWindowTitle(t *testing.T) {
 			name: "help wins over wizard",
 			m: func() AppModel {
 				inst := instances.Instance{Name: "my-app"}
-				return AppModel{screen: ScreenInstance, selected: &inst, addingDep: true, depStep: depStepAHQuery, helpOpen: true}
+				return AppModel{screen: ScreenInstance, selected: &inst, addingDep: true, depStep: depStepAHQuery, infoOpen: true, infoTab: 0}
 			}(),
-			want: "🧭 HelmDex — Dashboard › Instance › my-app › Help",
+			want: "🧭 HelmDex — Dashboard › Instance › my-app › Help / About",
 		},
 		{
 			name: "apply wins over other overlays",

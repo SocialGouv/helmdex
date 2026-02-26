@@ -44,6 +44,13 @@ func shouldShowDashboardLogo(m AppModel) bool {
 	if !dashboardLogoEnabled() {
 		return false
 	}
+	// Only when the dashboard list is truly empty (no instances in the repo).
+	//
+	// Important: do NOT show the logo when a filter yields 0 visible results; the
+	// logo is decorative and would compete with the list's "no matches" UX.
+	if len(m.insts) != 0 {
+		return false
+	}
 	// Only on dashboard, only when no overlay/modal is open.
 	if m.screen != ScreenDashboard || !m.noModalOpen() {
 		return false

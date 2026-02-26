@@ -77,8 +77,8 @@ func (m AppModel) withWindowTitle(cmd tea.Cmd) (tea.Model, tea.Cmd) {
 
 func currentTaskCrumb(m AppModel) string {
 	// Overlays/modals (highest priority first).
-	if m.helpOpen {
-		return "Help"
+	if m.infoOpen {
+		return "Help / About"
 	}
 	if m.applyOpen {
 		return "Applying"
@@ -91,9 +91,6 @@ func currentTaskCrumb(m AppModel) string {
 	}
 	if m.confirmOpen {
 		return "Confirm"
-	}
-	if m.depActionsOpen {
-		return "Dependency actions"
 	}
 	if m.depEditOpen {
 		return "Change dependency version"
