@@ -405,12 +405,24 @@ README previews (Artifact Hub detail, dependency detail "README") are rendered a
 
 ## Development
 
+### Prerequisites
+
+- **direnv** (recommended) — automatically loads the repo environment.
+  - Install: https://direnv.net/docs/installation.html
+  - After install (once):
+    - `direnv allow`
+- **devbox** — provides a reproducible toolchain (Go, Node, pnpm, task, etc.).
+  - Install: https://www.jetify.com/devbox/docs/installing_devbox/
+  - Note: devbox uses **Nix** under the hood; the devbox installer will guide you.
+
+### Commands
+
 ```bash
 devbox run -- go build ./...
 devbox run -- go test ./...
 devbox run -- pnpm install
-devbox run -- pnpm run build:helmdex
-devbox run -- pnpm run test:tui
+devbox run -- task build
+devbox run -- task test-tui
 ```
 
 E2E tests live in `tests/`. The fixture at `fixtures/remote-source/` is a self-contained example catalog + presets source used by tests and local development.

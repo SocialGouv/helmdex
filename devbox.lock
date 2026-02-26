@@ -9,8 +9,16 @@
       "last_modified": "2026-02-16T02:09:13Z",
       "resolved": "github:NixOS/nixpkgs/d1c15b7d5806069da59e819999d70e1cec0760bf?lastModified=1771207753&narHash=sha256-b9uG8yN50DRQ6A7JdZBfzq718ryYrlmGgqkRm9OOwCE%3D"
     },
+    "go-task": {
+      "resolved": "github:NixOS/nixpkgs/d1c15b7d5806069da59e819999d70e1cec0760bf?narHash=sha256-b9uG8yN50DRQ6A7JdZBfzq718ryYrlmGgqkRm9OOwCE%3D#go-task",
+      "source": "nixpkg"
+    },
     "go_1_24": {
       "resolved": "github:NixOS/nixpkgs/d1c15b7d5806069da59e819999d70e1cec0760bf?narHash=sha256-b9uG8yN50DRQ6A7JdZBfzq718ryYrlmGgqkRm9OOwCE%3D#go_1_24",
+      "source": "nixpkg"
+    },
+    "golangci-lint": {
+      "resolved": "github:NixOS/nixpkgs/d1c15b7d5806069da59e819999d70e1cec0760bf?narHash=sha256-b9uG8yN50DRQ6A7JdZBfzq718ryYrlmGgqkRm9OOwCE%3D#golangci-lint",
       "source": "nixpkg"
     },
     "nodejs_20": {

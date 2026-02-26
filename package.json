@@ -6,8 +6,7 @@
     "test:tui": "vitest run --config tests/tui/vitest.config.ts",
     "tui:daemon": "tsx tests/tui/scripts/daemon-start.ts",
     "tui:stop": "tsx tests/tui/scripts/daemon-stop.ts",
-    "tui:run": "tsx tests/tui/scripts/app-run.ts",
-    "build:helmdex": "go build -o ./bin/helmdex ./cmd/helmdex"
+    "tui:run": "tsx tests/tui/scripts/app-run.ts"
   },
   "devDependencies": {
     "agent-tui": "1.0.1",

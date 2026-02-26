@@ -1,0 +1,117 @@
+version: '3'
+
+silent: true
+
+vars:
+  BIN_DIR: bin
+  HELMDEX_BIN: '{{.BIN_DIR}}/helmdex'
+
+tasks:
+  default:
+    desc: Show available tasks
+    cmds:
+      - task: help
+
+  help:
+    desc: List tasks
+    cmds:
+      - task --list
+
+  # -----------------
+  # JavaScript / TUI
+  # -----------------
+  deps:
+    desc: Install JS dependencies (pnpm)
+    cmds:
+      - corepack pnpm install
+
+  deps:ci:
+    desc: Install JS dependencies for CI (frozen lockfile)
+    cmds:
+      - corepack pnpm install --frozen-lockfile
+
+  test-tui:
+    desc: Run TUI E2E tests (vitest)
+    deps: [deps, build]
+    cmds:
+      - corepack pnpm exec vitest run --config tests/tui/vitest.config.ts
+
+  test-tui:ci:
+    desc: Run TUI E2E tests (vitest) in CI (frozen lockfile)
+    deps: [deps:ci, build]
+    cmds:
+      - corepack pnpm exec vitest run --config tests/tui/vitest.config.ts
+
+  tui:daemon:
+    desc: Start agent-tui daemon (idempotent)
+    deps: [deps]
+    cmds:
+      - corepack pnpm exec tsx tests/tui/scripts/daemon-start.ts
+
+  tui:stop:
+    desc: Stop agent-tui daemon (idempotent)
+    deps: [deps]
+    cmds:
+      - corepack pnpm exec tsx tests/tui/scripts/daemon-stop.ts
+
+  tui:run:
+    desc: Launch helmdex under test harness (internal)
+    deps: [deps, build]
+    cmds:
+      - corepack pnpm exec tsx tests/tui/scripts/app-run.ts
+
+  # -----
+  # Go
+  # -----
+  build:
+    desc: Build helmdex binary into ./bin
+    sources:
+      - ./go.mod
+      - ./go.sum
+      - ./cmd/**/*.go
+      - ./internal/**/*.go
+    generates:
+      - '{{.HELMDEX_BIN}}'
+    cmds:
+      - mkdir -p '{{.BIN_DIR}}'
+      - go build -o '{{.HELMDEX_BIN}}' ./cmd/helmdex
+
+  test:
+    desc: Run Go unit tests
+    cmds:
+      - go test ./...
+
+  fmt:
+    desc: Format Go code (gofmt)
+    cmds:
+      - |
+        bash -ceu '
+          files=$(git ls-files "*.go" || true)
+          if [ -z "${files}" ]; then
+            echo "no go files found" >&2
+            exit 0
+          fi
+          gofmt -w ${files}
+        '
+
+  vet:
+    desc: Run go vet
+    cmds:
+      - go vet ./...
+
+  lint:
+    desc: Run golangci-lint
+    cmds:
+      - golangci-lint version
+      - golangci-lint run
+
+  clean:
+    desc: Remove build artifacts
+    cmds:
+      - rm -rf '{{.BIN_DIR}}'
+
+  ci:
+    desc: CI pipeline (matches GitHub Actions)
+    cmds:
+      - task: test
+      - task: test-tui:ci

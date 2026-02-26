@@ -12,4 +12,7 @@
 
 node_modules
 
+# go-task cache
+.task/
+
 /bin

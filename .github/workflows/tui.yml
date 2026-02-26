@@ -24,13 +24,13 @@ jobs:
           key: devbox-${{ runner.os }}-${{ hashFiles('devbox.json', 'devbox.lock') }}
 
       - name: Install JS deps
-        run: devbox run -- corepack pnpm install
+        run: devbox run -- task deps:ci
 
       - name: Build helmdex
-        run: devbox run -- corepack pnpm run build:helmdex
+        run: devbox run -- task build
 
       - name: Run TUI tests
-        run: devbox run -- corepack pnpm run test:tui
+        run: devbox run -- task test-tui:ci
 
       - name: Upload artifacts (on failure)
         if: failure()
@@ -38,4 +38,3 @@ jobs:
         with:
           name: tui-artifacts
           path: tests/tui/artifacts
-

@@ -8,18 +8,18 @@ This repo uses **devbox** to provide a consistent Node + pnpm toolchain.
 
 ```bash
 devbox shell
-corepack pnpm install
-corepack pnpm run build:helmdex
-corepack pnpm test:tui
+task deps
+task build
+task test-tui
 ```
 
 ## Commands
 
-- `corepack pnpm test:tui` — run all interactive TUI tests
-- `corepack pnpm build:helmdex` — build `./bin/helmdex` used by the harness
-- `corepack pnpm tui:daemon` — start agent-tui daemon (idempotent)
-- `corepack pnpm tui:stop` — stop agent-tui daemon (idempotent)
-- `corepack pnpm tui:run` — launch helmdex under test (used internally by tests)
+- `task test-tui` — run all interactive TUI tests
+- `task build` — build `./bin/helmdex` used by the harness
+- `task tui:daemon` — start agent-tui daemon (idempotent)
+- `task tui:stop` — stop agent-tui daemon (idempotent)
+- `task tui:run` — launch helmdex under test (used internally by tests)
 
 ## Stability knobs
 
