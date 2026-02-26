@@ -1,258 +1,349 @@
-# helmdex
+<div align="center">
+  <img src="docs/logo.png" alt="HelmDex" width="200" />
 
-`helmdex` is a TUI-first organizer for Helm umbrella chart instances.
+  <h1>helmdex</h1>
+
+  <p>TUI organizer for Helm umbrella chart instances — no rendering, no deploy.</p>
+</div>
+
+---
+
+## Goals
+
+Managing multiple [umbrella chart](https://helm.sh/docs/howto/charts_tips_and_tricks/#complex-charts-with-many-dependencies) instances across environments means juggling dependency versions, layered values files, and platform-specific overrides — all while keeping everything reviewable in Git.
+
+`helmdex` handles that scaffolding: it creates instance directories, resolves and merges values layers, and lets you browse/edit everything from a TUI. It never renders templates or deploys — it is purely a **configuration management and organization layer** on top of Helm.
+
+## Key concepts
+
+| Concept | What it is |
+|---|---|
+| **Instance** | One umbrella chart project, stored in `apps/<name>/` |
+| **Dependency** | A Helm chart listed in the instance's `Chart.yaml` |
+| **Values layers** | Ordered merge: `default → platform → sets → instance` |
+| **Catalog** | Curated chart+version entries your team can add from |
+| **Presets / sets** | Versioned YAML values files bundled with catalog entries |
+| **Source** | A Git repo (or local dir) that provides a catalog and/or presets |
+
+### Values merge order
+
+```
+values.default.yaml          ← chart defaults from preset source
+values.platform.yaml         ← platform overrides (e.g. eks, gke)
+values.set.<name>.yaml       ← named configuration sets
+values.dep-set.<id>--<set>.yaml  ← per-dependency set files
+values.instance.yaml         ← your overrides  ← highest priority, hand-edited
+──────────────────────────────────────────────
+values.yaml                  ← generated merged output (committed, reviewed in PRs)
+```
+
+---
+
+## Install
+
+```bash
+go install github.com/SocialGouv/helmdex/cmd/helmdex@latest
+```
+
+## Quick start
+
+```bash
+helmdex init   # create helmdex.yaml at repo root
+helmdex        # open TUI
+```
+
+Running `helmdex` with no arguments opens the interactive dashboard when stdin is a TTY. Outside a TTY (pipe, CI) it prints help instead.
+
+---
 
 ## TUI
 
-Launch the interactive dashboard:
+### Navigation
 
-```bash
-helmdex tui
+The TUI opens on the **Dashboard** — a list of all instances. Press `enter` to open an instance.
+
+The terminal window title tracks your location:
+
+```
+🧭 HelmDex › my-app
+🧭 HelmDex › my-app › Add dep › Catalog
+🧭 HelmDex › my-app › Dependency detail
 ```
 
-The TUI updates the terminal window title to show the current breadcrumb:
+| Env var | Effect |
+|---|---|
+| `HELMDEX_NO_TITLE=1` | Disable window title updates |
+| `HELMDEX_NO_ICONS=1` | Disable emoji/icons (inconsistent width in some terminals) |
 
-`🧭 HelmDex — Dashboard › Instance › <name> › <task>`
+### Instance tabs
 
-Opt-out by setting `HELMDEX_NO_TITLE=1`.
+| Tab | What you can do |
+|---|---|
+| **Dependencies** | Add, remove, inspect, and upgrade chart dependencies |
+| **Configure** | Edit per-dependency value overrides |
+| **Values** | Browse all values layer files for this instance |
+| **Sets** | Toggle preset sets per dependency |
 
-Icons/emojis can render with inconsistent width across terminals. Opt-out by setting `HELMDEX_NO_ICONS=1`.
+### Common keys
 
-### Catalog + sets (presets)
+| Key | Action |
+|---|---|
+| `↑` / `↓` | Navigate list |
+| `enter` | Select / open |
+| `esc` / `q` | Back / quit |
+| `a` | Add dependency |
+| `x` | Dependency actions menu |
+| `s` | Save |
+| `space` | Toggle |
+| `D` | Toggle all default sets |
+| `?` | Help / about |
 
-helmdex supports a **remote catalog** (curated chart/version targets) and downloadable **sets** (YAML values files) that can be selected when adding a dependency.
+### Adding a dependency
 
-- Catalog entries are synced into `.helmdex/catalog/` by running [`helmdex catalog sync`](internal/cli/catalog.go:26)
-- Preset layers (default/platform/sets) are synced into `.helmdex/cache/` and resolved by [`presets.Resolve()`](internal/presets/resolve.go:33)
+From the **Dependencies** tab, press `a` to start the wizard:
 
-#### Pin a catalog source to a specific git ref
+- **Predefined catalog** — pick from synced catalog entries; toggle sets with `space`, `D` for all defaults, `enter` to add + apply
+- **Artifact Hub** — search charts directly from the TUI
+- **Arbitrary** — enter a repo URL, name, and version manually
 
-Each configured source supports `git.ref` to target a specific branch/tag/commit-ish during sync.
+### Working with presets on an existing dependency
 
-```yaml
-sources:
-  - name: example
-    git:
-      url: https://github.com/acme/helmdex-catalog.git
-      ref: v1.2.3
-    presets:
-      enabled: true
-    catalog:
-      enabled: true
-```
+Press `x` on a dependency to open the actions menu:
 
-#### Try the built-in example catalog in the TUI (local, no network)
+- **Dependency detail** (`enter`) → **Sets** tab — toggle sets and press `s` to save + apply
+- **Sync presets** — fetch latest preset cache, remove orphan set markers, re-import, and regenerate merged values
 
-This repo includes an example “remote source repo” fixture at [`fixtures/remote-source/`](fixtures/remote-source/README.md:1).
+---
 
-You can use it in two ways:
+## Catalog and presets
 
-1) **Filesystem source (no git):** point `sources[].git.url` directly at `fixtures/remote-source`.
-2) **Local git repo (matches real-world sync behavior):** copy it to `/tmp`, `git init`, commit, and point `sources[].git.url` at that `/tmp` path.
+A **catalog** is a curated list of chart+version entries. **Presets** are versioned YAML values files bundled with those entries. Both live in a *source* — a separate Git repo (or local directory).
 
-Note: for **filesystem sources** (local directories without a `.git` folder), `git.ref` is ignored during sync and the TUI will clear it on save to avoid confusion.
-
-1) (Option A) Use it directly as a filesystem source (no git required):
+### Configure a source (`helmdex.yaml`)
 
 ```yaml
 apiVersion: helmdex.io/v1alpha1
 kind: HelmdexConfig
+
 repo:
-  appsDir: apps
+  appsDir: apps        # where instances live (default: apps)
+
 platform:
-  name: eks
+  name: eks            # used to resolve values.platform.<name>.yaml
+
+sources:
+  - name: my-catalog
+    git:
+      url: https://github.com/acme/helmdex-catalog.git
+      ref: main        # branch, tag, or commit (optional)
+    catalog:
+      enabled: true
+      path: catalog.yaml
+    presets:
+      enabled: true
+      chartsPath: charts
+
+artifactHub:
+  enabled: true        # Artifact Hub integration (default: true)
+```
+
+### Sync sources
+
+```bash
+helmdex catalog sync
+```
+
+Downloads catalog entries into `.helmdex/catalog/` and preset files into `.helmdex/cache/`.
+
+### Try the built-in example (no network)
+
+This repo ships a self-contained fixture at [`fixtures/remote-source/`](fixtures/remote-source/README.md).
+
+**Option A — filesystem source:**
+
+```yaml
 sources:
   - name: example
     git:
       url: fixtures/remote-source
-    presets:
-      enabled: true
-      chartsPath: charts
     catalog:
       enabled: true
       path: catalog.yaml
+    presets:
+      enabled: true
+      chartsPath: charts
 ```
 
-2) (Option B) Create a local git repo from the fixture:
+**Option B — local git repo (mirrors real-world sync behavior):**
 
 ```bash
-rm -rf /tmp/helmdex-example-remote-source
 cp -a fixtures/remote-source /tmp/helmdex-example-remote-source
 cd /tmp/helmdex-example-remote-source
-
-git init
-git config user.email e2e@example.invalid
-git config user.name helmdex-example
-
-git add -A
-git commit -m 'example catalog + presets'
+git init && git config user.email e2e@example.invalid && git config user.name helmdex-example
+git add -A && git commit -m 'example catalog + presets'
 ```
 
-2) In your helmdex repo (the one containing `apps/<instance>/`), add this source to `helmdex.yaml`:
-
-```yaml
-apiVersion: helmdex.io/v1alpha1
-kind: HelmdexConfig
-repo:
-  appsDir: apps
-platform:
-  name: eks
-sources:
-  - name: example
-    git:
-      url: /tmp/helmdex-example-remote-source
-    presets:
-      enabled: true
-      chartsPath: charts
-    catalog:
-      enabled: true
-      path: catalog.yaml
-```
-
-3) Sync + launch:
+Point `git.url` at `/tmp/helmdex-example-remote-source`, then:
 
 ```bash
 helmdex catalog sync
-helmdex tui
+helmdex
 ```
 
-4) In the TUI:
+> For filesystem sources (no `.git` folder), `git.ref` is ignored during sync and cleared on save.
 
-- open an instance → **Dependencies** tab
-- press `a` → choose **Predefined catalog**
-- select an entry → `enter`
-- in the detail step:
-  - `space` toggles a set
-  - `D` toggles all default sets
-  - `enter` adds + applies
+### Preset version matching
 
-After a dependency has been added, you can:
+Preset files are organized as `charts/<name>/<version-or-constraint>/values.*.yaml`. helmdex resolves the best match using SemVer constraints — a preset at `nginx/^15.0.0` matches any `15.x.x` dependency.
 
-- press `enter` on a dependency to open its detail modal
-  - use the **Sets** tab to toggle per-dependency preset sets and press `s` to save+apply
-- press `x` on a dependency to open the dependency actions menu
-  - choose **Sync presets** to fetch the latest preset cache (git fetch/checkout using `git.ref`), remove orphan set markers, re-import presets, and regenerate merged values
+### If the local catalog is empty
 
-If you see “No local catalog entries”, it means you haven’t synced sources yet (TUI reads from `.helmdex/catalog/*.yaml` via [`LoadLocalCatalogEntries()`](internal/catalog/load.go:14)).
+When you open **Add dependency → Predefined catalog** and no entries are found, helmdex attempts a one-time auto-sync for the session. If there is no config or no sources, the wizard offers shortcuts to **Configure sources** and retry.
 
-In the TUI, when you enter **Add dependency → Predefined catalog** and the local catalog is empty, helmdex will attempt a one-time **Catalog sync** automatically (per wizard session) as long as you have at least one catalog-enabled source configured.
-If there is no config / no sources, the wizard provides shortcuts to open **Configure sources** and to retry sync.
+---
 
-## Non-interactive CLI parity (scriptable)
+## Instance directory layout
 
-helmdex is TUI-first, but all current TUI capabilities are also available via non-interactive CLI commands suitable for CI/scripts.
-
-### Instance values (no $EDITOR)
-
-Read / write `values.instance.yaml` by path (TUI syntax):
-
-```bash
-# Set a scalar
-helmdex instance values set my-app --path '$.global.replicas' --value-yaml '3'
-
-# Read it back (default JSON)
-helmdex instance values get my-app --path '$.global.replicas'
-
-# Unset it
-helmdex instance values unset my-app --path '$.global.replicas'
-
-# Replace the whole file (from stdin)
-cat values.instance.yaml | helmdex instance values replace my-app --stdin
-
-# Regenerate merged values.yaml
-helmdex instance values regen my-app
+```
+apps/my-app/
+├── Chart.yaml                        # umbrella chart + dependencies
+├── Chart.lock                        # dependency lock (from helm dependency build)
+├── values.default.yaml               # from preset source  ─┐
+├── values.platform.yaml              # platform layer       │  generated,
+├── values.set.<name>.yaml            # named set(s)         │  do not edit
+├── values.dep-set.<id>--<set>.yaml   # per-dep set(s)      ─┘
+├── values.instance.yaml              # your overrides  ← edit this
+└── values.yaml                       # merged output   ← generated
 ```
 
-### Dependency overrides (Configure tab parity)
+The **Values** tab in the TUI lists each file with a short description and lets you preview its contents with syntax highlighting.
 
-The TUI “Configure” tab edits overrides under the dependency id key (`alias` if set else `name`) inside `values.instance.yaml`. The CLI provides the same operations:
+---
+
+## CLI reference
+
+All TUI capabilities are also available as non-interactive commands, suitable for CI and scripts.
+
+### Instances
 
 ```bash
-# Set per-dependency override (relative to the dependency root)
-helmdex instance dep values set my-app nginx --path '$.replicaCount' --value-yaml '2'
-
-# Get it
-helmdex instance dep values get my-app nginx --path '$.replicaCount'
-
-# Unset it
-helmdex instance dep values unset my-app nginx --path '$.replicaCount'
+helmdex instance create <name>
+helmdex instance list
+helmdex instance apply <name>          # lock deps, import presets, regen values.yaml
+helmdex instance update <name>         # regen values (optionally relock)
+helmdex instance rm <name> --yes
 ```
 
-### Dependencies (add/version/upgrade)
+### Instance values
+
+Read and write `values.instance.yaml` by JSONPath (`$.key.sub`):
 
 ```bash
-# Add/update a dependency directly
-helmdex instance dep add my-app --repo https://charts.bitnami.com/bitnami --name nginx --version 15.0.0
+helmdex instance values get    <name> --path '$.global.replicas'
+helmdex instance values set    <name> --path '$.global.replicas' --value-yaml '3'
+helmdex instance values unset  <name> --path '$.global.replicas'
+helmdex instance values replace <name> --stdin
+helmdex instance values replace <name> --file vals.yaml
+helmdex instance values regen  <name>
+```
 
-# Add/update an OCI dependency (recommended: use the full OCI chart ref in --repo)
-helmdex instance dep add my-app --repo oci://registry-1.docker.io/cloudpirates/postgres --name postgres --version 0.16.0
+### Dependency management
 
-# If the registry requires auth or you hit Docker Hub rate limits, login using helmdex-isolated creds:
-helmdex registry login registry-1.docker.io
+```bash
+helmdex instance dep add <instance> \
+  --repo https://charts.bitnami.com/bitnami \
+  --name nginx --version 15.0.0 [--alias my-nginx] [--set production]
 
-# Add from the local catalog cache
+helmdex instance dep add <instance> \
+  --repo oci://registry-1.docker.io/cloudpirates/postgres \
+  --name postgres --version 0.16.0
+
+helmdex instance dep add-from-catalog <instance> --id <entry-id> [--apply] [--set <set>]
+helmdex instance dep list <instance>
+helmdex instance dep rm <instance> <depID>
+helmdex instance dep set-version <instance> <depID> --version 15.1.0 [--apply]
+helmdex instance dep upgrade <instance> <depID> [--apply]
+```
+
+### Per-dependency value overrides
+
+Paths are relative to the dependency root in `values.instance.yaml`:
+
+```bash
+helmdex instance dep values get    <instance> <depID> --path '$.replicaCount'
+helmdex instance dep values set    <instance> <depID> --path '$.replicaCount' --value-yaml '2'
+helmdex instance dep values unset  <instance> <depID> --path '$.replicaCount'
+```
+
+### Dependency inspection
+
+Uses vendored chart → archive cache → helm show cache → pull (best-effort, cached):
+
+```bash
+helmdex instance dep inspect readme  <instance> <depID>
+helmdex instance dep inspect values  <instance> <depID>
+helmdex instance dep inspect schema  <instance> <depID>
+```
+
+### Presets
+
+```bash
+helmdex instance presets resolve     <instance>
+helmdex instance presets resolve-dep <instance> <depID>
+```
+
+### Catalog
+
+```bash
 helmdex catalog sync
-helmdex instance dep add-from-catalog my-app --id my-catalog-entry
-
-# Set an exact version (optionally validate) and apply
-helmdex instance dep set-version my-app nginx --version 15.1.0 --apply
-
-# Upgrade to latest stable SemVer (non-OCI)
-helmdex instance dep upgrade my-app nginx --apply
+helmdex catalog list  [--format json|table]
+helmdex catalog get <id> [--format json|table]
 ```
 
-### Dependency inspection (README / values / schema)
-
-These commands use the same best-effort + caching strategy as the TUI (vendored chart dir → chart archive cache → helmdex show cache → pull → helm show).
+### Artifact Hub
 
 ```bash
-helmdex instance dep inspect readme my-app nginx
-helmdex instance dep inspect values my-app nginx
-helmdex instance dep inspect schema my-app nginx
+helmdex artifacthub search <query> [--limit 20] [--format json|table]
+helmdex artifacthub versions <repoKey> <package> [--format json|table]
 ```
 
-### Presets resolution (read-only)
+### OCI registry
 
 ```bash
-# All deps
-helmdex instance presets resolve my-app
-
-# One dep
-helmdex instance presets resolve-dep my-app nginx
+helmdex registry login <registry> [--username <u>] [--password-stdin]
 ```
 
-### Artifact Hub helpers (non-interactive)
+If you hit Docker Hub rate limits, login stores credentials in a helmdex-isolated store (separate from your system Docker config).
+
+### Cache
 
 ```bash
-helmdex artifacthub search nginx
-helmdex artifacthub versions bitnami nginx
+helmdex cache clear [--helm]   # clear show/version cache; --helm also clears helm env
 ```
 
-### Values tab
+---
 
-In an instance view, the **Values** tab lists the values-related files that exist in the instance directory, with a short description next to each:
+## Advanced
 
-- `values.default.yaml` — baseline defaults
-- `values.platform.yaml` — platform overrides
-- `values.set.<name>.yaml` — preset layer `<name>` (sorted)
-- `values.dep-set.<depID>--<set>.yaml` — selected set file for one dependency (downloaded on apply)
-- `values.instance.yaml` — user overrides (**editable**)
-- `values.yaml` — merged output (**generated**)
+### Pin a source to a specific git ref
 
-Select a file to open a preview.
+`ref` in a source accepts any branch, tag, or commit SHA. On sync it is resolved to a commit and stored back in `helmdex.yaml` under `commit:` for reproducibility.
 
-## YAML syntax highlighting
+### YAML syntax highlighting
 
-YAML previews are syntax-highlighted in the TUI (instance values preview, Artifact Hub “Values”, dependency detail “Default”).
+YAML previews (instance values, Artifact Hub "Values", dependency "Default") are syntax-highlighted with ANSI colors, suppressed when `NO_COLOR` is set or `TERM=dumb`.
 
-## Markdown README rendering
+### Markdown rendering
 
-README previews in the TUI are rendered as Markdown (to ANSI) when shown in:
+README previews (Artifact Hub detail, dependency detail "README") are rendered as Markdown to ANSI.
 
-- Artifact Hub detail “README”
-- Dependency detail “README”
+---
 
-Color output is **automatically disabled** when:
+## Development
 
-- `NO_COLOR` is set (any value)
-- `TERM=dumb`
+```bash
+go build ./...
+go test ./...
+```
+
+E2E tests live in `tests/`. The fixture at `fixtures/remote-source/` is a self-contained example catalog + presets source used by tests and local development.
