@@ -8,34 +8,16 @@
 
 ---
 
-## Goals
+## helmdex in 30 seconds
 
-Managing multiple [umbrella chart](https://helm.sh/docs/howto/charts_tips_and_tricks/#complex-charts-with-many-dependencies) instances across environments means juggling dependency versions, layered values files, and platform-specific overrides — all while keeping everything reviewable in Git.
+`helmdex` is a **TUI-first organizer** for GitOps-friendly Helm **umbrella chart** instances.
 
-`helmdex` handles that scaffolding: it creates instance directories, resolves and merges values layers, and lets you browse/edit everything from a TUI. It never renders templates or deploys — it is purely a **configuration management and organization layer** on top of Helm.
+- Create and manage multiple instances (one per app / env)
+- Add / upgrade dependencies, from a curated catalog or Artifact Hub
+- Manage layered values (defaults → platform → sets → instance)
+- Generate a merged `values.yaml` designed to be committed and reviewed
 
-## Key concepts
-
-| Concept | What it is |
-|---|---|
-| **Instance** | One umbrella chart project, stored in `apps/<name>/` |
-| **Dependency** | A Helm chart listed in the instance's `Chart.yaml` |
-| **Values layers** | Ordered merge: `default → platform → sets → instance` |
-| **Catalog** | Curated chart+version entries your team can add from |
-| **Presets / sets** | Versioned YAML values files bundled with catalog entries |
-| **Source** | A Git repo (or local dir) that provides a catalog and/or presets |
-
-### Values merge order
-
-```
-values.default.yaml          ← chart defaults from preset source
-values.platform.yaml         ← platform overrides (e.g. eks, gke)
-values.set.<name>.yaml       ← named configuration sets
-values.dep-set.<id>--<set>.yaml  ← per-dependency set files
-values.instance.yaml         ← your overrides  ← highest priority, hand-edited
-──────────────────────────────────────────────
-values.yaml                  ← generated merged output (committed, reviewed in PRs)
-```
+**What it is not:** `helmdex` does **not** render templates and does **not** deploy (no `helm template`, no `helm install`).
 
 ---
 
@@ -45,7 +27,12 @@ values.yaml                  ← generated merged output (committed, reviewed in
 go install github.com/SocialGouv/helmdex/cmd/helmdex@latest
 ```
 
-## Quick start
+## Quick start (TUI)
+
+Requirements:
+
+- Go (for installation)
+- Helm (used for dependency operations; `helmdex` still won’t deploy anything)
 
 ```bash
 helmdex init   # create helmdex.yaml at repo root
@@ -56,9 +43,9 @@ Running `helmdex` with no arguments opens the interactive dashboard when stdin i
 
 ---
 
-## TUI
+## TUI at a glance
 
-### Navigation
+### Navigation model
 
 The TUI opens on the **Dashboard** — a list of all instances. Press `enter` to open an instance.
 
@@ -97,6 +84,29 @@ The terminal window title tracks your location:
 | `space` | Toggle |
 | `D` | Toggle all default sets |
 | `?` | Help / about |
+
+---
+
+## Typical workflow
+
+1. `helmdex init`
+2. Configure at least one source (catalog + presets) in `helmdex.yaml`
+3. `helmdex catalog sync`
+4. Open the TUI → create an instance → add a dependency → pick sets → apply
+5. Commit the resulting `Chart.yaml`, `Chart.lock`, and generated `values.yaml` for review
+
+---
+
+## Core concepts
+
+| Term | Meaning |
+|---|---|
+| **Instance** | One umbrella chart project on disk (default: `apps/<name>/`) |
+| **Dependency** | A chart entry in the instance’s `Chart.yaml` |
+| **Values layers** | Ordered merge of multiple YAML files into one output |
+| **Catalog** | Curated chart+version entries your team can add from |
+| **Presets / sets** | Versioned YAML snippets shipped with catalog entries |
+| **Source** | A Git repo (or local dir) that provides catalog + presets |
 
 ### Adding a dependency
 
@@ -202,7 +212,21 @@ When you open **Add dependency → Predefined catalog** and no entries are found
 
 ---
 
-## Instance directory layout
+## Values and files (deeper)
+
+### Values merge order
+
+```
+values.default.yaml               ← from preset source
+values.platform.yaml              ← platform overrides (e.g. eks, gke)
+values.set.<name>.yaml            ← named configuration sets
+values.dep-set.<id>--<set>.yaml   ← per-dependency set files
+values.instance.yaml              ← your overrides  ← highest priority, hand-edited
+────────────────────────────────────────────────
+values.yaml                       ← generated merged output (committed, reviewed in PRs)
+```
+
+### Instance directory layout
 
 ```
 apps/my-app/
@@ -223,6 +247,19 @@ The **Values** tab in the TUI lists each file with a short description and lets 
 ## CLI reference
 
 All TUI capabilities are also available as non-interactive commands, suitable for CI and scripts.
+
+Common commands:
+
+```bash
+helmdex catalog sync
+helmdex instance list
+helmdex instance create <name>
+helmdex instance apply <name>
+helmdex instance values regen <name>
+```
+
+<details>
+<summary>Full CLI reference</summary>
 
 ### Instances
 
@@ -321,29 +358,45 @@ If you hit Docker Hub rate limits, login stores credentials in a helmdex-isolate
 helmdex cache clear [--helm]   # clear show/version cache; --helm also clears helm env
 ```
 
+</details>
+
+Tip: `helmdex --help` shows all commands, and most subcommands accept `--help`.
+
 ---
 
 ## Advanced
 
-### Pin a source to a specific git ref
+<details>
+<summary>Pin a source to a specific git ref</summary>
 
 `ref` in a source accepts any branch, tag, or commit SHA. On sync it is resolved to a commit and stored back in `helmdex.yaml` under `commit:` for reproducibility.
 
-### YAML syntax highlighting
+</details>
+
+<details>
+<summary>YAML syntax highlighting</summary>
 
 YAML previews (instance values, Artifact Hub "Values", dependency "Default") are syntax-highlighted with ANSI colors, suppressed when `NO_COLOR` is set or `TERM=dumb`.
 
-### Markdown rendering
+</details>
+
+<details>
+<summary>Markdown rendering</summary>
 
 README previews (Artifact Hub detail, dependency detail "README") are rendered as Markdown to ANSI.
+
+</details>
 
 ---
 
 ## Development
 
 ```bash
-go build ./...
-go test ./...
+devbox run -- go build ./...
+devbox run -- go test ./...
+devbox run -- pnpm install
+devbox run -- pnpm run build:helmdex
+devbox run -- pnpm run test:tui
 ```
 
 E2E tests live in `tests/`. The fixture at `fixtures/remote-source/` is a self-contained example catalog + presets source used by tests and local development.
