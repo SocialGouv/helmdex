@@ -79,4 +79,3 @@ func TestDepsChanged_WithLock_Differs(t *testing.T) {
 		t.Fatalf("expected changed")
 	}
 }
-

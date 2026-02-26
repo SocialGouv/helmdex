@@ -45,4 +45,3 @@ func newInitCmd(f *rootFlags) *cobra.Command {
 	cmd.Flags().BoolVar(&force, "force", false, "Overwrite existing helmdex.yaml")
 	return cmd
 }
-

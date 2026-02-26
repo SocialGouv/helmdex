@@ -26,8 +26,8 @@ func TestImport_CopiesDefaultPlatformAndSelectedSet(t *testing.T) {
 		Kind:       config.Kind,
 		Platform:   config.PlatformConfig{Name: "eks"},
 		Sources: []config.Source{{
-			Name: "s1",
-			Git:  config.GitRef{URL: "https://example.invalid"},
+			Name:    "s1",
+			Git:     config.GitRef{URL: "https://example.invalid"},
 			Presets: config.PresetsConfig{Enabled: true, ChartsPath: "charts"},
 		}},
 	}

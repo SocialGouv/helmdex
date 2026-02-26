@@ -41,17 +41,16 @@ func TestIsolatedProcessEnv_StripsAndOverrides(t *testing.T) {
 	}
 
 	// And required overrides should exist.
-	if !hasPrefix("HOME="+env.Home) {
+	if !hasPrefix("HOME=" + env.Home) {
 		t.Fatalf("expected HOME to be overridden")
 	}
-	if !hasPrefix("DOCKER_CONFIG="+env.DockerConfig) {
+	if !hasPrefix("DOCKER_CONFIG=" + env.DockerConfig) {
 		t.Fatalf("expected DOCKER_CONFIG to be overridden")
 	}
-	if !hasPrefix("XDG_CONFIG_HOME="+env.ConfigHome) {
+	if !hasPrefix("XDG_CONFIG_HOME=" + env.ConfigHome) {
 		t.Fatalf("expected XDG_CONFIG_HOME to be overridden")
 	}
-	if !hasPrefix("HELM_REGISTRY_CONFIG="+env.RegistryConfig) {
+	if !hasPrefix("HELM_REGISTRY_CONFIG=" + env.RegistryConfig) {
 		t.Fatalf("expected HELM_REGISTRY_CONFIG to be set to repo-root shared registry config")
 	}
 }
-

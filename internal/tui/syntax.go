@@ -95,4 +95,3 @@ func maybeHighlightYAMLForDisplay(path string, content string) string {
 	}
 	return highlightYAMLForDisplay(content)
 }
-

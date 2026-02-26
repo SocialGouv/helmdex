@@ -44,4 +44,3 @@ func TestCatalogSetsToggleDefaults_UsesShiftD(t *testing.T) {
 		}
 	}
 }
-

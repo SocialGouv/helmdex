@@ -77,4 +77,3 @@ func TestConfirmModal_InstanceDelete_FromInstanceTab_Cancel(t *testing.T) {
 		t.Fatalf("expected confirm modal to close on esc")
 	}
 }
-

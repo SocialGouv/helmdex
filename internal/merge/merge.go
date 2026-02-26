@@ -131,4 +131,3 @@ func clone(n *yaml.Node) *yaml.Node {
 	}
 	return &out
 }
-

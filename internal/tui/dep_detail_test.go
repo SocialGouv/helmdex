@@ -1,9 +1,9 @@
 package tui
 
 import (
+	"helmdex/internal/yamlchart"
 	"strings"
 	"testing"
-	"helmdex/internal/yamlchart"
 
 	"github.com/charmbracelet/bubbles/list"
 	tea "github.com/charmbracelet/bubbletea"

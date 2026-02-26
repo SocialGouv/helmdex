@@ -30,4 +30,3 @@ func TestValuesFilteringCapturesKeysAndPreventsGlobalShortcuts(t *testing.T) {
 		t.Fatalf("expected global regen shortcut to be ignored while values filter is active")
 	}
 }
-

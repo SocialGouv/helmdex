@@ -17,4 +17,3 @@ func TestRenderMarkdownForDisplay_EmptyIsEmpty(t *testing.T) {
 		t.Fatalf("expected whitespace-only to be returned unchanged")
 	}
 }
-

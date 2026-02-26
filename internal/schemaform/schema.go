@@ -40,13 +40,13 @@ type Schema struct {
 
 	Default any `json:"default,omitempty"`
 
-	Pattern string   `json:"pattern,omitempty"`
-	Minimum *float64 `json:"minimum,omitempty"`
-	Maximum *float64 `json:"maximum,omitempty"`
-	MinLength *int   `json:"minLength,omitempty"`
-	MaxLength *int   `json:"maxLength,omitempty"`
-	MinItems  *int   `json:"minItems,omitempty"`
-	MaxItems  *int   `json:"maxItems,omitempty"`
+	Pattern   string   `json:"pattern,omitempty"`
+	Minimum   *float64 `json:"minimum,omitempty"`
+	Maximum   *float64 `json:"maximum,omitempty"`
+	MinLength *int     `json:"minLength,omitempty"`
+	MaxLength *int     `json:"maxLength,omitempty"`
+	MinItems  *int     `json:"minItems,omitempty"`
+	MaxItems  *int     `json:"maxItems,omitempty"`
 
 	OneOf []*Schema `json:"oneOf,omitempty"`
 	AnyOf []*Schema `json:"anyOf,omitempty"`

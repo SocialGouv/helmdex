@@ -242,26 +242,26 @@ func lockFromChartYAML(t *testing.T, chartPath string) yamlchart.Lock {
 func mustRunCLI(t *testing.T, repoRoot string, cfgPath *string, args ...string) string {
 	t.Helper()
 
-  cmd := NewRootCmd()
-  var stdout bytes.Buffer
-  var stderr bytes.Buffer
-  cmd.SetOut(&stdout)
-  cmd.SetErr(&stderr)
+	cmd := NewRootCmd()
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	cmd.SetOut(&stdout)
+	cmd.SetErr(&stderr)
 
-  full := []string{"--repo", repoRoot}
-  if cfgPath != nil {
-    full = append(full, "--config", *cfgPath)
-  }
-  full = append(full, args...)
-  cmd.SetArgs(full)
+	full := []string{"--repo", repoRoot}
+	if cfgPath != nil {
+		full = append(full, "--config", *cfgPath)
+	}
+	full = append(full, args...)
+	cmd.SetArgs(full)
 
-  if err := cmd.Execute(); err != nil {
-    t.Fatalf("helmdex %v failed: %v\nstdout:\n%s\nstderr:\n%s", args, err, stdout.String(), stderr.String())
-  }
-  if stderr.Len() > 0 {
-    // Cobra commands occasionally write non-fatal info to stderr. Keep it visible in failure output.
-  }
-  return stdout.String()
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("helmdex %v failed: %v\nstdout:\n%s\nstderr:\n%s", args, err, stdout.String(), stderr.String())
+	}
+	if stderr.Len() > 0 {
+		// Cobra commands occasionally write non-fatal info to stderr. Keep it visible in failure output.
+	}
+	return stdout.String()
 }
 
 func copyDir(t *testing.T, src string, dst string) {
@@ -338,56 +338,56 @@ func findRepoRoot(t *testing.T) string {
 }
 
 func gitInitRepo(t *testing.T, dir string) {
-  t.Helper()
-  git(t, dir, "init")
-  git(t, dir, "config", "user.email", "e2e@example.invalid")
-  git(t, dir, "config", "user.name", "helmdex-e2e")
+	t.Helper()
+	git(t, dir, "init")
+	git(t, dir, "config", "user.email", "e2e@example.invalid")
+	git(t, dir, "config", "user.name", "helmdex-e2e")
 }
 
 func gitCommitAll(t *testing.T, dir string, msg string) {
-  t.Helper()
-  git(t, dir, "add", "-A")
-  git(t, dir, "commit", "-m", msg)
+	t.Helper()
+	git(t, dir, "add", "-A")
+	git(t, dir, "commit", "-m", msg)
 }
 
 func git(t *testing.T, dir string, args ...string) {
-  t.Helper()
-  cmd := exec.Command("git", args...)
-  cmd.Dir = dir
-  b, err := cmd.CombinedOutput()
-  if err != nil {
-    t.Fatalf("git %v failed: %v\n%s", args, err, string(b))
-  }
+	t.Helper()
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	b, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git %v failed: %v\n%s", args, err, string(b))
+	}
 }
 
 func strFromAny(v any) string {
-  if v == nil {
-    return ""
-  }
-  if s, ok := v.(string); ok {
-    return s
-  }
-  return fmt.Sprintf("%v", v)
+	if v == nil {
+		return ""
+	}
+	if s, ok := v.(string); ok {
+		return s
+	}
+	return fmt.Sprintf("%v", v)
 }
 
 func intFromAny(v any) int {
-  switch x := v.(type) {
-  case int:
-    return x
-  case int64:
-    return int(x)
-  case float64:
-    return int(x)
-  case float32:
-    return int(x)
-  default:
-    return 0
-  }
+	switch x := v.(type) {
+	case int:
+		return x
+	case int64:
+		return int(x)
+	case float64:
+		return int(x)
+	case float32:
+		return int(x)
+	default:
+		return 0
+	}
 }
 
 func boolFromAny(v any) bool {
-  if b, ok := v.(bool); ok {
-    return b
-  }
-  return false
+	if b, ok := v.(bool); ok {
+		return b
+	}
+	return false
 }

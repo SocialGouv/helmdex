@@ -84,4 +84,3 @@ func TestSaveSources_LocalPathMustExist(t *testing.T) {
 		t.Fatalf("expected error")
 	}
 }
-

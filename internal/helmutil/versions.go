@@ -15,7 +15,8 @@ import (
 //
 // It uses an isolated per-repoURL helm env (see EnvForRepoURL), ensures the repo
 // is added, runs a stale-aware repo update, then queries versions via:
-//   helm search repo <repo>/<chart> --versions -o json
+//
+//	helm search repo <repo>/<chart> --versions -o json
 func RepoChartVersions(ctx context.Context, repoRoot, repoURL, chartName string, repoUpdateMaxAge time.Duration) ([]string, error) {
 	if strings.HasPrefix(repoURL, "oci://") {
 		return nil, fmt.Errorf("helm search repo does not support OCI refs; cannot list versions for %s", repoURL)

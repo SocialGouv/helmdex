@@ -47,7 +47,7 @@ type GitRef struct {
 }
 
 type PresetsConfig struct {
-	Enabled   bool   `yaml:"enabled"`
+	Enabled    bool   `yaml:"enabled"`
 	ChartsPath string `yaml:"chartsPath,omitempty"`
 }
 

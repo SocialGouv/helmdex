@@ -36,4 +36,3 @@ func writeJSON(w io.Writer, v any) error {
 	_, err = fmt.Fprintf(w, "%s\n", string(b))
 	return err
 }
-

@@ -2,8 +2,8 @@ package cli
 
 import (
 	"fmt"
-	"path/filepath"
 	"os"
+	"path/filepath"
 
 	"helmdex/internal/helmutil"
 	"helmdex/internal/repo"

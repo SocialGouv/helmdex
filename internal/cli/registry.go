@@ -51,4 +51,3 @@ func newRegistryLoginCmd(f *rootFlags) *cobra.Command {
 	cmd.Flags().BoolVar(&passwordStdin, "password-stdin", false, "Read password from stdin")
 	return cmd
 }
-

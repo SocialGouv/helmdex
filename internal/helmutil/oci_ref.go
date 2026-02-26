@@ -9,8 +9,8 @@ import (
 //
 // helmdex supports two input styles for repoURL when it starts with oci://:
 //
-//  1) Recommended (full chart ref): oci://registry/org/chart
-//  2) Backward-compatible (namespace only): oci://registry/org  (chartName is appended)
+//  1. Recommended (full chart ref): oci://registry/org/chart
+//  2. Backward-compatible (namespace only): oci://registry/org  (chartName is appended)
 //
 // The function avoids duplicating the chart segment (e.g. oci://.../chart/chart).
 func OCIChartRef(repoURL, chartName string) (string, error) {
@@ -32,4 +32,3 @@ func OCIChartRef(repoURL, chartName string) (string, error) {
 	}
 	return base + "/" + chartName, nil
 }
-

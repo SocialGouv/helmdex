@@ -82,4 +82,3 @@ func output(ctx context.Context, cwd string, name string, args ...string) (strin
 	}
 	return stdout.String(), nil
 }
-

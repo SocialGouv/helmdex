@@ -33,4 +33,3 @@ func TestSyncSourceToCache_FilesystemSourceCopiesDir(t *testing.T) {
 		t.Fatalf("expected file to be copied: %v", err)
 	}
 }
-

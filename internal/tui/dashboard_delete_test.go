@@ -23,4 +23,3 @@ func TestDashboardDeleteShortcut_OpensConfirmForSelectedInstance(t *testing.T) {
 		t.Fatalf("expected confirm kind delete instance")
 	}
 }
-

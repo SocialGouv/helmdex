@@ -1,8 +1,8 @@
 package helmutil
 
 import (
-	"context"
 	"bytes"
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
@@ -25,7 +25,6 @@ func DependencyBuild(ctx context.Context, env Env, chartDir string) error {
 	_, err := runQuiet(ctx, env, chartDir, "helm", "dependency", "build")
 	return err
 }
-
 
 func runQuiet(ctx context.Context, env Env, dir, name string, args ...string) (string, error) {
 	cmd := exec.CommandContext(ctx, name, args...)

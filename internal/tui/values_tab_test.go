@@ -57,12 +57,12 @@ func TestValuesTabListShowsDescriptionsAndOrdering(t *testing.T) {
 
 	// Create a representative set of values files.
 	files := map[string]string{
-		"values.default.yaml":      "a: 1\n",
-		"values.platform.yaml":     "b: 2\n",
-		"values.set.team-a.yaml":   "c: 3\n",
-		"values.instance.yaml":     "d: 4\n",
-		"values.yaml":              "# generated\n",
-		"values.set.team-b.yaml":   "e: 5\n",
+		"values.default.yaml":    "a: 1\n",
+		"values.platform.yaml":   "b: 2\n",
+		"values.set.team-a.yaml": "c: 3\n",
+		"values.instance.yaml":   "d: 4\n",
+		"values.yaml":            "# generated\n",
+		"values.set.team-b.yaml": "e: 5\n",
 	}
 	for name, content := range files {
 		if err := os.WriteFile(filepath.Join(instPath, name), []byte(content), 0o644); err != nil {

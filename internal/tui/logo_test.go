@@ -103,7 +103,7 @@ func TestOverlayDashboardLogoOnView_DoesNotAddLines(t *testing.T) {
 		"line15",
 		"line16",
 		"line17",
-}, "\n")
+	}, "\n")
 
 	out := overlayDashboardLogoOnView(view, 80)
 	if strings.Count(out, "\n") != strings.Count(view, "\n") {

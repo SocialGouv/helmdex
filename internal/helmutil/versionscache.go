@@ -76,4 +76,3 @@ func VersionsCacheStale(fetchedAt time.Time, ttl time.Duration, now time.Time) b
 func ClearVersionsCache(repoRoot string) error {
 	return os.RemoveAll(versionsCacheDir(repoRoot))
 }
-

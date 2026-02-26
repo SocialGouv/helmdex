@@ -67,4 +67,3 @@ func TestReadChartArchiveFilesWithSchema_PrefersTopLevel(t *testing.T) {
 		t.Fatalf("unexpected schema: %q", schema)
 	}
 }
-

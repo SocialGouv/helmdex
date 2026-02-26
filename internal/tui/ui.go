@@ -118,9 +118,9 @@ func instanceContextLabel(m AppModel) string {
 // renderTopBar renders the single-line persistent top bar.
 //
 // Rules (approved):
-// - Dashboard: "📁 <repoDir>" only.
-// - Instance: "📁 <repoDir> › 📦 <instanceName> › <context>".
-//   Where <context> is either the active tab name or an overriding modal/wizard label.
+//   - Dashboard: "📁 <repoDir>" only.
+//   - Instance: "📁 <repoDir> › 📦 <instanceName> › <context>".
+//     Where <context> is either the active tab name or an overriding modal/wizard label.
 func renderTopBar(m AppModel) string {
 	parts := []string{withIcon(iconFolder, repoDirLabel(m))}
 	if m.screen == ScreenInstance {
@@ -209,7 +209,7 @@ func renderDepEditModal(m AppModel) string {
 		header += "\n" + styleMuted.Render(fmt.Sprintf("%s @ %s", m.depEditDep.Name, m.depEditDep.Repository))
 	}
 	if m.modalErr != "" {
-		header += "\n" + styleErrStrong.Render(withIcon(iconErr, "Error:") + " " + m.modalErr)
+		header += "\n" + styleErrStrong.Render(withIcon(iconErr, "Error:")+" "+m.modalErr)
 	}
 
 	var body string

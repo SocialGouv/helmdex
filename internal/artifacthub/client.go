@@ -47,8 +47,8 @@ type Version struct {
 
 type PackageDetail struct {
 	RepositoryKey string
-	Name         string
-	Versions     []Version
+	Name          string
+	Versions      []Version
 }
 
 // SearchHelm searches Helm charts on Artifact Hub.

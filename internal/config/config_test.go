@@ -51,4 +51,3 @@ func TestLoadFile_RequiresPlatformWhenPresetsEnabled(t *testing.T) {
 		t.Fatalf("expected error")
 	}
 }
-

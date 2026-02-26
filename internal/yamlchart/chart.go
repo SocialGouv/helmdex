@@ -40,4 +40,3 @@ func WriteChart(path string, c Chart) error {
 	}
 	return os.WriteFile(path, buf, 0o644)
 }
-

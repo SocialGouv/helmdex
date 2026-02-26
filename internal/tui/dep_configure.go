@@ -47,7 +47,7 @@ func readDepOverrideFromInstance(instancePath, depID string) any {
 // - s save
 // - esc cancel edit (or close modal handled outside)
 type depConfigureModel struct {
-	loaded bool
+	loaded  bool
 	loadErr string
 
 	depID        string
@@ -640,7 +640,6 @@ func (m *depConfigureModel) Move(delta int) {
 	}
 	m.cursor = min(max(0, m.cursor+delta), len(m.lines)-1)
 }
-
 
 // Expand expands the selected container line.
 // It returns true if it changed the expanded state.

@@ -16,4 +16,3 @@ func e2eStubArtifactHub() bool {
 func e2eNoEditor() bool {
 	return os.Getenv("HELMDEX_E2E_NO_EDITOR") == "1"
 }
-

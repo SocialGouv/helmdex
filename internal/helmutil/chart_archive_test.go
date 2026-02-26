@@ -48,4 +48,3 @@ func TestReadChartArchiveFiles(t *testing.T) {
 		t.Fatalf("expected readme and values, got readme=%q values=%q", r, v)
 	}
 }
-

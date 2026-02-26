@@ -12,7 +12,8 @@ import (
 // source cache for a given chart.
 //
 // Coverage is inferred from subdirectory names under:
-//   <chartRoot>/<dir>
+//
+//	<chartRoot>/<dir>
 //
 // where <dir> can be:
 //   - an exact version directory (e.g. "15.0.0")

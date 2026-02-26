@@ -97,4 +97,3 @@ func newInstanceDepPresetsResolveCmd(f *rootFlags) *cobra.Command {
 	cmd.Flags().StringVar(&format, "format", string(formatJSON), "Output format: json|table")
 	return cmd
 }
-

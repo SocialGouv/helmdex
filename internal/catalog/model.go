@@ -9,11 +9,11 @@ type Catalog struct {
 }
 
 type Entry struct {
-	ID          string `yaml:"id"`
-	Description string `yaml:"description,omitempty"`
-	Chart       Chart  `yaml:"chart"`
-	Version     string `yaml:"version"`
-	Digest      string `yaml:"digest,omitempty"`
+	ID          string   `yaml:"id"`
+	Description string   `yaml:"description,omitempty"`
+	Chart       Chart    `yaml:"chart"`
+	Version     string   `yaml:"version"`
+	Digest      string   `yaml:"digest,omitempty"`
 	DefaultSets []string `yaml:"defaultSets,omitempty"`
 }
 

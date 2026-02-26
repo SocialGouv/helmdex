@@ -41,4 +41,3 @@ func newTUICmd(f *rootFlags) *cobra.Command {
 	}
 	return cmd
 }
-

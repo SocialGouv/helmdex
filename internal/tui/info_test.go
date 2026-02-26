@@ -21,4 +21,3 @@ func TestRenderInfoOverlay_AboutTabContainsVersionAndRepo(t *testing.T) {
 		t.Fatalf("expected info/about to contain repo URL")
 	}
 }
-

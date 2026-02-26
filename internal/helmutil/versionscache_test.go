@@ -60,4 +60,3 @@ func TestVersionsCacheStale(t *testing.T) {
 		t.Fatalf("16m old should be stale")
 	}
 }
-

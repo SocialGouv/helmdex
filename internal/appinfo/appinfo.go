@@ -10,16 +10,17 @@ import (
 // Keep these values stable: they are shown in CLI help output and the TUI About
 // view.
 const (
-	Name   = "helmdex"
-	Short  = "helmdex scaffolds and maintains GitOps-friendly Helm umbrella chart instances"
-	Long   = "helmdex is a TUI-first organizer for Helm umbrella chart instances (no template rendering, no deploy)."
+	Name    = "helmdex"
+	Short   = "helmdex scaffolds and maintains GitOps-friendly Helm umbrella chart instances"
+	Long    = "helmdex is a TUI-first organizer for Helm umbrella chart instances (no template rendering, no deploy)."
 	RepoURL = "https://github.com/SocialGouv/helmdex"
 )
 
 // Version is intended to be overridden at build time.
 //
 // Example:
-//   go build -ldflags "-X helmdex/internal/appinfo.Version=v0.3.0 -X helmdex/internal/appinfo.Commit=$(git rev-parse --short HEAD)"
+//
+//	go build -ldflags "-X helmdex/internal/appinfo.Version=v0.3.0 -X helmdex/internal/appinfo.Commit=$(git rev-parse --short HEAD)"
 var Version = "dev"
 
 // Commit optionally carries a VCS revision (preferably short SHA).
@@ -58,4 +59,3 @@ func FullVersion() string {
 	}
 	return v + "+" + c
 }
-

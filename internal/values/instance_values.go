@@ -53,4 +53,3 @@ func WriteInstanceValues(instanceDir string, root map[string]any) error {
 	}
 	return os.WriteFile(p, b, 0o644)
 }
-

@@ -15,7 +15,6 @@ import "github.com/charmbracelet/lipgloss"
 
 // Icons (keep 1 glyph per UI element where possible).
 const (
-
 	iconApp       = "🧭"
 	iconDashboard = "🏠"
 	iconInstance  = "📦"
@@ -31,9 +30,9 @@ const (
 	iconAH        = "🌐"
 	iconCustom    = "🧰"
 
-	iconDeps     = "🧩"
-	iconValues   = "⚙"
-	iconPresets  = "🎛"
+	iconDeps    = "🧩"
+	iconValues  = "⚙"
+	iconPresets = "🎛"
 
 	iconReadme   = "📖"
 	iconAHValues = "🧾"
@@ -64,7 +63,7 @@ const (
 	// Intraline highlights (backgrounds for changed substrings).
 	colDiffAddIntraBg = lipgloss.Color("22")
 	colDiffDelIntraBg = lipgloss.Color("52")
-	colInfo     = lipgloss.Color("81")
+	colInfo           = lipgloss.Color("81")
 )
 
 // Shared styles.

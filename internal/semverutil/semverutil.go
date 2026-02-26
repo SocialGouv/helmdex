@@ -105,4 +105,3 @@ func (v semver) String() string {
 	}
 	return fmt.Sprintf("%d.%d.%d-%s", v.Major, v.Minor, v.Patch, v.Pre)
 }
-

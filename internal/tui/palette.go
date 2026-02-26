@@ -11,18 +11,18 @@ import (
 type paletteCmdID string
 
 const (
-	palNewInstance  paletteCmdID = "new-instance"
-	palReload       paletteCmdID = "reload"
-	palSources      paletteCmdID = "sources"
-	palCatalogSync  paletteCmdID = "catalog-sync"
-	palAbout        paletteCmdID = "about"
-	palDepSyncPresets paletteCmdID = "dep-sync-presets"
+	palNewInstance      paletteCmdID = "new-instance"
+	palReload           paletteCmdID = "reload"
+	palSources          paletteCmdID = "sources"
+	palCatalogSync      paletteCmdID = "catalog-sync"
+	palAbout            paletteCmdID = "about"
+	palDepSyncPresets   paletteCmdID = "dep-sync-presets"
 	palDepDetachCatalog paletteCmdID = "dep-detach-catalog"
-	palQuit         paletteCmdID = "quit"
-	palBack         paletteCmdID = "back"
-	palAddDep       paletteCmdID = "add-dep"
-	palRegenValues  paletteCmdID = "regen-values"
-	palForceRefresh paletteCmdID = "force-refresh-ah"
+	palQuit             paletteCmdID = "quit"
+	palBack             paletteCmdID = "back"
+	palAddDep           paletteCmdID = "add-dep"
+	palRegenValues      paletteCmdID = "regen-values"
+	palForceRefresh     paletteCmdID = "force-refresh-ah"
 )
 
 type paletteItem struct {

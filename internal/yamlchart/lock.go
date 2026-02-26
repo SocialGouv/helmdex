@@ -12,10 +12,10 @@ import (
 // Helm's schema (v2 charts) typically includes fields like:
 // apiVersion, generated, digest, and dependencies[].
 type Lock struct {
-	APIVersion    string           `yaml:"apiVersion"`
-	Generated     string           `yaml:"generated,omitempty"`
-	Digest        string           `yaml:"digest,omitempty"`
-	Dependencies  []LockDependency  `yaml:"dependencies,omitempty"`
+	APIVersion   string           `yaml:"apiVersion"`
+	Generated    string           `yaml:"generated,omitempty"`
+	Digest       string           `yaml:"digest,omitempty"`
+	Dependencies []LockDependency `yaml:"dependencies,omitempty"`
 }
 
 type LockDependency struct {
@@ -36,4 +36,3 @@ func ReadLock(path string) (Lock, error) {
 	}
 	return l, nil
 }
-

@@ -6,8 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"helmdex/internal/yamlchart"
 	"helmdex/internal/catalog"
+	"helmdex/internal/yamlchart"
 
 	"gopkg.in/yaml.v3"
 )
@@ -15,17 +15,17 @@ import (
 type depSourceKind string
 
 const (
-	depSourceCatalog   depSourceKind = "catalog"
+	depSourceCatalog     depSourceKind = "catalog"
 	depSourceArtifactHub depSourceKind = "artifacthub"
-	depSourceArbitrary depSourceKind = "arbitrary"
+	depSourceArbitrary   depSourceKind = "arbitrary"
 )
 
 type depSourceMeta struct {
-	Kind     depSourceKind `yaml:"kind"`
-	CatalogID string       `yaml:"catalogID,omitempty"`
+	Kind      depSourceKind `yaml:"kind"`
+	CatalogID string        `yaml:"catalogID,omitempty"`
 	// CatalogSource is the configured source name that produced the catalog entry.
 	// It corresponds to the `.helmdex/catalog/<source>.yaml` filename.
-	CatalogSource string   `yaml:"catalogSource,omitempty"`
+	CatalogSource string `yaml:"catalogSource,omitempty"`
 }
 
 func depMetaPath(repoRoot, instanceName string, depID yamlchart.DepID) string {
