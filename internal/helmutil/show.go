@@ -320,6 +320,13 @@ func ShowValuesBestEffort(ctx context.Context, env Env, ref, version string, rep
 }
 
 func run(ctx context.Context, env Env, name string, args ...string) (string, error) {
+	if name == "helm" || name == "helm.exe" {
+		p, err := helmCommandPath(ctx)
+		if err != nil {
+			return "", err
+		}
+		name = p
+	}
 	cmd := exec.CommandContext(ctx, name, args...)
 	// IMPORTANT: set all Helm home vars *and* repo/registry vars so an ambient
 	// user env (HELM_REPOSITORY_CONFIG, HELM_REPOSITORY_CACHE, HELM_PLUGINS, ...)
@@ -345,6 +352,13 @@ func run(ctx context.Context, env Env, name string, args ...string) (string, err
 }
 
 func runInteractive(ctx context.Context, env Env, dir string, name string, args ...string) error {
+	if name == "helm" || name == "helm.exe" {
+		p, err := helmCommandPath(ctx)
+		if err != nil {
+			return err
+		}
+		name = p
+	}
 	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.Dir = dir
 	cmd.Env = isolatedProcessEnv(os.Environ(), env)

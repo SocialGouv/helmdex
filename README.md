@@ -32,11 +32,25 @@ go install github.com/SocialGouv/helmdex/cmd/helmdex@latest
 Requirements:
 
 - Go (for installation)
-- Helm (used for dependency operations; `helmdex` still won’t deploy anything)
+- Helm is bundled automatically (pinned) for reproducible dependency operations.
 
 ```bash
 helmdex init   # create helmdex.yaml at repo root
 helmdex        # open TUI
+```
+
+### Bundled Helm behavior
+
+By default, `helmdex` uses a pinned Helm binary (`v4.1.1`) installed at:
+
+- `~/.helmdex/bin/helm` (or `helm.exe` on Windows)
+
+If it is missing or not the pinned version, `helmdex` downloads it from `https://get.helm.sh` and verifies it against the official per-archive checksum file (`.sha256sum` / `.sha256`).
+
+To disable this behavior (and require `helm` on `PATH`):
+
+```bash
+export HELMDEX_NO_BUNDLED_HELM=1
 ```
 
 Running `helmdex` with no arguments opens the interactive dashboard when stdin is a TTY. Outside a TTY (pipe, CI) it prints help instead.

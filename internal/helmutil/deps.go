@@ -27,6 +27,13 @@ func DependencyBuild(ctx context.Context, env Env, chartDir string) error {
 }
 
 func runQuiet(ctx context.Context, env Env, dir, name string, args ...string) (string, error) {
+	if name == "helm" || name == "helm.exe" {
+		p, err := helmCommandPath(ctx)
+		if err != nil {
+			return "", err
+		}
+		name = p
+	}
 	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.Dir = dir
 	cmd.Env = isolatedProcessEnv(cmd.Environ(), env)

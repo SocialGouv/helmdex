@@ -1041,6 +1041,13 @@ func uniqueStrings(in []string) []string {
 
 type errMsg struct{ err error }
 
+type helmDownloadStartMsg struct{ version string }
+
+type helmDownloadDoneMsg struct {
+	version string
+	err     string
+}
+
 type regenDoneMsg struct{}
 
 // editValuesDoneMsg is emitted after the editor for values.instance.yaml exits.
@@ -2324,6 +2331,19 @@ func (m AppModel) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	switch msg := msg.(type) {
+	case helmDownloadStartMsg:
+		label := "Downloading Helm"
+		if strings.TrimSpace(msg.version) != "" {
+			label = "Downloading Helm " + strings.TrimSpace(msg.version)
+		}
+		return m, m.beginBusy(label)
+	case helmDownloadDoneMsg:
+		m.endBusy()
+		if strings.TrimSpace(msg.err) != "" {
+			// Surface in footer so users understand why helm operations fail.
+			m.setStatusErr(msg.err)
+		}
+		return m, nil
 	case quitArmExpiredMsg:
 		if m.quitArmed && msg.id == m.quitArmID {
 			m.quitArmed = false
