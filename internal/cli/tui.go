@@ -12,8 +12,9 @@ import (
 
 func newTUICmd(f *rootFlags) *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "tui",
-		Short: "Launch the interactive dashboard",
+		Use:    "tui",
+		Short:  "Launch the interactive dashboard",
+		Hidden: true, // running `helmdex` with no args opens the TUI directly
 		RunE: func(cmd *cobra.Command, args []string) error {
 			repoRoot, err := repo.ResolveRoot(f.RepoRoot)
 			if err != nil {

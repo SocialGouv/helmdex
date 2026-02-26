@@ -12,6 +12,11 @@ import (
 	"github.com/spf13/cobra"
 )
 
+func isTTY() bool {
+	fi, err := os.Stdin.Stat()
+	return err == nil && (fi.Mode()&os.ModeCharDevice) != 0
+}
+
 type rootFlags struct {
 	RepoRoot string
 	Config   string
@@ -25,6 +30,10 @@ func NewRootCmd() *cobra.Command {
 		Short: appinfo.Short,
 		Long:  appinfo.Long,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if !isTTY() {
+				return cmd.Help()
+			}
+
 			repoRoot, err := repo.ResolveRoot(f.RepoRoot)
 			if err != nil {
 				return err
@@ -41,9 +50,9 @@ func NewRootCmd() *cobra.Command {
 			}
 
 			return tui.Run(cmd.Context(), tui.Params{
-				RepoRoot: repoRoot,
+				RepoRoot:   repoRoot,
 				ConfigPath: cfgPath,
-				Config: cfg,
+				Config:     cfg,
 			})
 		},
 	}
