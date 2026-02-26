@@ -1,0 +1,22 @@
+{
+  "name": "helmdex-tui-tests",
+  "private": true,
+  "packageManager": "pnpm@10.5.2",
+  "scripts": {
+    "test:tui": "vitest run --config tests/tui/vitest.config.ts",
+    "tui:daemon": "tsx tests/tui/scripts/daemon-start.ts",
+    "tui:stop": "tsx tests/tui/scripts/daemon-stop.ts",
+    "tui:run": "tsx tests/tui/scripts/app-run.ts",
+    "build:helmdex": "go build -o ./bin/helmdex ./cmd/helmdex"
+  },
+  "devDependencies": {
+    "agent-tui": "1.0.1",
+    "@types/node": "^22.13.1",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.3",
+    "vitest": "^2.1.8"
+  },
+  "dependencies": {
+    "strip-ansi": "^7.1.0"
+  }
+}

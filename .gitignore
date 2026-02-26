@@ -6,3 +6,10 @@
 /apps/
 /helmdex.yaml
 
+# TUI E2E artifacts + local build output
+/tests/tui/artifacts/
+/bin/
+
+node_modules
+
+/bin

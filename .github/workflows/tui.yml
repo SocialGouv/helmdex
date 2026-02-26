@@ -1,0 +1,41 @@
+name: tui-e2e
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  tui:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      # Install devbox (Jetify)
+      - name: Install devbox
+        uses: jetify-com/devbox-install-action@v0.12.0
+
+      - name: Cache devbox
+        uses: actions/cache@v4
+        with:
+          path: |
+            .devbox
+            /nix/store
+          key: devbox-${{ runner.os }}-${{ hashFiles('devbox.json', 'devbox.lock') }}
+
+      - name: Install JS deps
+        run: devbox run -- corepack pnpm install
+
+      - name: Build helmdex
+        run: devbox run -- corepack pnpm run build:helmdex
+
+      - name: Run TUI tests
+        run: devbox run -- corepack pnpm run test:tui
+
+      - name: Upload artifacts (on failure)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: tui-artifacts
+          path: tests/tui/artifacts
+

@@ -1306,6 +1306,25 @@ func (m AppModel) applyCatalogDependencyWithSetsCmdCtx(ctx context.Context, appl
 		}
 
 		// Apply pipeline.
+		if e2eStubHelm() {
+			// Deterministic E2E stub: bypass Helm-dependent relock/preset import.
+			// Keep overlay visible long enough for cancel-flow E2E coverage.
+			// NOTE: startApplyCmd uses a non-zero applyID.
+			if applyID != 0 {
+				select {
+				case <-ctx.Done():
+					rollback()
+					return applyDoneMsg{applyID: applyID, chart: nil, err: ctx.Err()}
+				case <-time.After(4 * time.Second):
+					// continue
+				}
+			}
+			if err := values.GenerateMergedValues(m.selected.Path); err != nil {
+				rollback()
+				return applyDoneMsg{applyID: applyID, chart: nil, err: err}
+			}
+			return applyDoneMsg{applyID: applyID, chart: &c, err: nil}
+		}
 		if _, err := instances.RelockIfDepsChanged(ctx, m.params.RepoRoot, m.selected.Path); err != nil {
 			rollback()
 			return applyDoneMsg{applyID: applyID, chart: nil, err: err}
@@ -1685,6 +1704,19 @@ func (m *AppModel) watchVersions(dep yamlchart.Dependency) {
 func (m *AppModel) refreshVersionsCmd(dep yamlchart.Dependency, target versionsTarget) tea.Cmd {
 	return func() tea.Msg {
 		key := versionsKey(dep.Repository, dep.Name)
+		if e2eStubHelm() {
+			// Deterministic E2E stub: avoid helm repo access.
+			vs := []string{"9.9.9", "2.0.0", "1.1.0", "1.0.0"}
+			return versionsRefreshResultMsg{
+				key:       key,
+				repoURL:   dep.Repository,
+				chartName: dep.Name,
+				depID:     yamlchart.DependencyID(dep),
+				target:    target,
+				versions:  vs,
+				err:       nil,
+			}
+		}
 		ctx, cancel := context.WithTimeout(contextBG(), 60*time.Second)
 		defer cancel()
 		vs, err := helmutil.RepoChartVersions(ctx, m.params.RepoRoot, dep.Repository, dep.Name, 24*time.Hour)
@@ -1705,6 +1737,12 @@ func (m *AppModel) refreshVersionsCmd(dep yamlchart.Dependency, target versionsT
 
 func (m AppModel) loadHelmPreviewsCmd(repoURL, chartName, version string) tea.Cmd {
 	return func() tea.Msg {
+		if e2eStubHelm() {
+			// Deterministic E2E stub: bypass helm show/pull.
+			readme := "# Stub README\n\nThis is a deterministic E2E stub.\n"
+			values := "replicaCount: 1\nimage:\n  tag: stub\n"
+			return ahDetailMsg{readme: readme, values: values}
+		}
 		// Force refresh is a one-shot toggle.
 		force := m.ahForceRefresh
 		// Reset happens in Update() when triggering; this closure just reads.
@@ -1829,6 +1867,13 @@ func (m AppModel) loadValuesPreviewCmd(relPath string) tea.Cmd {
 func (m AppModel) loadDepDetailPreviewsCmd(dep yamlchart.Dependency) tea.Cmd {
 	return func() tea.Msg {
 		id := yamlchart.DependencyID(dep)
+		if e2eStubHelm() {
+			// Deterministic E2E stub: let dep detail modal render without Helm.
+			readme := "# Stub README\n\nDeterministic E2E stub.\n"
+			values := "replicaCount: 1\n"
+			schema := "{}"
+			return depDetailPreviewsMsg{ID: id, readme: readme, defaultValues: values, schema: schema}
+		}
 		ctx, cancel := context.WithTimeout(contextBG(), 60*time.Second)
 		defer cancel()
 
@@ -1949,6 +1994,10 @@ func (m AppModel) loadDepDetailPreviewsCmd(dep yamlchart.Dependency) tea.Cmd {
 func (m AppModel) loadDepDetailVersionsCmd(dep yamlchart.Dependency) tea.Cmd {
 	return func() tea.Msg {
 		id := yamlchart.DependencyID(dep)
+		if e2eStubHelm() {
+			// Deterministic E2E stub: avoid helm repo access.
+			return depDetailVersionsMsg{ID: id, Versions: []string{"9.9.9", "2.0.0", "1.1.0", "1.0.0"}}
+		}
 		if strings.HasPrefix(dep.Repository, "oci://") {
 			return depDetailVersionsMsg{ID: id, Versions: nil}
 		}
@@ -2127,6 +2176,37 @@ func (m AppModel) saveSourcesCmd(name, gitURL, gitRef, platform string) tea.Cmd 
 
 func (m AppModel) ahSearchCmd(query string) tea.Cmd {
 	return func() tea.Msg {
+		if e2eStubArtifactHub() {
+			// Deterministic E2E stub: avoid network.
+			q := strings.TrimSpace(strings.ToLower(query))
+			// Keep the shape minimal; UI only needs a stable list.
+			res := []artifacthub.PackageSummary{}
+			if q == "" || strings.Contains("nginx", q) {
+				res = append(res, artifacthub.PackageSummary{
+					RepositoryID:   "stub-repo-id",
+					RepositoryKey:  "stub",
+					RepositoryName: "Stub Repo",
+					RepositoryURL:  "https://example.invalid/charts",
+					Name:           "nginx",
+					DisplayName:    "nginx",
+					Description:    "stubbed chart",
+					LatestVersion:  "1.2.3",
+				})
+			}
+			if q == "" || strings.Contains("postgres", q) {
+				res = append(res, artifacthub.PackageSummary{
+					RepositoryID:   "stub-repo-id",
+					RepositoryKey:  "stub",
+					RepositoryName: "Stub Repo",
+					RepositoryURL:  "https://example.invalid/charts",
+					Name:           "postgresql",
+					DisplayName:    "postgresql",
+					Description:    "stubbed chart",
+					LatestVersion:  "9.9.9",
+				})
+			}
+			return ahSearchMsg{results: res}
+		}
 		res, err := m.ahClient.SearchHelm(contextBG(), query, 50)
 		if err != nil {
 			return errMsg{err}
@@ -2137,6 +2217,11 @@ func (m AppModel) ahSearchCmd(query string) tea.Cmd {
 
 func (m AppModel) ahVersionsCmd(repoID, pkg string) tea.Cmd {
 	return func() tea.Msg {
+		if e2eStubArtifactHub() {
+			// Deterministic E2E stub: avoid network.
+			versions := []artifacthub.Version{{Version: "2.0.0"}, {Version: "1.1.0"}, {Version: "1.0.0"}}
+			return ahVersionsMsg{versions: versions}
+		}
 		detail, err := m.ahClient.GetHelmPackage(contextBG(), repoID, pkg)
 		if err != nil {
 			return errMsg{err}
@@ -5101,6 +5186,13 @@ func (m AppModel) renderDepDetailBody() string {
 
 func (m AppModel) validateDependencyVersionCmd(dep yamlchart.Dependency) tea.Cmd {
 	return func() tea.Msg {
+		if e2eStubHelm() {
+			// Deterministic E2E stub: treat any non-empty version as valid.
+			if strings.TrimSpace(dep.Version) == "" {
+				return errMsg{fmt.Errorf("version is required")}
+			}
+			return depVersionValidatedMsg{dep: dep}
+		}
 		// If catalog-attached, enforce preset-coverage supported range.
 		if src, ok := m.depSourceFor(dep); ok && src.Kind == depSourceCatalog {
 			cov, covOK, why := m.presetCoverageForCatalogDep(src, ok, dep.Name)
@@ -5156,6 +5248,23 @@ func (m AppModel) loadDepDiffCmd(oldDep, newDep yamlchart.Dependency) tea.Cmd {
 	return func() tea.Msg {
 		if m.selected == nil {
 			return depDiffLoadedMsg{err: fmt.Errorf("no instance selected")}
+		}
+		if e2eStubHelm() {
+			// Deterministic E2E stub: provide minimal diff payload without Helm.
+			schemaText := "(stub diff)\n"
+			valuesText := "~ replicaCount: 1 -> 2\n"
+			return depDiffLoadedMsg{
+				oldDep:       oldDep,
+				newDep:       newDep,
+				schemaText:   schemaText,
+				valuesText:   valuesText,
+				schemaRows:   nil,
+				valuesRows:   nil,
+				schemaCounts: diffCounts{Added: 0, Removed: 0, Changed: 1},
+				valuesCounts: diffCounts{Added: 0, Removed: 0, Changed: 1},
+				usedSchema:   false,
+				err:          nil,
+			}
 		}
 		ctx, cancel := context.WithTimeout(contextBG(), 75*time.Second)
 		defer cancel()
@@ -5422,6 +5531,20 @@ func (m AppModel) upgradeDepToLatestCmd(dep yamlchart.Dependency) tea.Cmd {
 	return func() tea.Msg {
 		if strings.HasPrefix(dep.Repository, "oci://") {
 			return errMsg{fmt.Errorf("cannot auto-upgrade OCI dependency %s; use v to set exact version", yamlchart.DependencyID(dep))}
+		}
+		if e2eStubHelm() {
+			// Deterministic E2E stub: avoid helm repo access.
+			vs := []string{"9.9.9", "2.0.0", "1.1.0", "1.0.0"}
+			best, ok := semverutil.BestStable(vs)
+			if !ok {
+				best = "2.0.0"
+			}
+			if strings.TrimSpace(best) == strings.TrimSpace(dep.Version) {
+				return noopMsg{}
+			}
+			newDep := dep
+			newDep.Version = best
+			return depVersionValidatedMsg{dep: newDep}
 		}
 		ctx, cancel := context.WithTimeout(contextBG(), 75*time.Second)
 		defer cancel()
@@ -5800,6 +5923,11 @@ func (m AppModel) editInstanceValuesCmd() tea.Cmd {
 		if m.selected == nil {
 			return errMsg{fmt.Errorf("no instance selected")}
 		}
+		if e2eNoEditor() {
+			// E2E: deterministically skip spawning an external editor.
+			// Return success so the normal post-edit regen flow runs.
+			return editValuesDoneMsg{}
+		}
 		editor := strings.TrimSpace(os.Getenv("EDITOR"))
 		if editor == "" {
 			editor = "vi"
@@ -5870,6 +5998,14 @@ func (m AppModel) applyInstanceCmd(forceRelock bool) tea.Cmd {
 	return func() tea.Msg {
 		if m.selected == nil {
 			return errMsg{fmt.Errorf("no instance selected")}
+		}
+		if e2eStubHelm() {
+			// Deterministic E2E stub: bypass helm relock pipeline.
+			// Still run merged values generation so the UI behaves realistically.
+			if err := values.GenerateMergedValues(m.selected.Path); err != nil {
+				return errMsg{err}
+			}
+			return appliedMsg{}
 		}
 		// Optional relock.
 		if forceRelock {
