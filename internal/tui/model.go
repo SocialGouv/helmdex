@@ -139,6 +139,8 @@ type AppModel struct {
 	// dependency version editor (Deps tab)
 	depEditOpen bool
 	depEditDep  yamlchart.Dependency
+	depEditSource   depSourceMeta
+	depEditSourceOK bool
 	depEditMode depEditMode
 	// depEditLoading indicates a background refresh is running; the list may still
 	// be usable if we have cached versions.
@@ -164,6 +166,9 @@ type AppModel struct {
 	depDetailTabKinds []depDetailTabKind
 	depDetailLoading  bool
 	depDetailMode     depEditMode // reuse enum: list vs manual
+	// depDetailSettingsCursor selects rows within the Settings tab when the alias
+	// input is not focused.
+	depDetailSettingsCursor int
 	depDetailAliasInput     textinput.Model
 	depDetailDeleteConfirm  bool
 	// depDetailSetsLoading is specific to the Sets tab.
@@ -181,6 +186,11 @@ type AppModel struct {
 	depDetailPreview         viewport.Model
 	depDetailPendingVersion  string
 	depConfigure             depConfigureModel
+
+	// catalog supported versions cache (computed from preset coverage)
+	depCatalogCoverageKey string
+	depCatalogCoverage    presets.PresetCoverage
+	depCatalogCoverageOK  bool
 
 	// dependency upgrade diff modal (Deps tab)
 	depDiffOpen    bool
@@ -523,10 +533,16 @@ func (a depActionItem) FilterValue() string { return string(a) }
 
 const (
 	depActionSyncPresets  depActionItem = "Sync presets"
+	depActionDetachCatalog depActionItem = "Detach from catalog"
 	depActionChangeVer    depActionItem = "Change version"
 	depActionUpgrade      depActionItem = "Upgrade to latest"
 	depActionRemove       depActionItem = "Remove"
 )
+
+type depDetachedMsg struct {
+	dep yamlchart.Dependency
+	err error
+}
 
 type depWizardStep int
 
@@ -881,6 +897,87 @@ func selectedSetNames(items []list.Item) []string {
 	return out
 }
 
+func (m *AppModel) depSourceFor(dep yamlchart.Dependency) (depSourceMeta, bool) {
+	// Prefer the most contextual modal.
+	if m.depDetailOpen && yamlchart.DependencyID(m.depDetailDep) == yamlchart.DependencyID(dep) {
+		return m.depDetailSource, m.depDetailSourceOK
+	}
+	if m.depEditOpen && yamlchart.DependencyID(m.depEditDep) == yamlchart.DependencyID(dep) {
+		return m.depEditSource, m.depEditSourceOK
+	}
+	// Fallback to list selection.
+	if it := m.depsList.SelectedItem(); it != nil {
+		if di, ok := it.(depItem); ok {
+			if yamlchart.DependencyID(di.Dep) == yamlchart.DependencyID(dep) {
+				return di.Source, di.SourceOK
+			}
+		}
+	}
+	return depSourceMeta{}, false
+}
+
+func (m *AppModel) chartsPathForSource(sourceName string) (chartsPath string, ok bool) {
+	sourceName = strings.TrimSpace(sourceName)
+	if sourceName == "" {
+		return "", false
+	}
+	if m.params.Config == nil {
+		return "charts", false
+	}
+	for _, src := range m.params.Config.Sources {
+		if strings.TrimSpace(src.Name) != sourceName {
+			continue
+		}
+		cp := strings.TrimSpace(src.Presets.ChartsPath)
+		if cp == "" {
+			cp = "charts"
+		}
+		return cp, true
+	}
+	return "charts", false
+}
+
+func (m *AppModel) presetCoverageForCatalogDep(source depSourceMeta, sourceOK bool, chartName string) (presets.PresetCoverage, bool, string) {
+	if !sourceOK || source.Kind != depSourceCatalog {
+		return presets.PresetCoverage{}, false, ""
+	}
+	catSrc := strings.TrimSpace(source.CatalogSource)
+	if catSrc == "" {
+		return presets.PresetCoverage{}, false, "catalog source is missing"
+	}
+	chartName = strings.TrimSpace(chartName)
+	if chartName == "" {
+		return presets.PresetCoverage{}, false, "chart name is missing"
+	}
+
+	chartsPath, _ := m.chartsPathForSource(catSrc)
+	key := catSrc + "/" + chartsPath + "/" + chartName
+	if m.depCatalogCoverageOK && strings.TrimSpace(m.depCatalogCoverageKey) == key {
+		return m.depCatalogCoverage, true, ""
+	}
+
+	chartRoot := filepath.Join(m.params.RepoRoot, ".helmdex", "cache", catSrc, chartsPath, chartName)
+	cov, ok, err := presets.ReadPresetCoverage(chartRoot)
+	if err != nil {
+		// Treat as no coverage; surface actionable error.
+		m.depCatalogCoverageKey = key
+		m.depCatalogCoverage = presets.PresetCoverage{}
+		m.depCatalogCoverageOK = true
+		return presets.PresetCoverage{}, false, err.Error()
+	}
+	// Cache even if not ok (missing path) so repeated refreshes don't hammer fs.
+	m.depCatalogCoverageKey = key
+	m.depCatalogCoverage = cov
+	m.depCatalogCoverageOK = true
+	if !ok {
+		return presets.PresetCoverage{}, false, "catalog preset cache not found"
+	}
+	if cov.Empty() {
+		return presets.PresetCoverage{}, false, "no preset coverage"
+	}
+	return cov, true, ""
+}
+
 func uniqueStrings(in []string) []string {
 	if len(in) < 2 {
 		return in
@@ -927,6 +1024,24 @@ type depPresetsSyncDoneMsg struct {
 	err error
 }
 
+func (m AppModel) detachDepFromCatalogCmd(dep yamlchart.Dependency) tea.Cmd {
+	return func() tea.Msg {
+		if m.selected == nil {
+			return depDetachedMsg{dep: dep, err: fmt.Errorf("no instance selected")}
+		}
+		// Only detach if currently catalog-attached.
+		meta, ok := readDepSourceMeta(m.params.RepoRoot, m.selected.Name, yamlchart.DependencyID(dep))
+		if !ok || meta.Kind != depSourceCatalog {
+			return depDetachedMsg{dep: dep, err: fmt.Errorf("dependency is not catalog-attached")}
+		}
+		// Switch to arbitrary.
+		if err := m.writeSelectedDepSourceMeta(dep, depSourceMeta{Kind: depSourceArbitrary}); err != nil {
+			return depDetachedMsg{dep: dep, err: err}
+		}
+		return depDetachedMsg{dep: dep, err: nil}
+	}
+}
+
 type sourcesSavedMsg struct {
 	cfg *config.Config
 	err error
@@ -969,10 +1084,22 @@ func (m AppModel) openDepActionsSelected() (tea.Model, tea.Cmd) {
 	}
 	m.depActionsList.SetItems([]list.Item{
 		depActionItem(depActionSyncPresets),
+		// Detach action is conditionally inserted below.
 		depActionItem(depActionChangeVer),
 		depActionItem(depActionUpgrade),
 		depActionItem(depActionRemove),
 	})
+	if m.depActionsSourceOK && m.depActionsSource.Kind == depSourceCatalog {
+		items := m.depActionsList.Items()
+		out := make([]list.Item, 0, len(items)+1)
+		for _, it := range items {
+			if it == depActionItem(depActionChangeVer) {
+				out = append(out, depActionItem(depActionDetachCatalog))
+			}
+			out = append(out, it)
+		}
+		m.depActionsList.SetItems(out)
+	}
 	m.depActionsList.Select(0)
 	return m, nil
 }
@@ -984,6 +1111,11 @@ func (m AppModel) depActionsUpdate(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.depActionsDep = yamlchart.Dependency{}
 		m.modalErr = ""
 		return m, nil
+	}
+
+	// Global detach shortcut (works on any tab, including Versions).
+	if (msg.String() == "D") && m.depDetailSourceOK && m.depDetailSource.Kind == depSourceCatalog {
+		return m, tea.Batch(m.beginBusy("Detaching"), m.detachDepFromCatalogCmd(m.depDetailDep))
 	}
 
 	var cmd tea.Cmd
@@ -1015,6 +1147,8 @@ func (m AppModel) depActionsUpdate(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m.openDepEditSelected()
 		case depActionItem(depActionSyncPresets):
 			return m, tea.Batch(m.beginBusy("Syncing"), m.syncSelectedDepPresetsCmd())
+		case depActionItem(depActionDetachCatalog):
+			return m, tea.Batch(m.beginBusy("Detaching"), m.detachDepFromCatalogCmd(m.depActionsDep))
 		default:
 			return m, cmd
 		}
@@ -1526,12 +1660,42 @@ func (m *AppModel) setVersionsList(items []string, which versionsTarget) {
 	data := items
 	listModel := &m.depEditVersions
 	curVer := ""
+	var src depSourceMeta
+	var srcOK bool
+	var chartName string
 	if which == versionsTargetDepDetail {
 		listModel = &m.depDetailVersions
 		curVer = m.depDetailDep.Version
-		m.depDetailVersionsData = data
+		src = m.depDetailSource
+		srcOK = m.depDetailSourceOK
+		chartName = m.depDetailDep.Name
 	} else {
 		curVer = m.depEditDep.Version
+		src = m.depEditSource
+		srcOK = m.depEditSourceOK
+		chartName = m.depEditDep.Name
+	}
+
+	// If catalog-attached, filter versions to those covered by preset cache.
+	if srcOK && src.Kind == depSourceCatalog {
+		cov, ok, why := m.presetCoverageForCatalogDep(src, srcOK, chartName)
+		if ok {
+			data = cov.Filter(data)
+		} else {
+			data = nil
+			if strings.TrimSpace(why) == "" {
+				why = "no supported versions"
+			}
+			m.modalErr = "No catalog-supported versions for this chart (" + why + "). Detach from catalog to pick any version."
+		}
+		if len(data) == 0 {
+			m.modalErr = "No catalog-supported versions for this chart. Detach from catalog to pick any version."
+		}
+	}
+
+	if which == versionsTargetDepDetail {
+		m.depDetailVersionsData = data
+	} else {
 		m.depEditVersionsData = data
 	}
 	its := make([]list.Item, 0, len(data))
@@ -2357,6 +2521,26 @@ func (m AppModel) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.depDetailSetsLoading = true
 			m.depDetailPreview.SetContent(m.renderDepDetailBody())
 			return m, tea.Batch(m.beginBusy("Loading sets"), m.loadDepDetailSetsCmd(msg.dep))
+		}
+		return m, nil
+	case depDetachedMsg:
+		m.endBusy()
+		if msg.err != nil {
+			m.setStatusErr(msg.err.Error())
+			return m, nil
+		}
+		m.clearStatusErr()
+		m.setStatusOK("Detached from catalog")
+		// Refresh deps list so the source tag changes, and refresh detail modal tabs.
+		if m.chart != nil {
+			m.setDepsListFromChartPreserveSelection(m.chart.Dependencies)
+		}
+		if m.depDetailOpen && yamlchart.DependencyID(m.depDetailDep) == yamlchart.DependencyID(msg.dep) {
+			m.depDetailSource = depSourceMeta{Kind: depSourceArbitrary}
+			m.depDetailSourceOK = true
+			m.depDetailTabNames, m.depDetailTabKinds = depDetailTabs(m.depDetailSource, m.depDetailSourceOK)
+			m.depDetailTab = min(m.depDetailTab, max(0, len(m.depDetailTabNames)-1))
+			m.depDetailPreview.SetContent(m.renderDepDetailBody())
 		}
 		return m, nil
 	case catalogSetsMsg:
@@ -4399,6 +4583,11 @@ func (m *AppModel) clearAnyActiveFilter() bool {
 }
 
 func (m AppModel) depEditUpdate(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	// Global detach shortcut while in version picker.
+	if msg.String() == "D" && m.depEditSourceOK && m.depEditSource.Kind == depSourceCatalog {
+		return m, tea.Batch(m.beginBusy("Detaching"), m.detachDepFromCatalogCmd(m.depEditDep))
+	}
+
 	if msg.Type == tea.KeyEsc {
 		// When filtering is active, Esc should clear the filter first (rather than
 		// closing the whole modal).
@@ -4495,6 +4684,7 @@ func (m AppModel) openDepDetailSelected() (tea.Model, tea.Cmd) {
 	m.depDetailReadme = ""
 	m.depDetailDefaultValues = ""
 	m.depDetailPendingVersion = ""
+	m.depDetailSettingsCursor = 0
 	m.depDetailVersionsData = nil
 	m.depDetailVersions.SetItems(nil)
 	m.depDetailVersionsLoading = false
@@ -4579,6 +4769,26 @@ func (m AppModel) depDetailUpdate(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	// Dependency tab.
 	if activeKind == depDetailTabDependency {
+		// Detach row selection + activation when not editing alias.
+		if m.depDetailSourceOK && m.depDetailSource.Kind == depSourceCatalog && !m.depDetailAliasInput.Focused() && !m.depDetailDeleteConfirm {
+			if msg.Type == tea.KeyUp {
+				m.depDetailSettingsCursor = max(0, m.depDetailSettingsCursor-1)
+				m.depDetailPreview.SetContent(m.renderDepDetailBody())
+				return m, nil
+			}
+			if msg.Type == tea.KeyDown {
+				m.depDetailSettingsCursor = min(1, m.depDetailSettingsCursor+1)
+				m.depDetailPreview.SetContent(m.renderDepDetailBody())
+				return m, nil
+			}
+			// Enter activates selected row.
+			if msg.Type == tea.KeyEnter {
+				if m.depDetailSettingsCursor == 1 {
+					return m, tea.Batch(m.beginBusy("Detaching"), m.detachDepFromCatalogCmd(m.depDetailDep))
+				}
+				// cursor 0 = alias row; continue to existing alias logic below.
+			}
+		}
 		// Allow tab navigation with ←/→ while not editing the alias.
 		// When editing (input focused), let the text input consume arrow keys.
 		if !m.depDetailAliasInput.Focused() {
@@ -4889,12 +5099,26 @@ func (m AppModel) renderDepDetailBody() string {
 		lines := []string{}
 		lines = append(lines, styleHeading.Render(withIcon(iconDeps, "Settings")))
 		lines = append(lines, "")
-		lines = append(lines, styleMuted.Render("Alias (changes depID)"))
+		aliasLabel := "Alias (changes depID)"
+		if m.depDetailSourceOK && m.depDetailSource.Kind == depSourceCatalog && !m.depDetailAliasInput.Focused() && m.depDetailSettingsCursor == 0 {
+			aliasLabel = "> " + aliasLabel
+		}
+		lines = append(lines, styleMuted.Render(aliasLabel))
 		lines = append(lines, m.depDetailAliasInput.View())
 		if m.depDetailAliasInput.Focused() {
 			lines = append(lines, styleMuted.Render("enter: apply • esc: cancel"))
 		} else {
 			lines = append(lines, styleMuted.Render("enter: edit • (leave empty + enter to clear)"))
+		}
+		// Detach row (catalog only)
+		if m.depDetailSourceOK && m.depDetailSource.Kind == depSourceCatalog {
+			lines = append(lines, "")
+				detachLine := withIcon(iconCustom, "Detach from catalog")
+				if !m.depDetailAliasInput.Focused() && m.depDetailSettingsCursor == 1 {
+					detachLine = "> " + detachLine
+				}
+				lines = append(lines, detachLine)
+			lines = append(lines, styleMuted.Render("enter: detach • D: detach (any tab)"))
 		}
 		lines = append(lines, "")
 		if m.depDetailDeleteConfirm {
@@ -4940,6 +5164,20 @@ func (m AppModel) renderDepDetailBody() string {
 
 func (m AppModel) validateDependencyVersionCmd(dep yamlchart.Dependency) tea.Cmd {
 	return func() tea.Msg {
+		// If catalog-attached, enforce preset-coverage supported range.
+		if src, ok := m.depSourceFor(dep); ok && src.Kind == depSourceCatalog {
+			cov, covOK, why := m.presetCoverageForCatalogDep(src, ok, dep.Name)
+			if !covOK {
+				reason := strings.TrimSpace(why)
+				if reason == "" {
+					reason = "no supported versions"
+				}
+				return errMsg{fmt.Errorf("catalog does not support version %q for %s (%s); detach from catalog to pick any version", dep.Version, yamlchart.DependencyID(dep), reason)}
+			}
+			if !cov.Supports(dep.Version) {
+				return errMsg{fmt.Errorf("catalog does not support version %q for %s; detach from catalog to pick any version", dep.Version, yamlchart.DependencyID(dep))}
+			}
+		}
 		if strings.HasPrefix(dep.Repository, "oci://") {
 			return depVersionValidatedMsg{dep: dep}
 		}
@@ -5169,6 +5407,16 @@ func (m AppModel) openDepEditSelected() (tea.Model, tea.Cmd) {
 		return m, func() tea.Msg { return errMsg{fmt.Errorf("unexpected dependency item type")} }
 	}
 	dep := di.Dep
+	// Load dep source metadata so version filtering can be applied.
+	if m.selected != nil {
+		if meta, ok := readDepSourceMeta(m.params.RepoRoot, m.selected.Name, yamlchart.DependencyID(dep)); ok {
+			m.depEditSource = meta
+			m.depEditSourceOK = true
+		} else {
+			m.depEditSource = depSourceMeta{}
+			m.depEditSourceOK = false
+		}
+	}
 
 	m.depEditOpen = true
 	m.depEditDep = dep
@@ -5243,6 +5491,18 @@ func (m AppModel) upgradeDepToLatestCmd(dep yamlchart.Dependency) tea.Cmd {
 		vs, err := helmutil.RepoChartVersions(ctx, m.params.RepoRoot, dep.Repository, dep.Name, 24*time.Hour)
 		if err != nil {
 			return errMsg{err}
+		}
+		// If catalog-attached, restrict to catalog-supported versions.
+		if src, ok := m.depSourceFor(dep); ok && src.Kind == depSourceCatalog {
+			cov, covOK, why := m.presetCoverageForCatalogDep(src, ok, dep.Name)
+			if !covOK {
+				reason := strings.TrimSpace(why)
+				if reason == "" {
+					reason = "no supported versions"
+				}
+				return errMsg{fmt.Errorf("cannot upgrade %s: no catalog-supported versions (%s); detach from catalog to pick any version", yamlchart.DependencyID(dep), reason)}
+			}
+			vs = cov.Filter(vs)
 		}
 		best, ok := semverutil.BestStable(vs)
 		if !ok {

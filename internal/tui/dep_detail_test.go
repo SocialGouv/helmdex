@@ -1,9 +1,12 @@
 package tui
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
+	"helmdex/internal/instances"
 	"helmdex/internal/yamlchart"
 
 	"github.com/charmbracelet/bubbles/list"
@@ -265,5 +268,55 @@ func TestDepActionsMenuOpensFromDepsTab(t *testing.T) {
 	mm := nm.(AppModel)
 	if !mm.depActionsOpen {
 		t.Fatalf("expected dep actions menu to open")
+	}
+}
+
+func TestDepActionsMenuShowsDetachOnlyForCatalogDeps(t *testing.T) {
+	tmp := t.TempDir()
+	instPath := filepath.Join(tmp, "apps", "x")
+	if err := os.MkdirAll(instPath, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+
+	m := NewAppModel(Params{RepoRoot: tmp})
+	m.screen = ScreenInstance
+	m.activeTab = InstanceTabDeps
+	m.selected = &instances.Instance{Name: "x", Path: instPath}
+
+	dep := yamlchart.Dependency{Name: "nginx", Repository: "https://example.com", Version: "1.2.3"}
+	// Non-catalog depmeta.
+	if err := writeDepSourceMeta(tmp, "x", yamlchart.DependencyID(dep), depSourceMeta{Kind: depSourceArbitrary}); err != nil {
+		t.Fatalf("write depmeta: %v", err)
+	}
+	m.depsList.SetItems([]list.Item{depItem{Dep: dep}})
+
+	// Open actions menu.
+	nm, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
+	mm := nm.(AppModel)
+	if !mm.depActionsOpen {
+		t.Fatalf("expected actions menu open")
+	}
+	for _, it := range mm.depActionsList.Items() {
+		if it == depActionItem(depActionDetachCatalog) {
+			t.Fatalf("did not expect detach action for non-catalog dep")
+		}
+	}
+
+	// Now mark as catalog.
+	if err := writeDepSourceMeta(tmp, "x", yamlchart.DependencyID(dep), depSourceMeta{Kind: depSourceCatalog, CatalogID: "id", CatalogSource: "remote-source"}); err != nil {
+		t.Fatalf("write depmeta: %v", err)
+	}
+	mm.depActionsOpen = false
+	nm2, _ := mm.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
+	mm2 := nm2.(AppModel)
+	found := false
+	for _, it := range mm2.depActionsList.Items() {
+		if it == depActionItem(depActionDetachCatalog) {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected detach action for catalog dep")
 	}
 }

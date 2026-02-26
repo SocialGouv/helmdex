@@ -163,6 +163,9 @@ func renderDepEditModal(m AppModel) string {
 	switch m.depEditMode {
 	case depEditModeManual:
 		body = "Enter an exact version:\n\n" + m.depEditVersionInput.View() + "\n\n(enter: apply • esc: cancel)"
+		if m.depEditSourceOK && m.depEditSource.Kind == depSourceCatalog {
+			body += "\n" + styleMuted.Render("D: detach from catalog")
+		}
 	default:
 		if len(m.depEditVersionsData) == 0 {
 			if m.depEditLoading {
@@ -176,6 +179,9 @@ func renderDepEditModal(m AppModel) string {
 				refreshing = "  " + styleMuted.Render("(refreshing…)")
 			}
 			body = m.depEditVersions.View() + refreshing + "\n" + styleMuted.Render(withIcon(iconFilter, "/: filter")+" • enter: apply • esc: cancel")
+			if m.depEditSourceOK && m.depEditSource.Kind == depSourceCatalog {
+				body += "\n" + styleMuted.Render("D: detach from catalog")
+			}
 		}
 	}
 
@@ -265,7 +271,11 @@ func renderDepDetailModal(m AppModel) string {
 		}
 	}
 
-	footer := styleMuted.Render("←/→ tabs • esc close")
+	footer := "←/→ tabs • esc close"
+	if m.depDetailSourceOK && m.depDetailSource.Kind == depSourceCatalog {
+		footer += " • D detach"
+	}
+	footer = styleMuted.Render(footer)
 	return box.Render(header + "\n\n" + tabsLine + "\n\n" + body + "\n\n" + footer)
 }
 
