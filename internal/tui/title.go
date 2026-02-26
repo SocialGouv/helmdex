@@ -89,6 +89,9 @@ func currentTaskCrumb(m AppModel) string {
 	if m.sourcesOpen {
 		return "Configure sources"
 	}
+	if m.confirmOpen {
+		return "Confirm"
+	}
 	if m.depActionsOpen {
 		return "Dependency actions"
 	}

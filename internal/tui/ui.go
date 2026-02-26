@@ -279,6 +279,47 @@ func renderDepDetailModal(m AppModel) string {
 	return box.Render(header + "\n\n" + tabsLine + "\n\n" + body + "\n\n" + footer)
 }
 
+func renderConfirmModal(m AppModel) string {
+	box := stylePanelBox
+	box = box.Height(modalMaxHeight(m))
+	if !m.confirmOpen {
+		return ""
+	}
+
+	header := ""
+	body := ""
+	switch m.confirmKind {
+	case confirmDeleteInstance:
+		header = styleHeading.Render(withIcon(iconTrash, "Delete instance"))
+		name := strings.TrimSpace(m.confirmInstanceName)
+		if name != "" {
+			header += "\n" + styleMuted.Render(name)
+		}
+		body = styleErrStrong.Render("This will delete the instance directory and its depmeta.") + "\n\n" +
+			styleMuted.Render("y: delete • n: cancel • esc: cancel")
+	case confirmDeleteDependency:
+		header = styleHeading.Render(withIcon(iconTrash, "Delete dependency"))
+		dep := m.confirmDep
+		line := ""
+		if strings.TrimSpace(dep.Name) != "" {
+			line = fmt.Sprintf("%s @ %s", dep.Name, dep.Repository)
+			if strings.TrimSpace(dep.Version) != "" {
+				line += "  (" + dep.Version + ")"
+			}
+		}
+		if line != "" {
+			header += "\n" + styleMuted.Render(line)
+		}
+		body = styleErrStrong.Render("This will remove it from Chart.yaml and delete depID-keyed data (values.instance.yaml key, values.dep-set markers, depmeta).") + "\n\n" +
+			styleMuted.Render("y: delete • n: cancel • esc: cancel")
+	default:
+		header = styleHeading.Render(withIcon(iconErr, "Confirm"))
+		body = styleMuted.Render("No action") + "\n\n" + styleMuted.Render("esc: cancel")
+	}
+
+	return box.Render(header + "\n\n" + body)
+}
+
 func renderDepDiffModal(m AppModel) string {
 	box := stylePanelBox
 	box = box.Height(modalMaxHeight(m))

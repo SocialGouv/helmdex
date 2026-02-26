@@ -61,7 +61,14 @@ type AppModel struct {
 	instanceManageOpen   bool
 	instanceManageMode   instanceManageMode
 	instanceManageName   textinput.Model
-	instanceManageConfirm bool
+
+	// confirm modal (shared for destructive actions)
+	confirmOpen bool
+	confirmKind confirmKind
+	// confirmDep is used for dependency deletion.
+	confirmDep yamlchart.Dependency
+	// confirmInstanceName is used for instance deletion.
+	confirmInstanceName string
 
 	// instance detail
 	selected  *instances.Instance
@@ -170,7 +177,6 @@ type AppModel struct {
 	// input is not focused.
 	depDetailSettingsCursor int
 	depDetailAliasInput     textinput.Model
-	depDetailDeleteConfirm  bool
 	// depDetailSetsLoading is specific to the Sets tab.
 	depDetailSetsLoading bool
 	depDetailSets        list.Model
@@ -245,6 +251,14 @@ type AppModel struct {
 	sourcesErr  string
 }
 
+type confirmKind int
+
+const (
+	confirmNone confirmKind = iota
+	confirmDeleteInstance
+	confirmDeleteDependency
+)
+
 // quitArmExpiredMsg is emitted by a tea.Tick started when Ctrl+C arms quit.
 // The id is used to ignore stale ticks if the user re-arms before expiry.
 type quitArmExpiredMsg struct{ id int }
@@ -263,6 +277,14 @@ func (m *AppModel) clearStatusErr() { m.statusErr = "" }
 func (m AppModel) handleEscChain(msg tea.KeyMsg) (AppModel, tea.Cmd, bool) {
 	// Esc should first clear any active list filtering, then navigate back.
 	if key.Matches(msg, m.keys.Back) || msg.Type == tea.KeyEsc {
+		// First: confirm modal cancellation.
+		if m.confirmOpen {
+			m.confirmOpen = false
+			m.confirmKind = confirmNone
+			m.confirmDep = yamlchart.Dependency{}
+			m.confirmInstanceName = ""
+			return m, nil, true
+		}
 		// First: if any filter is active, clear it.
 		if m.clearAnyActiveFilter() {
 			return m, nil, true
@@ -314,7 +336,6 @@ func (m AppModel) handleEscChain(msg tea.KeyMsg) (AppModel, tea.Cmd, bool) {
 		}
 		if m.instanceManageOpen {
 			m.instanceManageOpen = false
-			m.instanceManageConfirm = false
 			m.instanceManageName.Blur()
 			return m, nil, true
 		}
@@ -388,6 +409,7 @@ func (m AppModel) noModalOpen() bool {
 	return !m.helpOpen &&
 		!m.paletteOpen &&
 		!m.sourcesOpen &&
+		!m.confirmOpen &&
 		!m.instanceManageOpen &&
 		!m.depActionsOpen &&
 		!m.depDiffOpen &&
@@ -396,6 +418,55 @@ func (m AppModel) noModalOpen() bool {
 		!m.valuesPreviewOpen &&
 		!m.applyOpen &&
 		!m.addingDep
+}
+
+func (m *AppModel) openConfirmDeleteInstance() {
+	m.confirmOpen = true
+	m.confirmKind = confirmDeleteInstance
+	if m.selected != nil {
+		m.confirmInstanceName = strings.TrimSpace(m.selected.Name)
+	} else {
+		m.confirmInstanceName = ""
+	}
+}
+
+func (m *AppModel) openConfirmDeleteDependency(dep yamlchart.Dependency) {
+	m.confirmOpen = true
+	m.confirmKind = confirmDeleteDependency
+	m.confirmDep = dep
+}
+
+func (m AppModel) confirmUpdate(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	// Cancel.
+	if msg.Type == tea.KeyEsc || msg.String() == "n" || msg.String() == "N" {
+		m.confirmOpen = false
+		m.confirmKind = confirmNone
+		m.confirmDep = yamlchart.Dependency{}
+		m.confirmInstanceName = ""
+		return m, nil
+	}
+	// Confirm.
+	if msg.String() == "y" || msg.String() == "Y" {
+		kind := m.confirmKind
+		dep := m.confirmDep
+		m.confirmOpen = false
+		m.confirmKind = confirmNone
+		m.confirmDep = yamlchart.Dependency{}
+		// Instance name is informational only; clear it.
+		m.confirmInstanceName = ""
+		switch kind {
+		case confirmDeleteInstance:
+			// Route through existing instance delete request pipeline.
+			return m, tea.Batch(m.beginBusy("Deleting"), func() tea.Msg { return instanceDeleteRequest{} })
+		case confirmDeleteDependency:
+			// Route through existing dependency-delete command.
+			m.depDetailDep = dep
+			return m, tea.Batch(m.beginBusy("Updating"), m.deleteDepFromDetailCmd())
+		default:
+			return m, nil
+		}
+	}
+	return m, nil
 }
 
 func hasCatalogEnabledSources(cfg *config.Config) bool {
@@ -459,7 +530,6 @@ type instanceManageMode int
 
 const (
 	instanceManageRename instanceManageMode = iota
-	instanceManageDelete
 )
 
 // depDetailTabs returns the dynamic tabs list for the dependency detail modal.
@@ -1137,10 +1207,8 @@ func (m AppModel) depActionsUpdate(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 		switch ai {
 		case depActionItem(depActionRemove):
-			// When actions are invoked from the actions menu, use the same cleanup pipeline
-			// as the dependency detail delete.
-			m.depDetailDep = m.depActionsDep
-			return m, tea.Batch(m.beginBusy("Updating"), m.deleteDepFromDetailCmd())
+			m.openConfirmDeleteDependency(m.depActionsDep)
+			return m, nil
 		case depActionItem(depActionUpgrade):
 			return m.upgradeSelectedDepCmd()
 		case depActionItem(depActionChangeVer):
@@ -2631,7 +2699,6 @@ func (m AppModel) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.depDetailAliasInput.Blur()
 		}
 		m.modalErr = ""
-		m.depDetailDeleteConfirm = false
 		m.clearStatusErr()
 		m.setStatusOK("Saved")
 		m.refreshValuesList()
@@ -2776,6 +2843,10 @@ func (m AppModel) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, tea.Batch(m.beginBusy("Syncing catalog"), m.catalogSyncCmd())
 			}
 		}
+		return m, nil
+	case instanceDeletedMsg:
+		m.endBusy()
+		// (legacy msg type retained; handled elsewhere)
 		return m, nil
 	case ahSearchMsg:
 		m.endBusy()
@@ -2963,6 +3034,11 @@ func (m AppModel) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 
+		// Confirm modal has highest priority while open.
+		if m.confirmOpen {
+			return m.confirmUpdate(msg)
+		}
+
 		// Dep diff modal has the highest priority while open.
 		if m.depDiffOpen {
 			return m.depDiffUpdate(msg)
@@ -3033,12 +3109,11 @@ func (m AppModel) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 			break
 		}
 
-		// Instance tab actions.
-		if m.screen == ScreenInstance && !m.addingDep && m.activeTab == InstanceTabInstance {
+	// Instance tab actions.
+	if m.screen == ScreenInstance && !m.addingDep && m.activeTab == InstanceTabInstance {
 			if msg.String() == "r" || msg.String() == "R" {
 				m.instanceManageOpen = true
 				m.instanceManageMode = instanceManageRename
-				m.instanceManageConfirm = false
 				cur := ""
 				if m.selected != nil {
 					cur = m.selected.Name
@@ -3048,10 +3123,7 @@ func (m AppModel) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			if msg.String() == "d" || msg.String() == "D" {
-				m.instanceManageOpen = true
-				m.instanceManageMode = instanceManageDelete
-				m.instanceManageConfirm = false
-				m.instanceManageName.Blur()
+				m.openConfirmDeleteInstance()
 				return m, nil
 			}
 		}
@@ -3106,7 +3178,6 @@ func (m AppModel) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			// Delete dependency.
 			if msg.String() == "d" || msg.String() == "D" {
-				// Route through the same cleanup pipeline as the Dependency tab delete.
 				it := m.depsList.SelectedItem()
 				if it == nil {
 					return m, nil
@@ -3115,8 +3186,8 @@ func (m AppModel) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if !ok {
 					return m, func() tea.Msg { return errMsg{fmt.Errorf("unexpected dependency item type")} }
 				}
-				m.depDetailDep = di.Dep
-				return m, tea.Batch(m.beginBusy("Updating"), m.deleteDepFromDetailCmd())
+				m.openConfirmDeleteDependency(di.Dep)
+				return m, nil
 			}
 			// Change version.
 			if msg.String() == "v" || msg.String() == "V" {
@@ -3243,21 +3314,6 @@ func (m AppModel) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, tea.Batch(m.beginBusy("Renaming"), func() tea.Msg { return instanceRenameRequest{newName: name} })
 			}
 			return m, cmd
-		}
-
-		// Delete flow: confirmation.
-		if m.instanceManageMode == instanceManageDelete {
-			if km, ok := msg.(tea.KeyMsg); ok {
-				if km.String() == "y" || km.String() == "Y" {
-					m.instanceManageOpen = false
-					return m, tea.Batch(m.beginBusy("Deleting"), func() tea.Msg { return instanceDeleteRequest{} })
-				}
-				if km.String() == "n" || km.String() == "N" {
-					m.instanceManageOpen = false
-					return m, nil
-				}
-			}
-			return m, nil
 		}
 	}
 
@@ -3822,8 +3878,10 @@ func (m AppModel) View() string {
 		// Palette is a full-body modal so it can't be pushed off-screen by the body.
 		body = m.palette.View()
 	} else if m.sourcesOpen {
-		// Sources modal is full-body for the same reason as the palette.
-		body = m.renderSourcesModal()
+	// Sources modal is full-body for the same reason as the palette.
+	body = m.renderSourcesModal()
+	} else if m.confirmOpen {
+		body = renderConfirmModal(m)
 	} else if m.instanceManageOpen {
 		body = m.renderInstanceManageModal()
 	} else if m.depActionsOpen {
@@ -3948,13 +4006,6 @@ func (m AppModel) renderInstanceManageModal() string {
 		}
 		body := m.instanceManageName.View() + "\n\n" + styleMuted.Render("enter rename • esc cancel")
 		return box.Render(header + "\n\n" + body)
-	case instanceManageDelete:
-		header := styleHeading.Render(withIcon(iconTrash, "Delete instance"))
-		if strings.TrimSpace(instName) != "" {
-			header += "\n" + styleMuted.Render(instName)
-		}
-		body := styleErrStrong.Render("This will delete the instance directory and its depmeta.") + "\n\n" + styleMuted.Render("y: delete • n: cancel • esc: cancel")
-		return box.Render(header + "\n\n" + body)
 	default:
 		return box.Render(styleMuted.Render("Unknown instance action"))
 	}
@@ -4005,6 +4056,9 @@ func (m AppModel) contextHelpLine() string {
 	if m.sourcesOpen {
 		return "tab: next field • shift+tab: prev field • enter: save • esc: close"
 	}
+	if m.confirmOpen {
+		return "y delete • n cancel • esc cancel"
+	}
 	if m.creating {
 		return "enter create • esc cancel"
 	}
@@ -4012,7 +4066,7 @@ func (m AppModel) contextHelpLine() string {
 		if m.instanceManageMode == instanceManageRename {
 			return "enter rename • esc cancel"
 		}
-		return "y delete • n cancel • esc cancel"
+		return "esc cancel"
 	}
 	if m.screen == ScreenDashboard {
 		return "/ filter • enter open • n new • m commands • q quit"
@@ -4077,9 +4131,6 @@ func (m AppModel) contextHelpLine() string {
 		}
 		switch activeKind {
 		case depDetailTabDependency:
-			if m.depDetailDeleteConfirm {
-				return "y delete • n cancel • esc cancel"
-			}
 			if m.depDetailAliasInput.Focused() {
 				return "enter: apply alias • esc cancel"
 			}
@@ -4690,7 +4741,6 @@ func (m AppModel) openDepDetailSelected() (tea.Model, tea.Cmd) {
 	m.depDetailVersionsLoading = false
 	m.depDetailAliasInput.SetValue(strings.TrimSpace(dep.Alias))
 	m.depDetailAliasInput.Blur()
-	m.depDetailDeleteConfirm = false
 	m.depDetailSets.SetItems(nil)
 	m.depDetailPreview.SetContent(m.renderDepDetailBody())
 
@@ -4741,11 +4791,6 @@ func (m AppModel) depDetailUpdate(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.depDetailPreview.SetContent(m.renderDepDetailBody())
 			return m, nil
 		}
-		if m.depDetailDeleteConfirm {
-			m.depDetailDeleteConfirm = false
-			m.depDetailPreview.SetContent(m.renderDepDetailBody())
-			return m, nil
-		}
 		if m.depDetailMode == depEditModeList {
 			fs := m.depDetailVersions.FilterState()
 			if fs == list.Filtering || fs == list.FilterApplied {
@@ -4770,7 +4815,7 @@ func (m AppModel) depDetailUpdate(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// Dependency tab.
 	if activeKind == depDetailTabDependency {
 		// Detach row selection + activation when not editing alias.
-		if m.depDetailSourceOK && m.depDetailSource.Kind == depSourceCatalog && !m.depDetailAliasInput.Focused() && !m.depDetailDeleteConfirm {
+		if m.depDetailSourceOK && m.depDetailSource.Kind == depSourceCatalog && !m.depDetailAliasInput.Focused() {
 			if msg.Type == tea.KeyUp {
 				m.depDetailSettingsCursor = max(0, m.depDetailSettingsCursor-1)
 				m.depDetailPreview.SetContent(m.renderDepDetailBody())
@@ -4816,19 +4861,6 @@ func (m AppModel) depDetailUpdate(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 		// Do not auto-focus the alias input. User must explicitly enter edit mode
 		// (Enter focuses; Esc blurs/reverts; Enter while focused applies).
-		// Confirmation flow.
-		if m.depDetailDeleteConfirm {
-			if msg.String() == "y" || msg.String() == "Y" {
-				m.depDetailDeleteConfirm = false
-				return m, tea.Batch(m.beginBusy("Deleting"), m.deleteDepFromDetailCmd())
-			}
-			if msg.String() == "n" || msg.String() == "N" {
-				m.depDetailDeleteConfirm = false
-				m.depDetailPreview.SetContent(m.renderDepDetailBody())
-				return m, nil
-			}
-			return m, nil
-		}
 
 		// Alias edit mode.
 		if msg.Type == tea.KeyEsc {
@@ -4859,8 +4891,7 @@ func (m AppModel) depDetailUpdate(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.depDetailAliasInput, cmd = m.depDetailAliasInput.Update(msg)
 		}
 		if msg.String() == "d" || msg.String() == "D" {
-			m.depDetailDeleteConfirm = true
-			m.depDetailPreview.SetContent(m.renderDepDetailBody())
+			m.openConfirmDeleteDependency(m.depDetailDep)
 			return m, nil
 		}
 		m.depDetailPreview.SetContent(m.renderDepDetailBody())
@@ -5118,16 +5149,10 @@ func (m AppModel) renderDepDetailBody() string {
 					detachLine = "> " + detachLine
 				}
 				lines = append(lines, detachLine)
-			lines = append(lines, styleMuted.Render("enter: detach • D: detach (any tab)"))
+		lines = append(lines, styleMuted.Render("enter: detach • D: detach (any tab)"))
 		}
 		lines = append(lines, "")
-		if m.depDetailDeleteConfirm {
-			lines = append(lines, styleErrStrong.Render(withIcon(iconTrash, "Delete dependency?")))
-			lines = append(lines, styleMuted.Render("This will remove from Chart.yaml and delete depID-keyed data (values.instance.yaml key, values.dep-set markers, depmeta)."))
-			lines = append(lines, styleMuted.Render("y: delete • n: cancel"))
-		} else {
-			lines = append(lines, styleMuted.Render("d: delete dependency"))
-		}
+		lines = append(lines, styleMuted.Render("d: delete dependency"))
 		return strings.Join(lines, "\n")
 	case depDetailTabReadme:
 		if m.depDetailReadme == "" {

@@ -49,6 +49,14 @@ func TestBuildWindowTitle(t *testing.T) {
 			}(),
 			want: "🧭 HelmDex — Dashboard › Instance › my-app › Applying",
 		},
+		{
+			name: "confirm wins over other overlays",
+			m: func() AppModel {
+				inst := instances.Instance{Name: "my-app"}
+				return AppModel{screen: ScreenInstance, selected: &inst, confirmOpen: true, depDetailOpen: true}
+			}(),
+			want: "🧭 HelmDex — Dashboard › Instance › my-app › Confirm",
+		},
 	}
 
 	for _, tt := range tests {
