@@ -15,12 +15,11 @@ func TestBreadcrumbShowsAddDepInsteadOfUnderlyingTabWhenWizardOpen(t *testing.T)
 	m.addingDep = true
 	m.depStep = depStepChooseSource
 
-	b := renderBreadcrumbBar(m)
+	b := renderTopBar(m)
 	if !strings.Contains(b, "Add dep") {
-		t.Fatalf("expected breadcrumb to include Add dep when wizard is open; got %q", b)
+		t.Fatalf("expected top bar to include Add dep when wizard is open; got %q", b)
 	}
 	if strings.Contains(b, "Dependencies") {
-		t.Fatalf("expected breadcrumb NOT to include underlying tab when wizard is open; got %q", b)
+		t.Fatalf("expected top bar NOT to include underlying tab when wizard is open; got %q", b)
 	}
 }
-

@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"path/filepath"
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
@@ -17,9 +18,9 @@ import (
 // Keeping modals under this height prevents the terminal from scrolling and
 // cutting off the modal's top border.
 func modalMaxHeight(m AppModel) int {
-	// Empirically: header/breadcrumb + spacers + context help/status + base padding
-	// consumes ~10 terminal rows.
-	return max(8, m.height-10)
+	// Empirically: top bar + spacers + context help/status + base padding consumes
+	// ~9 terminal rows.
+	return max(8, m.height-9)
 }
 
 func renderWithModal(m AppModel, body, modal string) string {
@@ -58,25 +59,77 @@ func renderHelpOverlay(m AppModel) string {
 	return panel.Render(strings.Join(lines, "\n"))
 }
 
-// renderBreadcrumbBar renders a persistent top breadcrumb so it's always clear
-// which instance we're looking at, regardless of the active tab.
-func renderBreadcrumbBar(m AppModel) string {
-	// Content
-	parts := []string{withIcon(iconDashboard, "Dashboard")}
+func repoDirLabel(m AppModel) string {
+	// RepoRoot is required by the program entry point, but keep this defensive.
+	p := strings.TrimRight(strings.TrimSpace(m.params.RepoRoot), string(filepath.Separator))
+	if p == "" {
+		return "helmdex"
+	}
+	base := filepath.Base(p)
+	if strings.TrimSpace(base) == "" || base == "." || base == string(filepath.Separator) {
+		return "helmdex"
+	}
+	return base
+}
+
+func instanceContextLabel(m AppModel) string {
+	// Wizard/modal contexts override the underlying active tab label.
+	// Keep this aligned with AppModel.noModalOpen().
+	if m.infoOpen {
+		return withIcon(iconHelp, "Help")
+	}
+	if m.paletteOpen {
+		return withIcon(iconCmd, "Commands")
+	}
+	if m.sourcesOpen {
+		return withIcon(iconCmd, "Configure sources")
+	}
+	if m.confirmOpen {
+		return withIcon(iconTrash, "Confirm")
+	}
+	if m.instanceManageOpen {
+		// Currently only rename exists.
+		return withIcon(iconRename, "Rename")
+	}
+	if m.depDiffOpen {
+		return withIcon(iconVersions, "Upgrade diff")
+	}
+	if m.depDetailOpen {
+		return withIcon(iconDeps, "Dependency")
+	}
+	if m.depEditOpen {
+		return withIcon(iconVersions, "Change version")
+	}
+	if m.valuesPreviewOpen {
+		return withIcon(iconValues, "Preview values")
+	}
+	if m.applyOpen {
+		return withIcon(iconBusy, "Applying")
+	}
+	if m.addingDep {
+		return withIcon(iconAdd, "Add dep")
+	}
+	if m.activeTab >= 0 && m.activeTab < len(m.tabNames) {
+		return m.tabNames[m.activeTab]
+	}
+	return ""
+}
+
+// renderTopBar renders the single-line persistent top bar.
+//
+// Rules (approved):
+// - Dashboard: "📁 <repoDir>" only.
+// - Instance: "📁 <repoDir> › 📦 <instanceName> › <context>".
+//   Where <context> is either the active tab name or an overriding modal/wizard label.
+func renderTopBar(m AppModel) string {
+	parts := []string{withIcon(iconFolder, repoDirLabel(m))}
 	if m.screen == ScreenInstance {
-		parts = append(parts, withIcon(iconInstance, "Instance"))
 		if m.selected != nil && strings.TrimSpace(m.selected.Name) != "" {
 			// Instance names are user content; keep them readable and unstyled.
-			parts = append(parts, withIcon(iconFolder, m.selected.Name))
+			parts = append(parts, withIcon(iconInstance, m.selected.Name))
 		}
-		// When no full-screen modal/wizard is open, include the active instance tab.
-		// This makes it obvious what "screen" we're in (Deps/Values/Instance).
-		if m.noModalOpen() {
-			if m.activeTab >= 0 && m.activeTab < len(m.tabNames) {
-				parts = append(parts, m.tabNames[m.activeTab])
-			}
-		} else if m.addingDep {
-			parts = append(parts, withIcon(iconAdd, "Add dep"))
+		if ctx := instanceContextLabel(m); strings.TrimSpace(ctx) != "" {
+			parts = append(parts, ctx)
 		}
 	}
 
@@ -86,7 +139,7 @@ func renderBreadcrumbBar(m AppModel) string {
 	strong := styleCrumbStrong
 	bar := styleCrumbBar
 
-	sep := " " + sepStyle.Render("›") + " "
+	sep := " " + sepStyle.Render("›") + "  "
 	out := ""
 	for i, p := range parts {
 		if i > 0 {

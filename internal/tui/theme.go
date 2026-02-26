@@ -70,7 +70,8 @@ const (
 // Shared styles.
 var (
 	// Global layout.
-	styleBase = lipgloss.NewStyle().Padding(1, 1)
+	// Keep left/right padding for readability, but avoid adding a blank top line.
+	styleBase = lipgloss.NewStyle().Padding(0, 1)
 	// Headings (panel headers, section titles).
 	styleHeading = lipgloss.NewStyle().Bold(true)
 	// Common bordered panels/modals.

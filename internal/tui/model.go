@@ -11,8 +11,8 @@ import (
 	"time"
 
 	"helmdex/internal/artifacthub"
-	"helmdex/internal/config"
 	"helmdex/internal/catalog"
+	"helmdex/internal/config"
 	"helmdex/internal/helmutil"
 	"helmdex/internal/instances"
 	"helmdex/internal/presets"
@@ -46,8 +46,8 @@ type AppModel struct {
 	paletteOpen bool
 	palette     paletteModel
 
-	statusErr   string
-	statusOK    string
+	statusErr string
+	statusOK  string
 
 	// quit UX: Ctrl+C must be pressed twice within a short window.
 	quitArmed   bool
@@ -59,9 +59,9 @@ type AppModel struct {
 	newName  textinput.Model
 
 	// instance manage (Instance tab)
-	instanceManageOpen   bool
-	instanceManageMode   instanceManageMode
-	instanceManageName   textinput.Model
+	instanceManageOpen bool
+	instanceManageMode instanceManageMode
+	instanceManageName textinput.Model
 
 	// confirm modal (shared for destructive actions)
 	confirmOpen bool
@@ -97,11 +97,11 @@ type AppModel struct {
 	modalErr  string
 
 	// blocking apply overlay (for long-running add+apply flows)
-	applyOpen           bool
-	applyCancelConfirm  bool
+	applyOpen            bool
+	applyCancelConfirm   bool
 	applyCancelRequested bool
-	applyCancel         context.CancelFunc
-	applyID             int
+	applyCancel          context.CancelFunc
+	applyID              int
 
 	// catalog picker
 	catalogList    list.Model
@@ -145,11 +145,11 @@ type AppModel struct {
 	spin      spinner.Model
 
 	// dependency version editor (Deps tab)
-	depEditOpen bool
-	depEditDep  yamlchart.Dependency
+	depEditOpen     bool
+	depEditDep      yamlchart.Dependency
 	depEditSource   depSourceMeta
 	depEditSourceOK bool
-	depEditMode depEditMode
+	depEditMode     depEditMode
 	// depEditLoading indicates a background refresh is running; the list may still
 	// be usable if we have cached versions.
 	depEditLoading      bool
@@ -193,23 +193,23 @@ type AppModel struct {
 	depCatalogCoverageOK  bool
 
 	// dependency upgrade diff modal (Deps tab)
-	depDiffOpen    bool
-	depDiffLoading bool
-	depDiffTab     int
-	depDiffTabNames []string
-	depDiffSideBySide bool
+	depDiffOpen           bool
+	depDiffLoading        bool
+	depDiffTab            int
+	depDiffTabNames       []string
+	depDiffSideBySide     bool
 	depDiffSideBySideUser bool
-	depDiffWrap bool
-	depDiffWrapUser bool
-	depDiffOldDep  yamlchart.Dependency
-	depDiffNewDep  yamlchart.Dependency
-	depDiffSchemaText string
-	depDiffValuesText string
-	depDiffSchemaRows []diffRow
-	depDiffValuesRows []diffRow
-	depDiffCountsText string
-	depDiffPreview viewport.Model
-	depDiffErr string
+	depDiffWrap           bool
+	depDiffWrapUser       bool
+	depDiffOldDep         yamlchart.Dependency
+	depDiffNewDep         yamlchart.Dependency
+	depDiffSchemaText     string
+	depDiffValuesText     string
+	depDiffSchemaRows     []diffRow
+	depDiffValuesRows     []diffRow
+	depDiffCountsText     string
+	depDiffPreview        viewport.Model
+	depDiffErr            string
 
 	// versions refresh (disk cache + periodic background refresh)
 	versionsWatched  map[string]versionsWatch
@@ -236,13 +236,13 @@ type AppModel struct {
 	keys keyMap
 
 	// sources config modal
-	sourcesOpen bool
-	sourcesName textinput.Model
-	sourcesGit  textinput.Model
-	sourcesRef  textinput.Model
-	sourcesPlat textinput.Model
+	sourcesOpen  bool
+	sourcesName  textinput.Model
+	sourcesGit   textinput.Model
+	sourcesRef   textinput.Model
+	sourcesPlat  textinput.Model
 	sourcesFocus int
-	sourcesErr  string
+	sourcesErr   string
 }
 
 type confirmKind int
@@ -373,6 +373,9 @@ func (m *AppModel) setDepsListFromChartPreserveSelection(deps []yamlchart.Depend
 		}
 	}
 	items := m.depsToItems(deps)
+	// Avoid redundant empty-state rendering: bubbles/list shows a centered "No items"
+	// message and the status bar also shows "No items." when enabled.
+	m.depsList.SetShowStatusBar(len(items) > 0)
 	idx := 0
 	if prevID != "" {
 		for i, it := range items {
@@ -855,52 +858,52 @@ func NewAppModel(p Params) AppModel {
 	sp.Style = lipgloss.NewStyle().Faint(true)
 
 	m := AppModel{
-		params:                p,
-		screen:                p.StartScreen,
-		instList:              l,
-		depsList:              deps,
-		depSource:             src,
-		catalogList:           catList,
-		ahClient:              artifacthub.NewClient(),
-		ahQuery:               q,
-		ahResults:             ahRes,
-		ahVersions:            ahVers,
-		depEditVersions:       depVers,
-		depEditVersionInput:   depVerInput,
-		ahDetailTabNames:      ahDetailTabNames,
-		ahPreview:             ahvp,
-		depDetailTabNames:     depDetailTabNames,
-		depDetailTabKinds:     depDetailTabKinds,
-		depDetailVersions:     depDetailVersions,
-		depDetailVersionInput: depDetailVerInput,
-		depDetailAliasInput:   depDetailAlias,
-		depDetailPreview:      depDetailVP,
-		depDiffPreview:        depDiffVP,
-		depDiffTabNames:       []string{withIcon(iconSchema, "Schema"), withIcon(iconAHValues, "Values")},
-		spin:                  sp,
-		newName:               newName,
-		instanceManageName:    instManageName,
-		arbRepo:               arbRepo,
-		arbName:               arbName,
-		arbVersion:            arbVersion,
-		arbAlias:              arbAlias,
-		activeTab:             0,
-		tabNames:              tabNames,
-		content:               vp,
-		valuesList:            vals,
-		valuesPreview:         valsPrev,
-		catalogSetList:        catSets,
-		depDetailSets:         depSets,
-		palette:               newPaletteModel(),
-		keys:                  keys,
-		versionsWatched:       map[string]versionsWatch{},
-		versionsInFlight:      map[string]bool{},
-		sourcesName:           srcName,
-		sourcesGit:            srcGit,
-		sourcesRef:            srcRef,
-		sourcesPlat:           srcPlat,
-		sourcesFocus:          0,
-		catalogCollisionAlias: collAlias,
+		params:                 p,
+		screen:                 p.StartScreen,
+		instList:               l,
+		depsList:               deps,
+		depSource:              src,
+		catalogList:            catList,
+		ahClient:               artifacthub.NewClient(),
+		ahQuery:                q,
+		ahResults:              ahRes,
+		ahVersions:             ahVers,
+		depEditVersions:        depVers,
+		depEditVersionInput:    depVerInput,
+		ahDetailTabNames:       ahDetailTabNames,
+		ahPreview:              ahvp,
+		depDetailTabNames:      depDetailTabNames,
+		depDetailTabKinds:      depDetailTabKinds,
+		depDetailVersions:      depDetailVersions,
+		depDetailVersionInput:  depDetailVerInput,
+		depDetailAliasInput:    depDetailAlias,
+		depDetailPreview:       depDetailVP,
+		depDiffPreview:         depDiffVP,
+		depDiffTabNames:        []string{withIcon(iconSchema, "Schema"), withIcon(iconAHValues, "Values")},
+		spin:                   sp,
+		newName:                newName,
+		instanceManageName:     instManageName,
+		arbRepo:                arbRepo,
+		arbName:                arbName,
+		arbVersion:             arbVersion,
+		arbAlias:               arbAlias,
+		activeTab:              0,
+		tabNames:               tabNames,
+		content:                vp,
+		valuesList:             vals,
+		valuesPreview:          valsPrev,
+		catalogSetList:         catSets,
+		depDetailSets:          depSets,
+		palette:                newPaletteModel(),
+		keys:                   keys,
+		versionsWatched:        map[string]versionsWatch{},
+		versionsInFlight:       map[string]bool{},
+		sourcesName:            srcName,
+		sourcesGit:             srcGit,
+		sourcesRef:             srcRef,
+		sourcesPlat:            srcPlat,
+		sourcesFocus:           0,
+		catalogCollisionAlias:  collAlias,
 		catalogCollisionChoice: collisionChoiceAlias,
 	}
 
@@ -1058,7 +1061,7 @@ type instancesMsg struct{ items []instances.Instance }
 
 type chartMsg struct{ chart yamlchart.Chart }
 
-	type catalogMsg struct{ entries []catalog.EntryWithSource }
+type catalogMsg struct{ entries []catalog.EntryWithSource }
 
 type catalogSyncDoneMsg struct{ err error }
 
@@ -2334,6 +2337,9 @@ func (m AppModel) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 		for _, inst := range msg.items {
 			items = append(items, instanceItem(inst))
 		}
+		// Avoid redundant empty-state rendering: list shows a centered "No items"
+		// message and the status bar also shows "No items." when enabled.
+		m.instList.SetShowStatusBar(len(items) > 0)
 		// Medium UX improvement: augment the selected row with a scan-friendly
 		// secondary info line (dependency count), without preloading every instance.
 		if si, ok := m.instList.SelectedItem().(instanceItem); ok {
@@ -2989,8 +2995,8 @@ func (m AppModel) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 			break
 		}
 
-	// Instance tab actions.
-	if m.screen == ScreenInstance && !m.addingDep && m.activeTab == InstanceTabInstance {
+		// Instance tab actions.
+		if m.screen == ScreenInstance && !m.addingDep && m.activeTab == InstanceTabInstance {
 			if msg.String() == "r" || msg.String() == "R" {
 				m.instanceManageOpen = true
 				m.instanceManageMode = instanceManageRename
@@ -3108,11 +3114,11 @@ func (m AppModel) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if it, ok := m.instList.SelectedItem().(instanceItem); ok {
 					inst := instances.Instance(it)
 					m.selected = &inst
-						m.screen = ScreenInstance
-						m.activeTab = 0 // Dependencies is first tab
-						m.refreshInstanceView()
-						return m, tea.Batch(m.beginBusy("Loading chart"), m.loadChartCmd(inst))
-					}
+					m.screen = ScreenInstance
+					m.activeTab = 0 // Dependencies is first tab
+					m.refreshInstanceView()
+					return m, tea.Batch(m.beginBusy("Loading chart"), m.loadChartCmd(inst))
+				}
 			}
 		}
 		// When the add-dependency wizard is open, left/right should switch the wizard
@@ -3473,11 +3479,11 @@ func (m AppModel) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if !ok {
 					return m, func() tea.Msg { return errMsg{fmt.Errorf("unexpected version item type")} }
 				}
-			v := artifacthub.Version(vi)
-			dep := yamlchart.Dependency{Name: m.ahSelected.Name, Repository: m.ahSelected.RepositoryURL, Version: v.Version}
-			_ = m.writeSelectedDepSourceMeta(dep, depSourceMeta{Kind: depSourceArtifactHub})
-			return m, m.applyDependencyDraft(dep)
-		}
+				v := artifacthub.Version(vi)
+				dep := yamlchart.Dependency{Name: m.ahSelected.Name, Repository: m.ahSelected.RepositoryURL, Version: v.Version}
+				_ = m.writeSelectedDepSourceMeta(dep, depSourceMeta{Kind: depSourceArtifactHub})
+				return m, m.applyDependencyDraft(dep)
+			}
 			return m, cmd
 		case depStepArbitrary:
 			// Simple focus cycling with tab.
@@ -3500,10 +3506,10 @@ func (m AppModel) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 					}
 				}
 				if km.Type == tea.KeyEnter {
-				dep := yamlchart.Dependency{Name: strings.TrimSpace(m.arbName.Value()), Repository: strings.TrimSpace(m.arbRepo.Value()), Version: strings.TrimSpace(m.arbVersion.Value()), Alias: strings.TrimSpace(m.arbAlias.Value())}
-				_ = m.writeSelectedDepSourceMeta(dep, depSourceMeta{Kind: depSourceArbitrary})
-				return m, m.applyDependencyDraft(dep)
-			}
+					dep := yamlchart.Dependency{Name: strings.TrimSpace(m.arbName.Value()), Repository: strings.TrimSpace(m.arbRepo.Value()), Version: strings.TrimSpace(m.arbVersion.Value()), Alias: strings.TrimSpace(m.arbAlias.Value())}
+					_ = m.writeSelectedDepSourceMeta(dep, depSourceMeta{Kind: depSourceArbitrary})
+					return m, m.applyDependencyDraft(dep)
+				}
 			}
 			var cmds []tea.Cmd
 			var cmd tea.Cmd
@@ -3589,32 +3595,32 @@ func (m AppModel) paletteUpdate(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		it, ok := m.palette.selected()
 		if ok {
 			switch it.ID {
-				case palQuit:
-					m.skipWindowTitleOnce = true
-					return m, tea.Quit
-				case palAbout:
-					m.paletteOpen = false
-					m.infoOpen = true
-					m.infoTab = 1 // About
-					return m, nil
-				case palDepSyncPresets:
-					m.paletteOpen = false
-					if m.screen == ScreenInstance && !m.addingDep && m.activeTab == InstanceTabDeps {
-						it := m.depsList.SelectedItem()
-						if di, ok := it.(depItem); ok {
-							return m, tea.Batch(m.beginBusy("Syncing"), m.syncSelectedDepPresetsCmd(di.Dep))
-						}
+			case palQuit:
+				m.skipWindowTitleOnce = true
+				return m, tea.Quit
+			case palAbout:
+				m.paletteOpen = false
+				m.infoOpen = true
+				m.infoTab = 1 // About
+				return m, nil
+			case palDepSyncPresets:
+				m.paletteOpen = false
+				if m.screen == ScreenInstance && !m.addingDep && m.activeTab == InstanceTabDeps {
+					it := m.depsList.SelectedItem()
+					if di, ok := it.(depItem); ok {
+						return m, tea.Batch(m.beginBusy("Syncing"), m.syncSelectedDepPresetsCmd(di.Dep))
 					}
-					return m, nil
-				case palDepDetachCatalog:
-					m.paletteOpen = false
-					if m.screen == ScreenInstance && !m.addingDep && m.activeTab == InstanceTabDeps {
-						it := m.depsList.SelectedItem()
-						if di, ok := it.(depItem); ok {
-							return m, tea.Batch(m.beginBusy("Detaching"), m.detachDepFromCatalogCmd(di.Dep))
-						}
+				}
+				return m, nil
+			case palDepDetachCatalog:
+				m.paletteOpen = false
+				if m.screen == ScreenInstance && !m.addingDep && m.activeTab == InstanceTabDeps {
+					it := m.depsList.SelectedItem()
+					if di, ok := it.(depItem); ok {
+						return m, tea.Batch(m.beginBusy("Detaching"), m.detachDepFromCatalogCmd(di.Dep))
 					}
-					return m, nil
+				}
+				return m, nil
 			case palReload:
 				m.paletteOpen = false
 				return m, tea.Batch(m.beginBusy("Reloading"), m.reloadInstancesCmd())
@@ -3777,13 +3783,8 @@ func (m AppModel) isAnyFilterActive() bool {
 func (m AppModel) View() string {
 	base := styleBase
 
-	header := styleHeading.Render("helmdex")
-	if m.params.RepoRoot != "" {
-		header += "  " + styleMuted.Render(m.params.RepoRoot)
-	}
-
-	// Persistent navigation context (instance breadcrumbs) under the header.
-	breadcrumb := renderBreadcrumbBar(m)
+	// Persistent single-line top bar (repo + context).
+	topBar := renderTopBar(m)
 
 	var body string
 	if m.infoOpen {
@@ -3793,8 +3794,8 @@ func (m AppModel) View() string {
 		// Palette is a full-body modal so it can't be pushed off-screen by the body.
 		body = m.palette.View()
 	} else if m.sourcesOpen {
-	// Sources modal is full-body for the same reason as the palette.
-	body = m.renderSourcesModal()
+		// Sources modal is full-body for the same reason as the palette.
+		body = m.renderSourcesModal()
 	} else if m.confirmOpen {
 		body = renderConfirmModal(m)
 	} else if m.instanceManageOpen {
@@ -3822,7 +3823,7 @@ func (m AppModel) View() string {
 	contextHelp := styleMuted.Render(m.contextHelpLine())
 	status := renderFooterStatusLine(m)
 
-	return base.Render(strings.TrimRight(header+"\n"+breadcrumb+"\n\n"+body+"\n\n"+contextHelp+"\n"+status, "\n"))
+	return base.Render(strings.TrimRight(topBar+"\n\n"+body+"\n\n"+contextHelp+"\n"+status, "\n"))
 }
 
 func (m AppModel) currentBodyView() string {
@@ -3854,7 +3855,6 @@ func (m AppModel) currentBodyView() string {
 		}
 		if m.activeTab == InstanceTabInstance {
 			lines := []string{}
-			lines = append(lines, styleHeading.Render(withIcon(iconSettings, "Instance")))
 			if m.selected != nil {
 				lines = append(lines, styleMuted.Render("Name: "+m.selected.Name))
 				lines = append(lines, styleMuted.Render("Path: "+m.selected.Path))
@@ -3997,14 +3997,14 @@ func (m AppModel) contextHelpLine() string {
 					return "s: sync catalog • c: configure sources • esc back"
 				}
 				return "/ filter • ↑/↓ select • enter: next • esc back"
-		case depStepCatalogDetail:
-			if m.catalogSetsLoading {
-				return "esc back"
-			}
-			if len(m.catalogSetList.Items()) == 0 {
-				return "enter: add+apply • esc back"
-			}
-			return "space toggle • D toggle defaults • enter: add+apply • esc back"
+			case depStepCatalogDetail:
+				if m.catalogSetsLoading {
+					return "esc back"
+				}
+				if len(m.catalogSetList.Items()) == 0 {
+					return "enter: add+apply • esc back"
+				}
+				return "space toggle • D toggle defaults • enter: add+apply • esc back"
 			case depStepCatalogCollision:
 				return "↑/↓ select • enter confirm • esc back"
 			case depStepAHQuery:
@@ -4026,45 +4026,45 @@ func (m AppModel) contextHelpLine() string {
 				return "esc back"
 			}
 		}
-	if m.depDetailOpen {
-		// Dependency detail modal: help is tab-aware so Enter is accurate.
-		activeKind := depDetailTabValues
-		if m.depDetailTab >= 0 && m.depDetailTab < len(m.depDetailTabKinds) {
-			activeKind = m.depDetailTabKinds[m.depDetailTab]
-		}
-		versionsTab := len(m.depDetailTabNames) - 1
-		if m.depDetailTab == versionsTab {
-			switch m.depDetailMode {
-			case depEditModeManual:
-				return "←/→ tabs • enter: apply version • esc close"
+		if m.depDetailOpen {
+			// Dependency detail modal: help is tab-aware so Enter is accurate.
+			activeKind := depDetailTabValues
+			if m.depDetailTab >= 0 && m.depDetailTab < len(m.depDetailTabKinds) {
+				activeKind = m.depDetailTabKinds[m.depDetailTab]
+			}
+			versionsTab := len(m.depDetailTabNames) - 1
+			if m.depDetailTab == versionsTab {
+				switch m.depDetailMode {
+				case depEditModeManual:
+					return "←/→ tabs • enter: apply version • esc close"
+				default:
+					return "←/→ tabs • / filter • enter: apply version • esc close"
+				}
+			}
+			switch activeKind {
+			case depDetailTabDependency:
+				if m.depDetailAliasInput.Focused() {
+					return "enter: apply alias • esc cancel"
+				}
+				return "←/→ tabs • enter: edit alias • d remove • esc close"
+			case depDetailTabSets:
+				return "←/→ tabs • space toggle • enter: apply • esc close"
+			case depDetailTabValues:
+				// Configure tab.
+				if m.depConfigure.editing {
+					return "enter: apply edit • esc cancel edit"
+				}
+				return "←/→ tabs • ↑/↓ move • enter edit/toggle • s save • esc close"
 			default:
-				return "←/→ tabs • / filter • enter: apply version • esc close"
+				return "←/→ tabs • esc close"
 			}
 		}
-		switch activeKind {
-		case depDetailTabDependency:
-			if m.depDetailAliasInput.Focused() {
-				return "enter: apply alias • esc cancel"
-			}
-			return "←/→ tabs • enter: edit alias • d remove • esc close"
-		case depDetailTabSets:
-			return "←/→ tabs • space toggle • enter: apply • esc close"
-		case depDetailTabValues:
-			// Configure tab.
-			if m.depConfigure.editing {
-				return "enter: apply edit • esc cancel edit"
-			}
-			return "←/→ tabs • ↑/↓ move • enter edit/toggle • s save • esc close"
-		default:
-			return "←/→ tabs • esc close"
+		if m.activeTab == InstanceTabDeps {
+			return "←/→ tabs • d remove • v version • u upgrade • a add dep • m commands • esc back • q quit"
 		}
-	}
-	if m.activeTab == InstanceTabDeps {
-		return "←/→ tabs • d remove • v version • u upgrade • a add dep • m commands • esc back • q quit"
-	}
-	if m.activeTab == InstanceTabInstance {
-		return "←/→ tabs • r rename • d delete • esc back • q quit"
-	}
+		if m.activeTab == InstanceTabInstance {
+			return "←/→ tabs • r rename • d delete • esc back • q quit"
+		}
 		return "←/→ tabs • a add dep • e edit values • p apply • r regen values • m commands • esc back • q quit"
 	}
 	return shortHelp(m.keys)
@@ -4276,6 +4276,7 @@ func (v valuesFileItem) FilterValue() string { return string(v) }
 func (m *AppModel) refreshValuesList() {
 	if m.selected == nil {
 		m.valuesList.SetItems(nil)
+		m.valuesList.SetShowStatusBar(false)
 		return
 	}
 	inst := *m.selected
@@ -4317,6 +4318,8 @@ func (m *AppModel) refreshValuesList() {
 	}
 
 	m.valuesList.SetItems(items)
+	// Same redundancy avoidance as deps list (keep status bar for counts when non-empty).
+	m.valuesList.SetShowStatusBar(len(items) > 0)
 	if prevSel != "" {
 		for i, it := range items {
 			if vf, ok := it.(valuesFileItem); ok && string(vf) == prevSel {
@@ -5053,12 +5056,12 @@ func (m AppModel) renderDepDetailBody() string {
 		// Detach row (catalog only)
 		if m.depDetailSourceOK && m.depDetailSource.Kind == depSourceCatalog {
 			lines = append(lines, "")
-				detachLine := withIcon(iconCustom, "Detach from catalog")
-				if !m.depDetailAliasInput.Focused() && m.depDetailSettingsCursor == 1 {
-					detachLine = "> " + detachLine
-				}
-				lines = append(lines, detachLine)
-		lines = append(lines, styleMuted.Render("enter: detach • D: detach (any tab)"))
+			detachLine := withIcon(iconCustom, "Detach from catalog")
+			if !m.depDetailAliasInput.Focused() && m.depDetailSettingsCursor == 1 {
+				detachLine = "> " + detachLine
+			}
+			lines = append(lines, detachLine)
+			lines = append(lines, styleMuted.Render("enter: detach • D: detach (any tab)"))
 		}
 		lines = append(lines, "")
 		lines = append(lines, styleMuted.Render("d: delete dependency"))
@@ -5137,16 +5140,16 @@ type depVersionValidatedMsg struct {
 }
 
 type depDiffLoadedMsg struct {
-	oldDep yamlchart.Dependency
-	newDep yamlchart.Dependency
-	schemaText string
-	valuesText string
-	schemaRows []diffRow
-	valuesRows []diffRow
+	oldDep       yamlchart.Dependency
+	newDep       yamlchart.Dependency
+	schemaText   string
+	valuesText   string
+	schemaRows   []diffRow
+	valuesRows   []diffRow
 	schemaCounts diffCounts
 	valuesCounts diffCounts
-	usedSchema bool
-	err error
+	usedSchema   bool
+	err          error
 }
 
 func (m AppModel) loadDepDiffCmd(oldDep, newDep yamlchart.Dependency) tea.Cmd {
@@ -5199,16 +5202,16 @@ func (m AppModel) loadDepDiffCmd(oldDep, newDep yamlchart.Dependency) tea.Cmd {
 			schemaText = "(values.schema.json not available on one or both versions; showing values diff instead)\n"
 		}
 		return depDiffLoadedMsg{
-			oldDep: oldDep,
-			newDep: newDep,
-			schemaText: schemaText,
-			valuesText: valuesText,
-			schemaRows: schemaRows,
-			valuesRows: valuesRows,
+			oldDep:       oldDep,
+			newDep:       newDep,
+			schemaText:   schemaText,
+			valuesText:   valuesText,
+			schemaRows:   schemaRows,
+			valuesRows:   valuesRows,
 			schemaCounts: schemaCounts,
 			valuesCounts: valuesCounts,
-			usedSchema: usedSchema,
-			err: nil,
+			usedSchema:   usedSchema,
+			err:          nil,
 		}
 	}
 }
@@ -5326,7 +5329,7 @@ func (m AppModel) depDiffActiveBody() string {
 	return m.depDiffValuesText
 }
 
-type depAliasAppliedMsg struct{
+type depAliasAppliedMsg struct {
 	chart yamlchart.Chart
 	dep   yamlchart.Dependency
 }
