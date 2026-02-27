@@ -311,6 +311,8 @@ helmdex instance dep add <instance> \
 
 helmdex instance dep add-from-catalog <instance> --id <entry-id> [--apply] [--set <set>]
 helmdex instance dep list <instance>
+helmdex instance dep detach <instance> <depID>
+helmdex instance dep sync-presets <instance> <depID>
 helmdex instance dep rm <instance> <depID>
 helmdex instance dep set-version <instance> <depID> --version 15.1.0 [--apply]
 helmdex instance dep upgrade <instance> <depID> [--apply]

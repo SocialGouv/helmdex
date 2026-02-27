@@ -43,6 +43,8 @@ func newInstanceDepCmd(f *rootFlags) *cobra.Command {
 	cmd.AddCommand(newInstanceDepAddFromCatalogCmd(f))
 	cmd.AddCommand(newInstanceDepRmCmd(f))
 	cmd.AddCommand(newInstanceDepListCmd(f))
+	cmd.AddCommand(newInstanceDepDetachCmd(f))
+	cmd.AddCommand(newInstanceDepSyncPresetsCmd(f))
 	cmd.AddCommand(newInstanceDepSetVersionCmd(f))
 	cmd.AddCommand(newInstanceDepUpgradeCmd(f))
 	cmd.AddCommand(newInstanceDepVersionsCmd(f))
