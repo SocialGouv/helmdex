@@ -58,8 +58,8 @@ func newPaletteModel() paletteModel {
 }
 
 func (p *paletteModel) SetSize(w, h int) {
-	// Reserve some space for title, query and footer.
-	p.list.SetSize(w, max(3, h-6))
+	// Reserve some space for title and query.
+	p.list.SetSize(w, max(3, h-5))
 }
 
 func (p *paletteModel) Open(m AppModel) {
@@ -73,7 +73,8 @@ func (p *paletteModel) QueryFocused() bool { return p.query.Focused() }
 
 func (p *paletteModel) View() string {
 	box := stylePanelBox
-	content := styleHeading.Render(withIcon(iconCmd, "Command palette")) + "\n\n" + p.query.View() + "\n\n" + p.list.View() + "\n" + styleMuted.Render("type to search • ↑/↓ select • enter run • esc close")
+	// UX: avoid duplicating hints here; the global context help line is authoritative.
+	content := styleHeading.Render(withIcon(iconCmd, "Command palette")) + "\n\n" + p.query.View() + "\n\n" + p.list.View()
 	return box.Render(content)
 }
 

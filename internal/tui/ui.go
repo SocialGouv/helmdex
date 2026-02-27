@@ -38,24 +38,24 @@ func renderHelpOverlay(m AppModel) string {
 	lines = append(lines, styleHeading.Render("Help"))
 	lines = append(lines, "")
 	lines = append(lines, "Global:")
-	lines = append(lines, "  m     commands")
+	lines = append(lines, "  m     command palette")
 	lines = append(lines, "  ?     toggle help")
 	lines = append(lines, "  /     filter (lists)")
-	lines = append(lines, "  esc   back / close / clear filter")
+	lines = append(lines, "  Esc   back / close / clear filter")
 	lines = append(lines, "  q     quit")
-	lines = append(lines, "  ctrl+c ctrl+c quit")
-	lines = append(lines, "  ctrl+d quit")
+	lines = append(lines, "  Ctrl+C twice   quit")
+	lines = append(lines, "  Ctrl+D         quit")
 	lines = append(lines, "")
 	lines = append(lines, "Navigation:")
-	lines = append(lines, "  ↑/↓ or j/k   move")
-	lines = append(lines, "  enter        open / confirm")
-	lines = append(lines, "  ←/→ or h/l   tabs")
-	lines = append(lines, "  shift+tab    previous field")
+	lines = append(lines, "  ↑/↓ or j/k    move")
+	lines = append(lines, "  Enter         open / confirm")
+	lines = append(lines, "  ←/→ or h/l    tabs")
+	lines = append(lines, "  Shift+Tab     previous field")
 	lines = append(lines, "")
 	lines = append(lines, "Context:")
 	lines = append(lines, "  "+m.contextHelpLine())
 	lines = append(lines, "")
-	lines = append(lines, styleMuted.Render("esc or ? to close"))
+	lines = append(lines, styleMuted.Render("Esc or ? to close"))
 
 	return panel.Render(strings.Join(lines, "\n"))
 }
@@ -141,6 +141,9 @@ func truncateCrumbMiddle(s string, max int) string {
 //     Where <context> is either the active tab name or an overriding modal/wizard label.
 func renderTopBar(m AppModel) string {
 	parts := []string{withIcon(iconFolder, repoDirLabel(m))}
+	if m.screen == ScreenDashboard {
+		parts = append(parts, withIcon(iconDashboard, "Instances"))
+	}
 	if m.screen == ScreenInstance {
 		if m.selected != nil && strings.TrimSpace(m.selected.Name) != "" {
 			// Instance names are user content; keep them readable and unstyled.
@@ -273,7 +276,7 @@ func renderDepEditModal(m AppModel) string {
 	var body string
 	switch m.depEditMode {
 	case depEditModeManual:
-		body = "Enter an exact version:\n\n" + m.depEditVersionInput.View() + "\n\n(enter: apply • esc: cancel)"
+		body = "Enter an exact version:\n\n" + m.depEditVersionInput.View() + "\n\n" + styleMuted.Render("Enter apply • Esc cancel")
 		if m.depEditSourceOK && m.depEditSource.Kind == depSourceCatalog {
 			body += "\n" + styleMuted.Render("D: detach from catalog")
 		}
@@ -289,7 +292,7 @@ func renderDepEditModal(m AppModel) string {
 			if m.depEditLoading {
 				refreshing = "  " + styleMuted.Render("(refreshing…)")
 			}
-			body = m.depEditVersions.View() + refreshing + "\n" + styleMuted.Render(withIcon(iconFilter, "/: filter")+" • enter: apply • esc: cancel")
+			body = m.depEditVersions.View() + refreshing + "\n" + styleMuted.Render(withIcon(iconFilter, "/: filter")+" • Enter apply • Esc cancel")
 			if m.depEditSourceOK && m.depEditSource.Kind == depSourceCatalog {
 				body += "\n" + styleMuted.Render("D: detach from catalog")
 			}
@@ -335,7 +338,7 @@ func renderDepDetailModal(m AppModel) string {
 	if m.depDetailTab == versionsTab {
 		switch m.depDetailMode {
 		case depEditModeManual:
-			body = "Enter an exact version:\n\n" + m.depDetailVersionInput.View() + "\n\n(enter: apply • esc: cancel)"
+			body = "Enter an exact version:\n\n" + m.depDetailVersionInput.View() + "\n\n" + styleMuted.Render("Enter apply • Esc cancel")
 		default:
 			if len(m.depDetailVersionsData) == 0 {
 				if m.depDetailVersionsLoading {
@@ -348,7 +351,7 @@ func renderDepDetailModal(m AppModel) string {
 				if m.depDetailVersionsLoading {
 					refreshing = "  " + styleMuted.Render("(refreshing…)")
 				}
-				body = m.depDetailVersions.View() + refreshing + "\n" + styleMuted.Render(withIcon(iconFilter, "/: filter")+" • enter: apply • esc: cancel") +
+				body = m.depDetailVersions.View() + refreshing + "\n" + styleMuted.Render(withIcon(iconFilter, "/: filter")+" • Enter apply • Esc cancel") +
 					"\n" + styleMuted.Render("Hint: this is the in-context version picker (same as `v` from Dependencies).")
 			}
 		}
@@ -360,12 +363,9 @@ func renderDepDetailModal(m AppModel) string {
 		}
 	}
 
-	footer := "←/→ tabs • esc close"
-	if m.depDetailSourceOK && m.depDetailSource.Kind == depSourceCatalog {
-		footer += " • D detach"
-	}
-	footer = styleMuted.Render(footer)
-	return box.Render(header + "\n\n" + tabsLine + "\n\n" + body + "\n\n" + footer)
+	// UX: avoid a constant footer that duplicates (and sometimes conflicts with)
+	// the global context help line, which is tab-aware.
+	return box.Render(header + "\n\n" + tabsLine + "\n\n" + body)
 }
 
 func renderConfirmModal(m AppModel) string {
@@ -385,7 +385,7 @@ func renderConfirmModal(m AppModel) string {
 			header += "\n" + styleMuted.Render(name)
 		}
 		body = styleErrStrong.Render("This will delete the instance directory and its depmeta.") + "\n\n" +
-			styleMuted.Render("y: delete • n: cancel • esc: cancel")
+			styleMuted.Render("y delete • n cancel • Esc cancel")
 	case confirmDeleteDependency:
 		header = styleHeading.Render(withIcon(iconTrash, "Delete dependency"))
 		dep := m.confirmDep
@@ -400,10 +400,10 @@ func renderConfirmModal(m AppModel) string {
 			header += "\n" + styleMuted.Render(line)
 		}
 		body = styleErrStrong.Render("This will remove it from Chart.yaml and delete depID-keyed data (values.instance.yaml key, values.dep-set markers, depmeta).") + "\n\n" +
-			styleMuted.Render("y: delete • n: cancel • esc: cancel")
+			styleMuted.Render("y delete • n cancel • Esc cancel")
 	default:
 		header = styleHeading.Render(withIcon(iconErr, "Confirm"))
-		body = styleMuted.Render("No action") + "\n\n" + styleMuted.Render("esc: cancel")
+		body = styleMuted.Render("No action") + "\n\n" + styleMuted.Render("Esc cancel")
 	}
 
 	return box.Render(header + "\n\n" + body)
@@ -448,7 +448,7 @@ func renderDepDiffModal(m AppModel) string {
 	} else {
 		body = m.depDiffPreview.View()
 	}
-	footer := styleMuted.Render("←/→ tabs • t toggle view • w wrap • j/k or ↑/↓ scroll • y apply • n/esc cancel")
+	footer := styleMuted.Render("←/→ tabs • t toggle view • w wrap • j/k or ↑/↓ scroll • y apply • n/Esc cancel")
 	return box.Render(header + "\n\n" + tabsLine + "\n\n" + body + "\n\n" + footer)
 }
 
@@ -465,6 +465,6 @@ func renderValuesPreviewModal(m AppModel) string {
 	}
 	header := styleHeading.Render(withIcon(iconValues, label))
 	body := m.valuesPreview.View()
-	footer := styleMuted.Render("esc close")
+	footer := styleMuted.Render("Esc close")
 	return box.Render(header + "\n\n" + body + "\n\n" + footer)
 }

@@ -47,7 +47,7 @@ describe('TUI add-dependency wizard (tier 1)', () => {
       await h.press(['Enter']);
       await h.waitStable(30_000);
       const s = await h.screenshotText();
-      if (s.includes('Catalog is empty') || s.includes('/ filter • ↑/↓ select • enter: next • esc back')) break;
+      if (s.includes('Catalog is empty') || s.includes('/ filter • ↑/↓ select • Enter next • Esc back')) break;
     }
     await h.screenshotAndAssertIncludes('Add dependency');
 
@@ -55,7 +55,7 @@ describe('TUI add-dependency wizard (tier 1)', () => {
     // Otherwise enter detail and back out.
     const screen = await h.screenshotText();
     if (screen.includes('Catalog is empty')) {
-      await h.screenshotAndAssertIncludes('s: sync catalog • c: configure sources • esc: back');
+      await h.screenshotAndAssertIncludes('s sync catalog • c configure sources • Esc back');
       await h.press(['Escape']);
       await h.waitForText('Choose source');
       await h.press(['Escape']);
@@ -63,15 +63,16 @@ describe('TUI add-dependency wizard (tier 1)', () => {
       return;
     }
 
-    await h.screenshotAndAssertIncludes('/ filter • ↑/↓ select • enter: next • esc back');
+    await h.screenshotAndAssertIncludes('/ filter • ↑/↓ select • Enter next • Esc back');
 
     // Enter detail.
     await h.press(['Enter']);
     await h.waitForAnyText(['Sets:', 'Loading sets from preset cache…'], 30_000);
-    await h.screenshotAndAssertIncludes('enter: add+apply');
+    await h.screenshotAndAssertIncludes('Enter add+apply');
 
-    // Back to source chooser (Esc from Catalog detail returns to Choose source),
-    // then close wizard.
+    // Back stepwise (detail -> catalog list -> choose source), then close wizard.
+    await h.press(['Escape']);
+    await h.waitForText('Catalog');
     await h.press(['Escape']);
     await h.waitForText('Choose source');
     await h.press(['Escape']);

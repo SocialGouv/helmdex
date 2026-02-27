@@ -37,7 +37,7 @@ describe('TUI values tab', () => {
     // Preview selected file.
     await h.press(['Enter']);
     await h.waitForText('Preview values');
-    await h.screenshotAndAssertIncludes('esc close');
+    await h.screenshotAndAssertIncludes('Esc close');
 
     await h.press(['Escape']);
     await h.waitForText('Values');

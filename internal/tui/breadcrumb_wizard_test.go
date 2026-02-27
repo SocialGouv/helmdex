@@ -27,6 +27,16 @@ func TestBreadcrumbShowsAddDepInsteadOfUnderlyingTabWhenWizardOpen(t *testing.T)
 	}
 }
 
+func TestBreadcrumbDashboardIncludesInstances(t *testing.T) {
+	m := NewAppModel(Params{RepoRoot: "."})
+	m.screen = ScreenDashboard
+
+	b := renderTopBar(m)
+	if !strings.Contains(b, "Instances") {
+		t.Fatalf("expected dashboard breadcrumb to include Instances; got %q", b)
+	}
+}
+
 func TestBreadcrumbAddDepCatalogDetailIncludesSourceAndEntryID(t *testing.T) {
 	m := NewAppModel(Params{RepoRoot: "."})
 	m.screen = ScreenInstance

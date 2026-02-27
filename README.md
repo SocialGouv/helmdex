@@ -131,20 +131,23 @@ The terminal window title tracks your location:
 | Tab | What you can do |
 |---|---|
 | **Dependencies** | Add, remove, inspect, and upgrade chart dependencies |
-| **Configure** | Edit per-dependency value overrides |
 | **Values** | Browse all values layer files for this instance |
-| **Sets** | Toggle preset sets per dependency |
+| **Instance** | Rename or delete the instance |
 
 ### Common keys
 
 | Key | Action |
 |---|---|
 | `↑` / `↓` | Navigate list |
-| `enter` | Select / open |
-| `esc` / `q` | Back / quit |
+| `Enter` | Select / open |
+| `Esc` | Back / close / clear filter |
+| `q` | Quit |
 | `a` | Add dependency |
-| `x` | Dependency actions menu |
-| `s` | Save |
+| `m` | Command palette |
+| `v` | Change dependency version (Deps tab) |
+| `u` | Upgrade dependency to latest supported version (Deps tab) |
+| `r` | Regenerate `values.yaml` (Instance view) |
+| `d` | Delete (instance or dependency; confirms) |
 | `space` | Toggle |
 | `D` | Toggle all default sets |
 | `?` | Help / about |
@@ -182,10 +185,14 @@ From the **Dependencies** tab, press `a` to start the wizard:
 
 ### Working with presets on an existing dependency
 
-Press `x` on a dependency to open the actions menu:
+The command palette is a first-class navigation surface: press `m` and type what you want.
 
-- **Dependency detail** (`enter`) → **Sets** tab — toggle sets and press `s` to save + apply
-- **Sync presets** — fetch latest preset cache, remove orphan set markers, re-import, and regenerate merged values
+Common flows:
+
+- **Toggle sets**: in **Dependencies**, press `Enter` to open **Dependency detail** → go to the **Sets** tab (←/→) → `Space` toggles a set → `Enter` applies.
+- **Sync presets for a dependency**: press `m` → run **Sync presets (selected dep)**.
+- **Detach from catalog** (allow any version): press `m` → run **Detach from catalog (selected dep)**.
+- **Regenerate merged values**: press `r` (or `m` → **Regenerate values.yaml**).
 
 ---
 

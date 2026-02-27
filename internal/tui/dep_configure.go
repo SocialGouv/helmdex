@@ -45,7 +45,7 @@ func readDepOverrideFromInstance(instancePath, depID string) any {
 // - ← collapse
 // - enter edit/toggle
 // - s save
-// - esc cancel edit (or close modal handled outside)
+// - Esc cancel edit (or close modal handled outside)
 type depConfigureModel struct {
 	loaded  bool
 	loadErr string
@@ -472,7 +472,7 @@ func (m *depConfigureModel) View(width, height int) string {
 		if strings.TrimSpace(m.editErr) != "" {
 			body += "\n" + styleErrStrong.Render(withIcon(iconErr, "Error:")+" "+m.editErr)
 		}
-		body += "\n\n(enter: apply • esc: cancel)"
+		body += "\n\n" + styleMuted.Render("Enter apply • Esc cancel")
 		return header + "\n\n" + body
 	}
 

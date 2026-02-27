@@ -55,7 +55,7 @@ describe('TUI tier 2 flows (env-gated stubs)', () => {
     // Open dep detail by pressing Enter on deps list.
     await h.press(['Enter']);
     await h.waitForText('Dependency');
-    await h.screenshotAndAssertIncludes('←/→ tabs • esc close');
+    await h.screenshotAndAssertIncludes('Esc close');
 
     // Tab switch.
     await h.press(['ArrowRight']);
@@ -65,7 +65,7 @@ describe('TUI tier 2 flows (env-gated stubs)', () => {
     // Delete from detail -> confirm modal -> cancel.
     await h.press(['d']);
     await h.waitForText('Delete dependency');
-    await h.screenshotAndAssertIncludes('y: delete • n: cancel • esc: cancel');
+    await h.screenshotAndAssertIncludes('y delete • n cancel • Esc cancel');
     await h.press(['n']);
     await h.waitForText('Dependency');
     await h.press(['Escape']);
@@ -114,7 +114,7 @@ describe('TUI tier 2 flows (env-gated stubs)', () => {
     // Diff modal title is "Upgrade diff" in the UI, but the full-body modal may
     // not always include the title text in the screenshot output; accept either.
     await h.waitForAnyText(['Upgrade diff', 'Loading diff', 'y apply'], 30_000);
-    await h.screenshotAndAssertIncludes('y apply • n/esc cancel');
+    await h.screenshotAndAssertIncludes('y apply • n/Esc cancel');
 
     await h.press(['n']);
     await h.waitForText('Dependencies');

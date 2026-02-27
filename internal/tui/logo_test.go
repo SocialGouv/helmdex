@@ -58,7 +58,7 @@ func TestShouldShowDashboardLogo_HidesWhenFiltering(t *testing.T) {
 	m.width, m.height = 120, 40
 
 	// Ensure list has items + size so it can enter filtering.
-	m.instList.SetItems([]list.Item{instanceItem(instances.Instance{Name: "x"})})
+	m.instList.SetItems([]list.Item{instanceItem{Inst: instances.Instance{Name: "x"}, RepoRoot: m.params.RepoRoot}})
 	m.instList.SetSize(40, 10)
 
 	// Start filtering via normal key routing.

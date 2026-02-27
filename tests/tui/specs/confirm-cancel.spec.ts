@@ -34,11 +34,10 @@ describe('TUI confirm modal', () => {
     await h.waitForText('Instances');
     await h.press(['d']);
     await h.waitForText('Delete instance');
-    await h.screenshotAndAssertIncludes(['y: delete • n: cancel • esc: cancel', 'Delete instance']);
+    await h.screenshotAndAssertIncludes(['y delete • n cancel • Esc cancel', 'Delete instance']);
 
     await h.press(['n']);
     await h.waitForText('Instances');
     await h.screenshotAndAssertIncludes('/ filter');
   });
 });
-

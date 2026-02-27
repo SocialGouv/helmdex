@@ -24,7 +24,8 @@ describe('TUI command palette + sources', () => {
 
     await h.press(['m']);
     await h.waitForText('Command palette');
-    await h.screenshotAndAssertIncludes('type to search • ↑/↓ select • enter run • esc close');
+    // UX: palette no longer renders its own hint footer; global context help is authoritative.
+    await h.screenshotAndAssertIncludes('type to search');
 
     await h.press(['Escape']);
     await h.waitForText('Instances');
@@ -46,11 +47,11 @@ describe('TUI command palette + sources', () => {
     await h.press(['Enter']);
 
     await h.waitForText('Configure sources');
-    await h.screenshotAndAssertIncludes('tab: next field • shift+tab: prev field • enter: save • esc: close');
+    // UX: sources modal footer hints are normalized.
+    await h.screenshotAndAssertIncludes('Tab next field');
 
     await h.press(['Escape']);
     await h.waitForText('Instances');
     await h.screenshotAndAssertIncludes('/ filter');
   });
 });
-

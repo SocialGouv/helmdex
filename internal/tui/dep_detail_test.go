@@ -47,6 +47,9 @@ func TestDepDetailPreviewsMsgPopulatesBuffers(t *testing.T) {
 	if mm.depDetailLoading {
 		t.Fatalf("expected loading=false")
 	}
+	if !mm.depDetailPreviewsLoaded {
+		t.Fatalf("expected previewsLoaded=true")
+	}
 	if mm.depDetailReadme != readme {
 		t.Fatalf("expected readme to be set")
 	}
