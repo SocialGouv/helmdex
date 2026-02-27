@@ -33,8 +33,11 @@ describe('TUI add-dependency wizard (tier 1)', () => {
 
     // Open add-dep wizard.
     await h.press(['a']);
-    await h.waitForText('Add dependency');
-    await h.screenshotAndAssertIncludes('Select source');
+    // Depending on terminal size and breadcrumb rendering, "Add dependency" may
+    // appear in the header while the body is just the source list.
+    await h.waitForAnyText(['Add dependency', 'Choose source'], 30_000);
+    // Breadcrumb shows "Choose source"; older tests asserted "Select source".
+    await h.screenshotAndAssertIncludes('Choose source');
 
     // Choose predefined catalog.
     // Catalog sync can race with our assertions (a sync-done message can
@@ -54,7 +57,7 @@ describe('TUI add-dependency wizard (tier 1)', () => {
     if (screen.includes('Catalog is empty')) {
       await h.screenshotAndAssertIncludes('s: sync catalog • c: configure sources • esc: back');
       await h.press(['Escape']);
-      await h.waitForText('Select source');
+      await h.waitForText('Choose source');
       await h.press(['Escape']);
       await h.waitForText('Dependencies');
       return;
@@ -67,15 +70,19 @@ describe('TUI add-dependency wizard (tier 1)', () => {
     await h.waitForAnyText(['Sets:', 'Loading sets from preset cache…'], 30_000);
     await h.screenshotAndAssertIncludes('enter: add+apply');
 
-    // Back to source chooser (Esc from Catalog detail returns to Select source),
+    // Back to source chooser (Esc from Catalog detail returns to Choose source),
     // then close wizard.
     await h.press(['Escape']);
-    await h.waitForText('Select source');
+    await h.waitForText('Choose source');
     await h.press(['Escape']);
     await h.waitForText('Dependencies');
   });
 
   it('arbitrary dep draft flow: fills repo/name/version and drafts dependency', async () => {
+    // This flow depends on Helm access to a chart repo URL. For deterministic E2E,
+    // run in stub mode so chart list + versions are stable.
+    process.env.HELMDEX_E2E_STUB_HELM = '1';
+
     const repo = await createTempHelmdexRepo();
     cleanup.push(() => rmTempRepo(repo));
 
@@ -92,18 +99,30 @@ describe('TUI add-dependency wizard (tier 1)', () => {
     await h.waitForText('Dependencies');
 
     await h.press(['a']);
-    await h.waitForText('Select source');
+    await h.waitForText('Choose source');
 
     // Move to Arbitrary (third item).
     await h.pressMany(['ArrowDown', 'ArrowDown']);
     await h.press(['Enter']);
 
+    // The new arbitrary wizard is step-based:
+    // repo -> chart -> version -> alias
     await h.waitForText('repo>');
     await h.type('https://example.invalid/charts');
-    await h.press(['Tab']);
-    await h.type('nginx');
-    await h.press(['Tab']);
-    await h.type('1.2.3');
+    await h.press(['Enter']);
+
+    // Chart list.
+    await h.waitForAnyText(['Chart', '/ filter'], 30_000);
+    // Select first chart (in stub mode it should include nginx).
+    // If list is empty for some reason, just proceed (test harness stubs should keep it stable).
+    await h.press(['Enter']);
+
+    // Version list.
+    await h.waitForAnyText(['Version', 'Loading versions'], 30_000);
+    await h.press(['Enter']);
+
+    // Alias (optional) -> draft.
+    await h.waitForText('alias>');
     await h.press(['Enter']);
 
     await h.waitForText('Dependency applied');
@@ -138,8 +157,8 @@ describe('TUI add-dependency wizard (tier 1)', () => {
 
     // Open add-dep wizard.
     await h.press(['a']);
-    await h.waitForText('Add dependency');
-    await h.waitForText('Select source');
+    await h.waitForAnyText(['Add dependency', 'Choose source'], 30_000);
+    await h.waitForText('Choose source');
 
     // Move to Artifact Hub (second item).
     await h.press(['ArrowDown']);

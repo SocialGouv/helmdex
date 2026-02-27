@@ -33,15 +33,18 @@ describe('TUI dependency version editor (tier 1)', () => {
 
     // Draft an OCI dep (no helm/network needed).
     await h.press(['a']);
-    await h.waitForText('Select source');
+    await h.waitForText('Choose source');
     await h.pressMany(['ArrowDown', 'ArrowDown']);
     await h.press(['Enter']);
     await h.waitForText('repo>');
     await h.type('oci://example.invalid/charts');
-    await h.press(['Tab']);
-    await h.type('nginx');
-    await h.press(['Tab']);
+    // OCI flow skips chart list and goes straight to manual version input.
+    await h.press(['Enter']);
+    await h.waitForText('Version');
+    await h.waitForText('version>');
     await h.type('1.2.3');
+    await h.press(['Enter']);
+    await h.waitForText('alias>');
     await h.press(['Enter']);
     await h.waitForText('Dependency applied');
 
@@ -55,4 +58,3 @@ describe('TUI dependency version editor (tier 1)', () => {
     await h.screenshotAndAssertIncludes('v version • u upgrade');
   });
 });
-

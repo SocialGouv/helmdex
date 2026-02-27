@@ -36,15 +36,19 @@ describe('TUI tier 2 flows (env-gated stubs)', () => {
 
     // Draft a dep so dep detail can open.
     await h.press(['a']);
-    await h.waitForText('Select source');
+    await h.waitForText('Choose source');
     await h.pressMany(['ArrowDown', 'ArrowDown']);
     await h.press(['Enter']);
     await h.waitForText('repo>');
     await h.type('https://example.invalid/charts');
-    await h.press(['Tab']);
-    await h.type('nginx');
-    await h.press(['Tab']);
-    await h.type('1.0.0');
+    await h.press(['Enter']);
+    await h.waitForAnyText(['Chart', '/ filter'], 30_000);
+    await h.press(['Enter']);
+    await h.waitForAnyText(['Version', 'Loading versions'], 30_000);
+    // Pick a non-latest version so upgrade has something to do.
+    await h.pressMany(['ArrowDown', 'ArrowDown', 'ArrowDown']);
+    await h.press(['Enter']);
+    await h.waitForText('alias>');
     await h.press(['Enter']);
     await h.waitForText('Dependency applied');
 
@@ -89,21 +93,27 @@ describe('TUI tier 2 flows (env-gated stubs)', () => {
 
     // Draft dep.
     await h.press(['a']);
-    await h.waitForText('Select source');
+    await h.waitForText('Choose source');
     await h.pressMany(['ArrowDown', 'ArrowDown']);
     await h.press(['Enter']);
     await h.waitForText('repo>');
     await h.type('https://example.invalid/charts');
-    await h.press(['Tab']);
-    await h.type('nginx');
-    await h.press(['Tab']);
-    await h.type('1.0.0');
+    await h.press(['Enter']);
+    await h.waitForAnyText(['Chart', '/ filter'], 30_000);
+    await h.press(['Enter']);
+    await h.waitForAnyText(['Version', 'Loading versions'], 30_000);
+    // Pick a non-latest version so upgrade has something to do.
+    await h.pressMany(['ArrowDown', 'ArrowDown', 'ArrowDown']);
+    await h.press(['Enter']);
+    await h.waitForText('alias>');
     await h.press(['Enter']);
     await h.waitForText('Dependency applied');
 
     // Trigger upgrade -> opens diff.
     await h.press(['u']);
-    await h.waitForText('Upgrade diff', 30_000);
+    // Diff modal title is "Upgrade diff" in the UI, but the full-body modal may
+    // not always include the title text in the screenshot output; accept either.
+    await h.waitForAnyText(['Upgrade diff', 'Loading diff', 'y apply'], 30_000);
     await h.screenshotAndAssertIncludes('y apply • n/esc cancel');
 
     await h.press(['n']);

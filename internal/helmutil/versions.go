@@ -81,6 +81,94 @@ func RepoChartVersions(ctx context.Context, repoRoot, repoURL, chartName string,
 	return nil, fmt.Errorf("no versions found for %s", ref)
 }
 
+// RepoChartNames returns available chart names in a classic (non-OCI) Helm
+// repository.
+//
+// It uses an isolated per-repoURL helm env (see EnvForRepoURL), ensures the repo
+// is added, runs a stale-aware repo update when needed, then lists charts via:
+//
+// 	helm search repo <repo> -o json
+//
+// Note: Helm does not support listing charts for OCI refs.
+func RepoChartNames(ctx context.Context, repoRoot, repoURL string, repoUpdateMaxAge time.Duration) ([]string, error) {
+	if strings.HasPrefix(repoURL, "oci://") {
+		return nil, fmt.Errorf("helm search repo does not support OCI refs; cannot list charts for %s", repoURL)
+	}
+	env := EnvForRepoURL(repoRoot, repoURL)
+	repoName := RepoNameForURL(repoURL)
+	if err := RepoAdd(ctx, env, repoName, repoURL); err != nil {
+		return nil, err
+	}
+
+	// Search-first: avoid repo update when we already have an index cache.
+	charts, err := searchRepoChartNames(ctx, env, repoName)
+	if err == nil && len(charts) > 0 {
+		return charts, nil
+	}
+
+	// Retry after update.
+	updateMaxAge := repoUpdateMaxAge
+	if err == nil && len(charts) == 0 {
+		updateMaxAge = 0
+	}
+	updateErr := RepoUpdateIfStaleNames(ctx, env, updateMaxAge, repoName)
+	charts2, err2 := searchRepoChartNames(ctx, env, repoName)
+	if err2 == nil && len(charts2) > 0 {
+		return charts2, nil
+	}
+	if err != nil {
+		if updateErr != nil {
+			return nil, fmt.Errorf("%w (repo update error: %v)", err, updateErr)
+		}
+		return nil, err
+	}
+	if err2 != nil {
+		if updateErr != nil {
+			return nil, fmt.Errorf("%w (repo update error: %v)", err2, updateErr)
+		}
+		return nil, err2
+	}
+	if updateErr != nil {
+		return nil, fmt.Errorf("no charts found for %s (repo update error: %v)", repoName, updateErr)
+	}
+	return nil, fmt.Errorf("no charts found for %s", repoName)
+}
+
+func searchRepoChartNames(ctx context.Context, env Env, repoName string) ([]string, error) {
+	out, err := run(ctx, env, "helm", "search", "repo", repoName, "-o", "json")
+	if err != nil {
+		return nil, err
+	}
+	var items []helmSearchRepoItem
+	if err := json.Unmarshal([]byte(out), &items); err != nil {
+		return nil, fmt.Errorf("parse helm search repo json: %w", err)
+	}
+	seen := map[string]struct{}{}
+	charts := make([]string, 0, len(items))
+	for _, it := range items {
+		name := strings.TrimSpace(it.Name)
+		if name == "" {
+			continue
+		}
+		// Items are typically like <repo>/<chart>.
+		chart := name
+		if strings.HasPrefix(chart, repoName+"/") {
+			chart = strings.TrimPrefix(chart, repoName+"/")
+		}
+		chart = strings.TrimSpace(chart)
+		if chart == "" {
+			continue
+		}
+		if _, ok := seen[chart]; ok {
+			continue
+		}
+		seen[chart] = struct{}{}
+		charts = append(charts, chart)
+	}
+	sort.Strings(charts)
+	return charts, nil
+}
+
 type helmSearchRepoItem struct {
 	Name    string `json:"name"`
 	Version string `json:"version"`

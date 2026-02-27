@@ -216,11 +216,36 @@ type AppModel struct {
 	versionsInFlight map[string]bool
 
 	// arbitrary
-	arbRepo    textinput.Model
-	arbName    textinput.Model
-	arbVersion textinput.Model
-	arbAlias   textinput.Model
-	arbFocus   int
+	arbRepo textinput.Model
+
+	// Arbitrary add-dep wizard (repo -> chart -> version -> alias)
+	arbStep depArbStep
+
+	// Selected draft components.
+	arbSelectedRepo    string
+	arbSelectedChart   string
+	arbSelectedVersion string
+
+	// repo step
+	arbRepoKind    arbRepoKind
+	arbRepoLoading bool
+	arbRepoErr     string
+
+	// chart selection (classic repos only)
+	arbChartsLoading bool
+	arbChartsErr     string
+	arbCharts        list.Model
+	arbChartsData    []string
+
+	// version selection
+	arbVersionsLoading bool
+	arbVersionsErr     string
+	arbVersions        list.Model
+	arbVersionsData    []string
+	arbVersionInput    textinput.Model // OCI/manual
+
+	// alias step
+	arbAlias textinput.Model
 
 	width  int
 	height int
@@ -243,6 +268,374 @@ type AppModel struct {
 	sourcesPlat  textinput.Model
 	sourcesFocus int
 	sourcesErr   string
+}
+
+// Arbitrary add-dep wizard state machine.
+type depArbStep int
+
+const (
+	arbStepRepo depArbStep = iota
+	arbStepChart
+	arbStepVersion
+	arbStepAlias
+)
+
+type arbRepoKind int
+
+const (
+	arbRepoKindUnknown arbRepoKind = iota
+	arbRepoKindClassic
+	arbRepoKindOCI
+)
+
+type arbChartsMsg struct {
+	repoURL string
+	charts  []string
+	err     error
+}
+
+type arbVersionsMsg struct {
+	repoURL   string
+	chartName string
+	versions  []string
+	err       error
+}
+
+type arbChartItem string
+
+func (a arbChartItem) Title() string       { return string(a) }
+func (a arbChartItem) Description() string { return "" }
+func (a arbChartItem) FilterValue() string { return string(a) }
+
+type arbVersionItem string
+
+func (v arbVersionItem) Title() string       { return string(v) }
+func (v arbVersionItem) Description() string { return "" }
+func (v arbVersionItem) FilterValue() string { return string(v) }
+
+func (m *AppModel) arbitraryWizardUpdate(msg tea.Msg) tea.Cmd {
+	// Handle async results first.
+	switch mm := msg.(type) {
+	case arbChartsMsg:
+		m.arbChartsLoading = false
+		m.arbChartsErr = ""
+		if mm.err != nil {
+			m.arbChartsErr = mm.err.Error()
+			return nil
+		}
+		m.arbChartsData = mm.charts
+		its := make([]list.Item, 0, len(mm.charts))
+		for _, c := range mm.charts {
+			its = append(its, arbChartItem(c))
+		}
+		m.arbCharts.SetItems(its)
+		if len(its) > 0 {
+			m.arbCharts.Select(0)
+		}
+		return nil
+	case arbVersionsMsg:
+		m.arbVersionsLoading = false
+		m.arbVersionsErr = ""
+		if mm.err != nil {
+			m.arbVersionsErr = mm.err.Error()
+			return nil
+		}
+		m.arbVersionsData = mm.versions
+		its := make([]list.Item, 0, len(mm.versions))
+		for _, v := range mm.versions {
+			its = append(its, arbVersionItem(v))
+		}
+		m.arbVersions.SetItems(its)
+		if len(its) > 0 {
+			m.arbVersions.Select(0)
+		}
+		return nil
+	}
+
+	// Main interaction.
+	if km, ok := msg.(tea.KeyMsg); ok {
+		switch km.Type {
+		case tea.KeyEnter:
+			return m.arbEnter()
+		case tea.KeyTab:
+			// Simple focus cycle where relevant.
+			switch m.arbStep {
+			case arbStepRepo:
+				// only repo input
+				m.arbRepo.Focus()
+			case arbStepVersion:
+				if m.arbRepoKind == arbRepoKindOCI {
+					m.arbVersionInput.Focus()
+				}
+			case arbStepAlias:
+				m.arbAlias.Focus()
+			}
+		}
+	}
+
+	// Delegate updates to active widgets.
+	var cmds []tea.Cmd
+	var cmd tea.Cmd
+
+	if m.arbStep == arbStepRepo {
+		m.arbRepo, cmd = m.arbRepo.Update(msg)
+		cmds = append(cmds, cmd)
+	}
+	if m.arbStep == arbStepChart {
+		m.arbCharts, cmd = m.arbCharts.Update(msg)
+		cmds = append(cmds, cmd)
+	}
+	if m.arbStep == arbStepVersion {
+		if m.arbRepoKind == arbRepoKindOCI {
+			m.arbVersionInput, cmd = m.arbVersionInput.Update(msg)
+			cmds = append(cmds, cmd)
+		} else {
+			m.arbVersions, cmd = m.arbVersions.Update(msg)
+			cmds = append(cmds, cmd)
+		}
+	}
+	if m.arbStep == arbStepAlias {
+		m.arbAlias, cmd = m.arbAlias.Update(msg)
+		cmds = append(cmds, cmd)
+	}
+
+	return tea.Batch(cmds...)
+}
+
+func (m *AppModel) arbEnter() tea.Cmd {
+	// Clear step-local errors on action.
+	m.arbRepoErr = ""
+	m.arbChartsErr = ""
+	m.arbVersionsErr = ""
+
+	switch m.arbStep {
+	case arbStepRepo:
+		repo := strings.TrimSpace(m.arbRepo.Value())
+		if repo == "" {
+			m.arbRepoErr = "repo is required"
+			m.modalErr = m.arbRepoErr
+			return nil
+		}
+		m.arbSelectedRepo = repo
+		m.modalErr = ""
+		m.arbSelectedChart = ""
+		m.arbSelectedVersion = ""
+		// Determine kind.
+		if strings.HasPrefix(repo, "oci://") {
+			m.arbRepoKind = arbRepoKindOCI
+			// For OCI we require full chart ref in the repo field; chart list is skipped.
+			m.arbSelectedChart = "" // chart name is embedded in repo URL
+			m.arbVersionInput.SetValue("")
+			m.arbVersionInput.Focus()
+			m.arbStep = arbStepVersion
+			return nil
+		}
+		m.arbRepoKind = arbRepoKindClassic
+		m.arbChartsLoading = true
+		m.arbCharts.SetItems(nil)
+		m.arbChartsData = nil
+		m.arbStep = arbStepChart
+		return tea.Batch(m.loadArbChartsCmd(repo))
+
+	case arbStepChart:
+		it := m.arbCharts.SelectedItem()
+		if it == nil {
+			m.arbChartsErr = "select a chart"
+			m.modalErr = m.arbChartsErr
+			return nil
+		}
+		c := strings.TrimSpace(it.FilterValue())
+		if c == "" {
+			m.arbChartsErr = "select a chart"
+			m.modalErr = m.arbChartsErr
+			return nil
+		}
+		m.arbSelectedChart = c
+		m.arbVersionsLoading = true
+		m.arbVersions.SetItems(nil)
+		m.arbVersionsData = nil
+		m.arbStep = arbStepVersion
+		return tea.Batch(m.loadArbVersionsCmd(m.arbSelectedRepo, m.arbSelectedChart))
+
+	case arbStepVersion:
+		if m.arbRepoKind == arbRepoKindOCI {
+			v := strings.TrimSpace(m.arbVersionInput.Value())
+			if v == "" {
+				m.arbVersionsErr = "version is required"
+				m.modalErr = m.arbVersionsErr
+				return nil
+			}
+			m.arbSelectedVersion = v
+			m.arbAlias.SetValue("")
+			m.arbAlias.Focus()
+			m.arbStep = arbStepAlias
+			return nil
+		}
+		it := m.arbVersions.SelectedItem()
+		if it == nil {
+			m.arbVersionsErr = "select a version"
+			m.modalErr = m.arbVersionsErr
+			return nil
+		}
+		v := strings.TrimSpace(it.FilterValue())
+		if v == "" {
+			m.arbVersionsErr = "select a version"
+			m.modalErr = m.arbVersionsErr
+			return nil
+		}
+		m.arbSelectedVersion = v
+		m.arbAlias.SetValue("")
+		m.arbAlias.Focus()
+		m.arbStep = arbStepAlias
+		return nil
+
+	case arbStepAlias:
+		alias := strings.TrimSpace(m.arbAlias.Value())
+		// Build dependency draft.
+		dep := yamlchart.Dependency{
+			Repository: strings.TrimSpace(m.arbSelectedRepo),
+			Name:       strings.TrimSpace(m.arbSelectedChart),
+			Version:    strings.TrimSpace(m.arbSelectedVersion),
+			Alias:      alias,
+		}
+		// For OCI, require full chart ref in repo field. Use last path segment as Name.
+		if m.arbRepoKind == arbRepoKindOCI {
+			// Best-effort parse: chart name = last path segment.
+			base := strings.TrimRight(dep.Repository, "/")
+			if i := strings.LastIndex(base, "/"); i >= 0 {
+				dep.Name = strings.TrimSpace(base[i+1:])
+			}
+		}
+		if strings.TrimSpace(dep.Repository) == "" || strings.TrimSpace(dep.Name) == "" || strings.TrimSpace(dep.Version) == "" {
+			m.modalErr = "repo, chart, and version are required"
+			return nil
+		}
+		_ = m.writeSelectedDepSourceMeta(dep, depSourceMeta{Kind: depSourceArbitrary})
+		return m.applyDependencyDraft(dep)
+	default:
+		return nil
+	}
+}
+
+func (m *AppModel) loadArbChartsCmd(repoURL string) tea.Cmd {
+	return func() tea.Msg {
+		// Cache-first.
+		if charts, _, ok, err := helmutil.ReadChartsCache(m.params.RepoRoot, repoURL); err == nil && ok && len(charts) > 0 {
+			// Fire background refresh separately; UI gets instant data.
+			return arbChartsMsg{repoURL: repoURL, charts: charts, err: nil}
+		}
+		if e2eStubHelm() {
+			return arbChartsMsg{repoURL: repoURL, charts: []string{"nginx", "postgresql"}, err: nil}
+		}
+		ctx, cancel := context.WithTimeout(contextBG(), 60*time.Second)
+		defer cancel()
+		charts, err := helmutil.RepoChartNames(ctx, m.params.RepoRoot, repoURL, 24*time.Hour)
+		if err == nil {
+			_, _ = helmutil.WriteChartsCache(m.params.RepoRoot, repoURL, charts)
+		}
+		return arbChartsMsg{repoURL: repoURL, charts: charts, err: err}
+	}
+}
+
+func (m *AppModel) loadArbVersionsCmd(repoURL, chart string) tea.Cmd {
+	return func() tea.Msg {
+		dep := yamlchart.Dependency{Repository: repoURL, Name: chart}
+		key := versionsKey(dep.Repository, dep.Name)
+		if vs, _, ok, err := helmutil.ReadVersionsCache(m.params.RepoRoot, dep.Repository, dep.Name); err == nil && ok && len(vs) > 0 {
+			// Immediate cached versions.
+			return arbVersionsMsg{repoURL: repoURL, chartName: chart, versions: vs, err: nil}
+		}
+		_ = key // keep parity with other pipelines; single-flight not yet shared
+		if e2eStubHelm() {
+			return arbVersionsMsg{repoURL: repoURL, chartName: chart, versions: []string{"9.9.9", "2.0.0", "1.1.0", "1.0.0"}, err: nil}
+		}
+		ctx, cancel := context.WithTimeout(contextBG(), 60*time.Second)
+		defer cancel()
+		vs, err := helmutil.RepoChartVersions(ctx, m.params.RepoRoot, repoURL, chart, 24*time.Hour)
+		if err == nil {
+			_, _ = helmutil.WriteVersionsCache(m.params.RepoRoot, repoURL, chart, vs)
+		}
+		return arbVersionsMsg{repoURL: repoURL, chartName: chart, versions: vs, err: err}
+	}
+}
+
+func (m AppModel) renderArbitraryWizardView() string {
+	lines := []string{}
+	// Step label.
+	stepTitle := ""
+	switch m.arbStep {
+	case arbStepRepo:
+		stepTitle = styleHeading.Render("Repo")
+	case arbStepChart:
+		stepTitle = styleHeading.Render("Chart")
+	case arbStepVersion:
+		stepTitle = styleHeading.Render("Version")
+	case arbStepAlias:
+		stepTitle = styleHeading.Render("Alias")
+	default:
+		stepTitle = styleHeading.Render("Arbitrary")
+	}
+	lines = append(lines, stepTitle)
+	// Error surface.
+	if strings.TrimSpace(m.arbRepoErr) != "" {
+		lines = append(lines, styleErrStrong.Render(withIcon(iconErr, "Error:")+" "+m.arbRepoErr))
+	}
+	if strings.TrimSpace(m.arbChartsErr) != "" {
+		lines = append(lines, styleErrStrong.Render(withIcon(iconErr, "Error:")+" "+m.arbChartsErr))
+	}
+	if strings.TrimSpace(m.arbVersionsErr) != "" {
+		lines = append(lines, styleErrStrong.Render(withIcon(iconErr, "Error:")+" "+m.arbVersionsErr))
+	}
+	lines = append(lines, "")
+
+	switch m.arbStep {
+	case arbStepRepo:
+		lines = append(lines, m.arbRepo.View())
+		lines = append(lines, "")
+		lines = append(lines, styleMuted.Render("enter: next • esc: back"))
+	case arbStepChart:
+		if m.arbChartsLoading {
+			lines = append(lines, styleMuted.Render("Loading charts…"))
+		}
+		// List already renders its own help hints; avoid duplicating the footer.
+		lines = append(lines, m.arbCharts.View())
+	case arbStepVersion:
+		if m.arbRepoKind == arbRepoKindOCI {
+			lines = append(lines, styleMuted.Render("OCI repo: enter an exact version"))
+			lines = append(lines, "")
+			lines = append(lines, m.arbVersionInput.View())
+			lines = append(lines, "")
+			lines = append(lines, styleMuted.Render("enter: next • esc: back"))
+			break
+		}
+		if m.arbVersionsLoading {
+			lines = append(lines, styleMuted.Render("Loading versions…"))
+		}
+		// List already renders its own help hints; avoid duplicating the footer.
+		lines = append(lines, m.arbVersions.View())
+	case arbStepAlias:
+		// Summary + alias input.
+		sum := []string{}
+		if strings.TrimSpace(m.arbSelectedRepo) != "" {
+			sum = append(sum, "repo: "+m.arbSelectedRepo)
+		}
+		if strings.TrimSpace(m.arbSelectedChart) != "" {
+			sum = append(sum, "chart: "+m.arbSelectedChart)
+		}
+		if strings.TrimSpace(m.arbSelectedVersion) != "" {
+			sum = append(sum, "version: "+m.arbSelectedVersion)
+		}
+		if len(sum) > 0 {
+			lines = append(lines, styleMuted.Render(strings.Join(sum, " • ")))
+			lines = append(lines, "")
+		}
+		lines = append(lines, m.arbAlias.View())
+		lines = append(lines, "")
+		lines = append(lines, styleMuted.Render("enter: draft • esc: back"))
+	default:
+		lines = append(lines, styleMuted.Render("(unknown step)"))
+	}
+	return strings.Join(lines, "\n")
 }
 
 type confirmKind int
@@ -302,7 +695,44 @@ func (m AppModel) handleEscChain(msg tea.KeyMsg) (AppModel, tea.Cmd, bool) {
 				m.depStep = depStepNone
 				m.modalErr = ""
 				return m, nil, true
-			case depStepCatalog, depStepCatalogDetail, depStepCatalogCollision, depStepAHQuery, depStepArbitrary:
+			case depStepArbitrary:
+				// Arbitrary wizard has its own internal steps.
+				switch m.arbStep {
+				case arbStepAlias:
+					m.arbStep = arbStepVersion
+					m.modalErr = ""
+					m.arbAlias.Blur()
+					if m.arbRepoKind == arbRepoKindOCI {
+						m.arbVersionInput.Focus()
+					}
+					return m, nil, true
+				case arbStepVersion:
+					m.modalErr = ""
+					m.arbVersionInput.Blur()
+					if m.arbRepoKind == arbRepoKindOCI {
+						m.arbStep = arbStepRepo
+						m.arbRepo.Focus()
+						return m, nil, true
+					}
+					m.arbStep = arbStepChart
+					return m, nil, true
+				case arbStepChart:
+					m.arbStep = arbStepRepo
+					m.modalErr = ""
+					m.arbRepo.Focus()
+					return m, nil, true
+				case arbStepRepo:
+					m.depStep = depStepChooseSource
+					m.modalErr = ""
+					m.arbRepo.Blur()
+					return m, nil, true
+				default:
+					m.depStep = depStepChooseSource
+					m.modalErr = ""
+					return m, nil, true
+				}
+
+			case depStepCatalog, depStepCatalogDetail, depStepCatalogCollision, depStepAHQuery:
 				m.depStep = depStepChooseSource
 				m.modalErr = ""
 				return m, nil, true
@@ -839,15 +1269,30 @@ func NewAppModel(p Params) AppModel {
 	arbRepo := textinput.New()
 	arbRepo.Placeholder = "repo URL (https://... or oci://...)"
 	arbRepo.Prompt = "repo> "
-	arbName := textinput.New()
-	arbName.Placeholder = "chart name"
-	arbName.Prompt = "name> "
-	arbVersion := textinput.New()
-	arbVersion.Placeholder = "exact version"
-	arbVersion.Prompt = "version> "
+
+	arbVerInput := textinput.New()
+	arbVerInput.Placeholder = "exact version"
+	arbVerInput.Prompt = "version> "
+
 	arbAlias := textinput.New()
 	arbAlias.Placeholder = "alias (optional)"
 	arbAlias.Prompt = "alias> "
+
+	arbCharts := list.New([]list.Item{}, list.NewDefaultDelegate(), 0, 0)
+	arbCharts.Title = ""
+	arbCharts.SetShowTitle(false)
+	arbCharts.SetFilteringEnabled(true)
+	arbCharts.SetShowHelp(false)
+	arbCharts.SetShowStatusBar(false)
+	arbCharts.SetShowPagination(false)
+
+	arbVersions := list.New([]list.Item{}, list.NewDefaultDelegate(), 0, 0)
+	arbVersions.Title = ""
+	arbVersions.SetShowTitle(false)
+	arbVersions.SetFilteringEnabled(true)
+	arbVersions.SetShowHelp(false)
+	arbVersions.SetShowStatusBar(false)
+	arbVersions.SetShowPagination(false)
 
 	tabNames := instanceTabNames()
 	ahDetailTabNames := []string{
@@ -894,8 +1339,11 @@ func NewAppModel(p Params) AppModel {
 		newName:                newName,
 		instanceManageName:     instManageName,
 		arbRepo:                arbRepo,
-		arbName:                arbName,
-		arbVersion:             arbVersion,
+		arbStep:                arbStepRepo,
+		arbRepoKind:            arbRepoKindUnknown,
+		arbCharts:              arbCharts,
+		arbVersions:            arbVersions,
+		arbVersionInput:        arbVerInput,
 		arbAlias:               arbAlias,
 		activeTab:              0,
 		tabNames:               tabNames,
@@ -2439,6 +2887,9 @@ func (m AppModel) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.valuesList.SetSize(msg.Width-2, msg.Height-8)
 		m.depSource.SetSize(msg.Width-2, msg.Height-7)
 		m.catalogList.SetSize(msg.Width-2, msg.Height-7)
+		// Arbitrary wizard lists live in the add-dep modal.
+		m.arbCharts.SetSize(msg.Width-2, msg.Height-7)
+		m.arbVersions.SetSize(msg.Width-2, msg.Height-7)
 		// Catalog detail view includes a fair amount of text above/below the sets list.
 		// Keep the list shorter so the overall screen doesn't scroll (which would push
 		// the global breadcrumb/top bar off-screen in AltScreen).
@@ -3404,7 +3855,15 @@ func (m AppModel) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.ahQuery.Focus()
 				case "Arbitrary":
 					m.depStep = depStepArbitrary
-					m.arbFocus = 0
+					m.arbStep = arbStepRepo
+					m.modalErr = ""
+					m.arbRepoErr = ""
+					m.arbChartsErr = ""
+					m.arbVersionsErr = ""
+					m.arbRepoKind = arbRepoKindUnknown
+					m.arbSelectedRepo = ""
+					m.arbSelectedChart = ""
+					m.arbSelectedVersion = ""
 					m.arbRepo.Focus()
 				}
 			}
@@ -3675,42 +4134,7 @@ func (m AppModel) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, cmd
 		case depStepArbitrary:
-			// Simple focus cycling with tab.
-			if km, ok := msg.(tea.KeyMsg); ok {
-				if km.Type == tea.KeyTab {
-					m.arbFocus = (m.arbFocus + 1) % 4
-					m.arbRepo.Blur()
-					m.arbName.Blur()
-					m.arbVersion.Blur()
-					m.arbAlias.Blur()
-					switch m.arbFocus {
-					case 0:
-						m.arbRepo.Focus()
-					case 1:
-						m.arbName.Focus()
-					case 2:
-						m.arbVersion.Focus()
-					case 3:
-						m.arbAlias.Focus()
-					}
-				}
-				if km.Type == tea.KeyEnter {
-					dep := yamlchart.Dependency{Name: strings.TrimSpace(m.arbName.Value()), Repository: strings.TrimSpace(m.arbRepo.Value()), Version: strings.TrimSpace(m.arbVersion.Value()), Alias: strings.TrimSpace(m.arbAlias.Value())}
-					_ = m.writeSelectedDepSourceMeta(dep, depSourceMeta{Kind: depSourceArbitrary})
-					return m, m.applyDependencyDraft(dep)
-				}
-			}
-			var cmds []tea.Cmd
-			var cmd tea.Cmd
-			m.arbRepo, cmd = m.arbRepo.Update(msg)
-			cmds = append(cmds, cmd)
-			m.arbName, cmd = m.arbName.Update(msg)
-			cmds = append(cmds, cmd)
-			m.arbVersion, cmd = m.arbVersion.Update(msg)
-			cmds = append(cmds, cmd)
-			m.arbAlias, cmd = m.arbAlias.Update(msg)
-			cmds = append(cmds, cmd)
-			return m, tea.Batch(cmds...)
+			return m, m.arbitraryWizardUpdate(msg)
 		}
 	}
 	// Delegate to focused widget.
@@ -3966,6 +4390,13 @@ func (m AppModel) isAnyFilterActive() bool {
 	if m.depDetailVersions.FilterState() != list.Unfiltered {
 		return true
 	}
+	// Arbitrary wizard lists.
+	if m.arbCharts.FilterState() != list.Unfiltered {
+		return true
+	}
+	if m.arbVersions.FilterState() != list.Unfiltered {
+		return true
+	}
 	return false
 }
 
@@ -4210,7 +4641,21 @@ func (m AppModel) contextHelpLine() string {
 				}
 				return "←/→ tabs • a add • esc back"
 			case depStepArbitrary:
-				return "tab next field • enter: draft • esc back"
+				switch m.arbStep {
+				case arbStepRepo:
+					return "type repo • enter: next • esc back"
+				case arbStepChart:
+					return "/ filter • ↑/↓ select • enter: next • esc back"
+				case arbStepVersion:
+					if m.arbRepoKind == arbRepoKindOCI {
+						return "type version • enter: next • esc back"
+					}
+					return "/ filter • ↑/↓ select • enter: next • esc back"
+				case arbStepAlias:
+					return "type alias (optional) • enter: draft • esc back"
+				default:
+					return "enter: next • esc back"
+				}
 			default:
 				return "esc back"
 			}
@@ -4635,7 +5080,7 @@ func renderAddDepView(m AppModel) string {
 		}
 		return header + "\n\n" + body
 	case depStepArbitrary:
-		return header + "\n\n" + m.arbRepo.View() + "\n" + m.arbName.View() + "\n" + m.arbVersion.View() + "\n" + m.arbAlias.View() + "\n\n(tab to move, enter to add)"
+		return header + "\n\n" + m.renderArbitraryWizardView()
 	default:
 		return header + "\n\n" + "(unknown step)"
 	}
@@ -4657,7 +5102,8 @@ func (m AppModel) inputCapturesKeys() bool {
 			return true
 		}
 		if m.depStep == depStepArbitrary {
-			if m.arbRepo.Focused() || m.arbName.Focused() || m.arbVersion.Focused() || m.arbAlias.Focused() {
+			// Any focused textinput in the arbitrary wizard should receive typing.
+			if m.arbRepo.Focused() || m.arbVersionInput.Focused() || m.arbAlias.Focused() {
 				return true
 			}
 		}
@@ -4737,6 +5183,8 @@ func (m *AppModel) clearAnyActiveFilter() bool {
 	resetIfActive(&m.depSource)
 	resetIfActive(&m.depsList)
 	resetIfActive(&m.valuesList)
+	resetIfActive(&m.arbCharts)
+	resetIfActive(&m.arbVersions)
 	return cleared
 }
 

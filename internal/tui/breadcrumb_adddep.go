@@ -75,7 +75,21 @@ func addDepCrumbsPlain(m AppModel) []string {
 		return crumbs
 
 	case depStepArbitrary:
-		return append(crumbs, "Arbitrary")
+		crumbs = append(crumbs, "Arbitrary")
+		// Add sub-step for the new arbitrary wizard.
+		// Use plain labels so window titles remain stable.
+		switch m.arbStep {
+		case arbStepRepo:
+			return append(crumbs, "Repo")
+		case arbStepChart:
+			return append(crumbs, "Chart")
+		case arbStepVersion:
+			return append(crumbs, "Version")
+		case arbStepAlias:
+			return append(crumbs, "Alias")
+		default:
+			return crumbs
+		}
 
 	default:
 		return crumbs
