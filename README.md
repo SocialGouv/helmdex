@@ -19,6 +19,56 @@
 
 **What it is not:** `helmdex` does **not** render templates and does **not** deploy (no `helm template`, no `helm install`).
 
+## Key features
+
+- 🧾 **GitOps-friendly umbrella chart instances** on disk: commit `Chart.yaml`, `Chart.lock`, and a generated `values.yaml` that’s meant to be reviewed in PRs.
+- 🗂️ **Curated catalog + presets**: add approved dependencies from a team catalog and apply versioned defaults/platform/sets.
+- 🔎 **Artifact Hub built-in**: search charts and pick versions without leaving the TUI (also available via CLI).
+- 🧅 **Layered values → one merged output**: defaults → platform → sets → per-dep sets → `values.instance.yaml` → merged `values.yaml`.
+- 🧠 **Schema-aware configuration**: when charts publish `values.schema.json`, edit values with a structured TUI editor.
+- 🧪 **Safer upgrades**: preview diffs between chart versions (values + schema) before applying.
+- 🤖 **CLI parity for automation**: use helmdex in CI (`catalog sync`, `instance apply`, values get/set, dependency inspect…).
+- 🧯 **Escape hatches**: detach a dependency from a catalog entry to unblock urgent changes.
+- 📌 **Reproducible dependency operations**: helmdex ships a pinned Helm binary and verifies downloads.
+- 🔒 **Repo-local isolation**: Helm repos/caches and OCI auth are stored under `.helmdex/` (no pollution of user `~/.config/helm` or `~/.docker`).
+
+<details>
+<summary>How helmdex fits a GitOps PR workflow</summary>
+
+```mermaid
+flowchart TD
+  %% Use quoted labels + <br/> for maximum Mermaid renderer compatibility.
+  subgraph Dev["Developer and platform repo"]
+    A["Open helmdex (TUI) or run CLI"] --> B["Select instance (app / env)"]
+    B --> C["Add/upgrade dependency<br/>Catalog • Artifact Hub • Arbitrary • OCI"]
+    C --> D["Select sets<br/>values.set.* and values.dep-set.* markers"]
+    D --> E["Edit overrides<br/>values.instance.yaml (YAML or schema editor)"]
+  end
+
+  subgraph Apply["Reconcile repo artifacts"]
+    E --> F["helmdex instance apply"]
+    F --> G{"Chart.yaml vs Chart.lock drift?"}
+    G -- "yes" --> H["Relock deps<br/>helm dependency build/update (isolated env)"]
+    G -- "no" --> I["Skip relock"]
+    H --> J["Import presets<br/>values.default / values.platform / sets from sources"]
+    I --> J
+    J --> K["Generate merged values.yaml<br/>layered deep-merge"]
+    K --> L["Optional: inspect & diff<br/>README • values • schema"]
+  end
+
+  subgraph PR["GitOps change review"]
+    L --> M["Commit Chart.yaml, Chart.lock, values.yaml"]
+    M --> N["Open PR and review diff"]
+    N --> O["Merge"]
+  end
+
+  subgraph Deploy["Runtime"]
+    O --> P["GitOps controller (Argo CD / Flux)<br/>applies manifests from repo"]
+  end
+```
+
+</details>
+
 ---
 
 ## Install
