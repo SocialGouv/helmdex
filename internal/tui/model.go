@@ -5030,8 +5030,8 @@ func renderAddDepView(m AppModel) string {
 			} else {
 				lines = append(lines, styleHeading.Render("Sets:"))
 				lines = append(lines, m.catalogSetList.View())
-				lines = append(lines, "")
-				lines = append(lines, styleMuted.Render("space: toggle • D: toggle defaults • enter: add+apply"))
+				// Avoid duplicating help: the global context help line already describes
+				// the active controls for this step.
 			}
 		}
 		return header + "\n\n" + strings.Join(lines, "\n")
