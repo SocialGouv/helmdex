@@ -37,7 +37,7 @@ func readDepOverrideFromInstance(instancePath, depID string) any {
 }
 
 // depConfigureModel is a lightweight schema-driven values editor for a dependency.
-// It is rendered inside the dependency detail modal under the Configure tab.
+// It is rendered inside the dependency detail modal under the Values tab.
 //
 // Keybindings (as approved):
 // - ↑/↓ move

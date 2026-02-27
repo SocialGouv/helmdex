@@ -91,7 +91,7 @@ func TestDepDetailDependencyTabEnterStartsAliasEditDoesNotApply(t *testing.T) {
 	m.depDetailDep = dep
 	m.depDetailLoading = false
 	// Force active tab kind to Dependency.
-	m.depDetailTabNames = []string{"Configure", "Dependency"}
+	m.depDetailTabNames = []string{"Values", "Dependency"}
 	m.depDetailTabKinds = []depDetailTabKind{depDetailTabValues, depDetailTabDependency}
 	m.depDetailTab = 1
 	m.depDetailAliasInput.SetValue("new")
@@ -114,7 +114,7 @@ func TestDepDetailDependencyTabEscWhileEditingBlursAndRevertsValue(t *testing.T)
 	m.depDetailDep = dep
 	m.depDetailLoading = false
 	// Force active tab kind to Dependency.
-	m.depDetailTabNames = []string{"Configure", "Dependency"}
+	m.depDetailTabNames = []string{"Values", "Dependency"}
 	m.depDetailTabKinds = []depDetailTabKind{depDetailTabValues, depDetailTabDependency}
 	m.depDetailTab = 1
 
@@ -210,7 +210,7 @@ func TestDepDetailTabsRenamesDependencyTabToSettings(t *testing.T) {
 	}
 }
 
-func TestDepDetailTabsRenamesValuesTabToConfigure(t *testing.T) {
+func TestDepDetailTabsRenamesValuesTabToValues(t *testing.T) {
 	names, kinds := depDetailTabs(depSourceMeta{Kind: depSourceArbitrary}, true)
 	idx := -1
 	for i, k := range kinds {
@@ -220,10 +220,10 @@ func TestDepDetailTabsRenamesValuesTabToConfigure(t *testing.T) {
 		}
 	}
 	if idx < 0 {
-		t.Fatalf("expected Configure tab to be present")
+		t.Fatalf("expected Values tab to be present")
 	}
-	if !strings.Contains(names[idx], "Configure") {
-		t.Fatalf("expected Configure tab label, got %q", names[idx])
+	if !strings.Contains(names[idx], "Values") {
+		t.Fatalf("expected Values tab label, got %q", names[idx])
 	}
 }
 

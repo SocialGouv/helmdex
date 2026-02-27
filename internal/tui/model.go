@@ -543,7 +543,7 @@ func depDetailTabs(source depSourceMeta, ok bool) (names []string, kinds []depDe
 		case depDetailTabSets:
 			names = append(names, withIcon(iconPresets, "Sets"))
 		case depDetailTabValues:
-			names = append(names, withIcon(iconSchema, "Configure"))
+			names = append(names, withIcon(iconSchema, "Values"))
 		case depDetailTabDependency:
 			names = append(names, withIcon(iconDeps, "Settings"))
 		case depDetailTabDefault:
@@ -842,7 +842,7 @@ func NewAppModel(p Params) AppModel {
 	tabNames := instanceTabNames()
 	ahDetailTabNames := []string{
 		withIcon(iconReadme, "README"),
-		withIcon(iconAHValues, "Configure"),
+		withIcon(iconAHValues, "Values"),
 		withIcon(iconVersions, "Versions"),
 	}
 	depDetailTabNames, depDetailTabKinds := depDetailTabs(depSourceMeta{}, false)
@@ -1104,7 +1104,46 @@ type ahSearchMsg struct{ results []artifacthub.PackageSummary }
 
 type ahVersionsMsg struct{ versions []artifacthub.Version }
 
-type ahDetailMsg struct{ readme, values string }
+type ahDetailMsg struct {
+	readme string
+	values string
+	err    error
+}
+
+// humanizeHelmPreviewErr turns a long helm error into a short user-facing message
+// for the Artifact Hub detail preview (README/Values).
+func humanizeHelmPreviewErr(err error) string {
+	if err == nil {
+		return ""
+	}
+	s := strings.TrimSpace(err.Error())
+	if s == "" {
+		return "failed to load chart preview"
+	}
+
+	// Common Helm error shape:
+	// helm repo add <name> <url> failed: Error: looks like "<url>" is not a valid chart repository ...
+	if i := strings.Index(s, "looks like \""); i >= 0 {
+		rest := s[i+len("looks like \""):]
+		if j := strings.Index(rest, "\""); j > 0 {
+			url := strings.TrimSpace(rest[:j])
+			if url != "" {
+				return "invalid or unreachable chart repository: " + url
+			}
+		}
+	}
+
+	// Strip noisy prefixes.
+	if k := strings.Index(s, " failed: "); k >= 0 {
+		s = strings.TrimSpace(s[k+len(" failed: "):])
+	}
+	s = strings.TrimPrefix(s, "Error: ")
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return "failed to load chart preview"
+	}
+	return s
+}
 
 // Dep actions modal removed; actions are exposed via direct shortcuts and
 // contextual command palette entries.
@@ -1748,7 +1787,7 @@ func (m AppModel) loadHelmPreviewsCmd(repoURL, chartName, version string) tea.Cm
 			// Deterministic E2E stub: bypass helm show/pull.
 			readme := "# Stub README\n\nThis is a deterministic E2E stub.\n"
 			values := "replicaCount: 1\nimage:\n  tag: stub\n"
-			return ahDetailMsg{readme: readme, values: values}
+			return ahDetailMsg{readme: readme, values: values, err: nil}
 		}
 		// Force refresh is a one-shot toggle.
 		force := m.ahForceRefresh
@@ -1757,12 +1796,12 @@ func (m AppModel) loadHelmPreviewsCmd(repoURL, chartName, version string) tea.Cm
 		// Cache: return immediately when present.
 		if !force {
 			if readme, ok, err := helmutil.ReadShowCache(m.params.RepoRoot, repoURL, chartName, version, helmutil.ShowKindReadme); err != nil {
-				return errMsg{err}
+				return ahDetailMsg{err: err}
 			} else if ok {
 				if values, ok2, err := helmutil.ReadShowCache(m.params.RepoRoot, repoURL, chartName, version, helmutil.ShowKindValues); err != nil {
-					return errMsg{err}
+					return ahDetailMsg{err: err}
 				} else if ok2 {
-					return ahDetailMsg{readme: readme, values: values}
+					return ahDetailMsg{readme: readme, values: values, err: nil}
 				}
 			}
 		}
@@ -1771,7 +1810,7 @@ func (m AppModel) loadHelmPreviewsCmd(repoURL, chartName, version string) tea.Cm
 		if tgzPath, ok := helmutil.FindCachedChartArchive(m.params.RepoRoot, repoURL, chartName, version); ok {
 			readme, values, err := helmutil.ReadChartArchiveFiles(tgzPath)
 			if err != nil {
-				return errMsg{err}
+				return ahDetailMsg{err: err}
 			}
 			if strings.TrimSpace(readme) != "" {
 				_ = helmutil.WriteShowCache(m.params.RepoRoot, repoURL, chartName, version, helmutil.ShowKindReadme, readme)
@@ -1780,7 +1819,7 @@ func (m AppModel) loadHelmPreviewsCmd(repoURL, chartName, version string) tea.Cm
 				_ = helmutil.WriteShowCache(m.params.RepoRoot, repoURL, chartName, version, helmutil.ShowKindValues, values)
 			}
 			if strings.TrimSpace(readme) != "" || strings.TrimSpace(values) != "" {
-				return ahDetailMsg{readme: readme, values: values}
+				return ahDetailMsg{readme: readme, values: values, err: nil}
 			}
 		}
 
@@ -1792,32 +1831,32 @@ func (m AppModel) loadHelmPreviewsCmd(repoURL, chartName, version string) tea.Cm
 		if strings.HasPrefix(repoURL, "oci://") {
 			ref, err := helmutil.OCIChartRef(repoURL, chartName)
 			if err != nil {
-				return errMsg{err}
+				return ahDetailMsg{err: err}
 			}
 			// Try pulling archive first (reduces network calls and avoids show timeouts).
 			if tgzPath, err := helmutil.PullChartArchive(ctx, env, repoURL, chartName, version); err == nil {
 				if readme, values, err2 := helmutil.ReadChartArchiveFiles(tgzPath); err2 == nil {
 					_ = helmutil.WriteShowCache(m.params.RepoRoot, repoURL, chartName, version, helmutil.ShowKindReadme, readme)
 					_ = helmutil.WriteShowCache(m.params.RepoRoot, repoURL, chartName, version, helmutil.ShowKindValues, values)
-					return ahDetailMsg{readme: readme, values: values}
+						return ahDetailMsg{readme: readme, values: values, err: nil}
+					}
 				}
-			}
 			readme, err := helmutil.ShowReadme(ctx, env, ref, version)
 			if err != nil {
-				return errMsg{err}
+				return ahDetailMsg{err: err}
 			}
 			values, err := helmutil.ShowValues(ctx, env, ref, version)
 			if err != nil {
-				return errMsg{err}
+				return ahDetailMsg{err: err}
 			}
 			_ = helmutil.WriteShowCache(m.params.RepoRoot, repoURL, chartName, version, helmutil.ShowKindReadme, readme)
 			_ = helmutil.WriteShowCache(m.params.RepoRoot, repoURL, chartName, version, helmutil.ShowKindValues, values)
-			return ahDetailMsg{readme: readme, values: values}
+			return ahDetailMsg{readme: readme, values: values, err: nil}
 		}
 
 		repoName := helmutil.RepoNameForURL(repoURL)
 		if err := helmutil.RepoAdd(ctx, env, repoName, repoURL); err != nil {
-			return errMsg{err}
+			return ahDetailMsg{err: err}
 		}
 		ref := repoName + "/" + chartName
 		// If archive isn't present, try pulling it first (prefer offline extraction).
@@ -1825,7 +1864,7 @@ func (m AppModel) loadHelmPreviewsCmd(repoURL, chartName, version string) tea.Cm
 			if readme, values, err2 := helmutil.ReadChartArchiveFiles(tgzPath); err2 == nil {
 				_ = helmutil.WriteShowCache(m.params.RepoRoot, repoURL, chartName, version, helmutil.ShowKindReadme, readme)
 				_ = helmutil.WriteShowCache(m.params.RepoRoot, repoURL, chartName, version, helmutil.ShowKindValues, values)
-				return ahDetailMsg{readme: readme, values: values}
+				return ahDetailMsg{readme: readme, values: values, err: nil}
 			}
 		}
 		// Best-effort show with minimal side effects.
@@ -1840,15 +1879,15 @@ func (m AppModel) loadHelmPreviewsCmd(repoURL, chartName, version string) tea.Cm
 		}
 		readme, err := helmutil.ShowReadmeBestEffort(ctx, env, ref, version, 24*time.Hour)
 		if err != nil {
-			return errMsg{err}
+			return ahDetailMsg{err: err}
 		}
 		values, err := helmutil.ShowValuesBestEffort(ctx, env, ref, version, 24*time.Hour)
 		if err != nil {
-			return errMsg{err}
+			return ahDetailMsg{err: err}
 		}
 		_ = helmutil.WriteShowCache(m.params.RepoRoot, repoURL, chartName, version, helmutil.ShowKindReadme, readme)
 		_ = helmutil.WriteShowCache(m.params.RepoRoot, repoURL, chartName, version, helmutil.ShowKindValues, values)
-		return ahDetailMsg{readme: readme, values: values}
+		return ahDetailMsg{readme: readme, values: values, err: nil}
 	}
 }
 
@@ -2248,17 +2287,27 @@ func (m AppModel) renderAHDetailBody() string {
 	case 0:
 		if m.ahReadme == "" {
 			if m.ahSelectedVersion == "" {
-				return "README not loaded yet. Loading versions…"
+				return "Select a version in the Versions tab to view README."
 			}
-			return "README not loaded yet. Select a version in Versions tab."
+			// If we have an error surfaced in the modal header, prefer stating that
+			// loading failed (rather than implying the chart has no README).
+			if strings.TrimSpace(m.modalErr) != "" {
+				return "README could not be loaded for this chart/version (see error above)."
+			}
+			// Some charts simply don't ship a README in the chart archive.
+			return "README not available for this chart/version."
 		}
 		return renderMarkdownForDisplay(m.ahPreview.Width, m.ahReadme)
 	case 1:
 		if m.ahValues == "" {
 			if m.ahSelectedVersion == "" {
-				return "Default values not loaded yet. Loading versions…"
+				return "Select a version in the Versions tab to view default values."
 			}
-			return "Default values not loaded yet. Select a version in Versions tab."
+			if strings.TrimSpace(m.modalErr) != "" {
+				return "Default values could not be loaded for this chart/version (see error above)."
+			}
+			// Some charts/versions may not have values accessible via Helm.
+			return "Default values not available for this chart/version."
 		}
 		return m.ahValues
 	case 2:
@@ -2382,7 +2431,11 @@ func (m AppModel) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.catalogList.SetSize(msg.Width-2, msg.Height-7)
 		m.catalogSetList.SetSize(msg.Width-2, msg.Height-12)
 		m.ahResults.SetSize(msg.Width-2, msg.Height-7)
-		m.ahVersions.SetSize(msg.Width-2, msg.Height-7)
+		// The Artifact Hub versions list appears inside the Add-dep detail view,
+		// which already renders a header + tabs + footer hints. If the list is too
+		// tall, the terminal can scroll and push the header off-screen.
+		// Keep it aligned with the preview viewport height.
+		m.ahVersions.SetSize(msg.Width-2, max(5, msg.Height-11))
 		m.depEditVersions.SetSize(max(10, msg.Width-6), max(5, msg.Height-12))
 		m.palette.SetSize(min(70, msg.Width-4), min(14, msg.Height-6))
 		m.depDetailPreview.Width = max(10, msg.Width-6)
@@ -2426,7 +2479,7 @@ func (m AppModel) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Re-render markdown previews to reflow with the new width.
 		// Only do this when we have content; otherwise we'd replace helpful
 		// placeholder messages.
-		if m.ahReadme != "" && (oldAHW != m.ahPreview.Width) {
+		if (m.ahReadme != "" || m.ahValues != "") && (oldAHW != m.ahPreview.Width) {
 			m.ahPreview.SetContent(m.renderAHDetailBody())
 			m.ahPreview.SetYOffset(oldAHOff)
 		}
@@ -2879,26 +2932,28 @@ func (m AppModel) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 					best = msg.versions[0].Version
 				}
 				m.ahSelectedVersion = best
-				// Select matching item.
+			}
+
+			// Always try to select the currently chosen version in the versions list.
+			if m.ahSelectedVersion != "" {
 				for i := range msg.versions {
-					if msg.versions[i].Version == best {
+					if strings.TrimSpace(msg.versions[i].Version) == strings.TrimSpace(m.ahSelectedVersion) {
 						m.ahVersions.Select(i)
 						break
 					}
 				}
-				m.ahLoading = true
-				m.ahPreview.SetContent(m.renderAHDetailBody())
-				if m.ahSelected.RepositoryURL != "" {
-					return m, tea.Batch(m.beginBusy("Fetching chart"), m.loadHelmPreviewsCmd(m.ahSelected.RepositoryURL, m.ahSelected.Name, m.ahSelectedVersion))
-				}
-				m.ahLoading = false
-				m.modalErr = "selected chart has no repository URL; cannot run helm show"
 			}
 		}
 		m.ahPreview.SetContent(m.renderAHDetailBody())
 		return m, nil
 	case ahDetailMsg:
 		m.endBusy()
+		if msg.err != nil {
+			m.modalErr = humanizeHelmPreviewErr(msg.err)
+			m.ahLoading = false
+			m.ahPreview.SetContent(m.renderAHDetailBody())
+			return m, nil
+		}
 		m.ahReadme = msg.readme
 		m.ahValues = highlightYAMLForDisplay(msg.values)
 		m.ahLoading = false
@@ -3504,12 +3559,28 @@ func (m AppModel) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.depStep = depStepAHDetail
 				m.modalErr = ""
 				m.ahDetailTab = 0
-				m.ahSelectedVersion = ""
+				// UX: pick a default version immediately so README/Values load without
+				// forcing the user into the Versions tab first.
+				m.ahSelectedVersion = strings.TrimSpace(sel.LatestVersion)
 				m.ahReadme = ""
 				m.ahValues = ""
 				m.ahLoading = false
 				m.ahPreview.SetContent(m.renderAHDetailBody())
-				return m, m.ahVersionsCmd(sel.RepositoryKey, sel.Name)
+
+				cmds := []tea.Cmd{m.ahVersionsCmd(sel.RepositoryKey, sel.Name)}
+				if m.ahSelectedVersion != "" {
+					if strings.TrimSpace(sel.RepositoryURL) == "" {
+						m.modalErr = "selected chart has no repository URL; cannot run helm show"
+						m.ahLoading = false
+							m.ahPreview.SetContent(m.renderAHDetailBody())
+							// Do not treat this as a global error; keep it local to the wizard.
+							return m, tea.Batch(append([]tea.Cmd{cmd}, cmds...)...)
+						}
+					m.ahLoading = true
+					m.ahPreview.SetContent(m.renderAHDetailBody())
+					cmds = append(cmds, m.beginBusy("Fetching chart"), m.loadHelmPreviewsCmd(sel.RepositoryURL, sel.Name, m.ahSelectedVersion))
+				}
+				return m, tea.Batch(append([]tea.Cmd{cmd}, cmds...)...)
 			}
 			return m, cmd
 		case depStepAHDetail:
@@ -4155,7 +4226,7 @@ func (m AppModel) contextHelpLine() string {
 			case depDetailTabSets:
 				return "←/→ tabs • space toggle • enter: apply • esc close"
 			case depDetailTabValues:
-				// Configure tab.
+				// Values tab.
 				if m.depConfigure.editing {
 					return "enter: apply edit • esc cancel edit"
 				}
@@ -4916,7 +4987,7 @@ func (m AppModel) depDetailUpdate(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 
 	// Tab-specific interaction.
-	// Configure tab: no focus mode.
+	// Values tab: no focus mode.
 	// - ↑/↓ navigate tree
 	// - Enter edits scalars, cycles unions, and toggles expand/collapse for object/array
 	// - ←/→ collapse/expand when possible

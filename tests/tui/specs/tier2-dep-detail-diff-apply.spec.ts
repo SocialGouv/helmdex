@@ -56,7 +56,7 @@ describe('TUI tier 2 flows (env-gated stubs)', () => {
     // Tab switch.
     await h.press(['ArrowRight']);
     await h.waitStable(30_000);
-    await h.screenshotAndAssertIncludes('Configure');
+    await h.screenshotAndAssertIncludes('Values');
 
     // Delete from detail -> confirm modal -> cancel.
     await h.press(['d']);

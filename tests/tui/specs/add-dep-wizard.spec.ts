@@ -112,4 +112,62 @@ describe('TUI add-dependency wizard (tier 1)', () => {
     // Deps list should include nginx.
     await h.screenshotAndAssertIncludes('nginx');
   });
+
+
+  it('artifact hub detail flow: auto-loads README/Values for latest + keeps header visible on Versions tab', async () => {
+    // Enable deterministic stubs:
+    // - Artifact Hub search results/versions
+    // - Helm previews (README + values)
+    process.env.HELMDEX_E2E_STUB_ARTIFACTHUB = '1';
+    process.env.HELMDEX_E2E_STUB_HELM = '1';
+
+    const repo = await createTempHelmdexRepo();
+    cleanup.push(() => rmTempRepo(repo));
+
+    const h = await startHelmdexTui(repo, { cols: 120, rows: 40 });
+    cleanup.push(() => h.kill());
+
+    // Create + open instance.
+    await h.press(['n']);
+    await h.waitStable(30_000);
+    await h.type('alpha');
+    await h.press(['Enter']);
+    await h.waitForText('alpha');
+    await h.press(['Enter']);
+    await h.waitForText('Dependencies');
+
+    // Open add-dep wizard.
+    await h.press(['a']);
+    await h.waitForText('Add dependency');
+    await h.waitForText('Select source');
+
+    // Move to Artifact Hub (second item).
+    await h.press(['ArrowDown']);
+    await h.press(['Enter']);
+    await h.waitForText('Artifact Hub search');
+
+    // Search for nginx.
+    await h.type('nginx');
+    await h.press(['Enter']);
+    await h.waitForText('Artifact Hub results');
+
+    // Enter detail.
+    await h.press(['Enter']);
+    await h.waitForText('README');
+
+    // README should auto-load using the selected latest version.
+    await h.waitForText('Stub README');
+
+    // Switch to Values tab (→). Note: tab navigation is bound to `l`/`h` (and
+    // left/right arrows) but arrow keys can be swallowed by the versions list
+    // depending on focus; `l` is more reliable in E2E.
+    await h.press(['l']);
+    await h.waitForText('Values');
+    await h.waitForText('replicaCount: 1');
+
+    // Switch to Versions tab (→) and ensure the global header remains visible.
+    await h.press(['l']);
+    await h.waitForText('Versions');
+    await h.screenshotAndAssertIncludes(['Add dependency', 'README', 'Values', 'Versions']);
+  });
 });
