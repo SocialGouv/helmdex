@@ -30,9 +30,10 @@ func buildTitleCrumbs(m AppModel) []string {
 		}
 	}
 
-	// Append one “current task” crumb with a strict priority order.
-	if c := currentTaskCrumb(m); c != "" {
-		crumbs = append(crumbs, c)
+	// Append current task crumbs with a strict priority order.
+	// NOTE: for the add-dep wizard we append multiple crumbs (source kind + details).
+	if cs := currentTaskCrumbs(m); len(cs) > 0 {
+		crumbs = append(crumbs, cs...)
 	}
 
 	return crumbs
@@ -75,66 +76,37 @@ func (m AppModel) withWindowTitle(cmd tea.Cmd) (tea.Model, tea.Cmd) {
 	return m, tea.Batch(cmd, set)
 }
 
-func currentTaskCrumb(m AppModel) string {
+func currentTaskCrumbs(m AppModel) []string {
 	// Overlays/modals (highest priority first).
 	if m.infoOpen {
-		return "Help / About"
+		return []string{"Help / About"}
 	}
 	if m.applyOpen {
-		return "Applying"
+		return []string{"Applying"}
 	}
 	if m.paletteOpen {
-		return "Commands"
+		return []string{"Commands"}
 	}
 	if m.sourcesOpen {
-		return "Configure sources"
+		return []string{"Configure sources"}
 	}
 	if m.confirmOpen {
-		return "Confirm"
+		return []string{"Confirm"}
 	}
 	if m.depEditOpen {
-		return "Change dependency version"
+		return []string{"Change dependency version"}
 	}
 	if m.depDetailOpen {
-		return "Dependency detail"
+		return []string{"Dependency detail"}
 	}
 	if m.valuesPreviewOpen {
-		return "Preview values"
+		return []string{"Preview values"}
 	}
 
 	// Wizard (lowest priority).
 	if m.addingDep {
-		step := depWizardStepLabel(m.depStep)
-		if step != "" {
-			return "Add dep" + crumbSep + step
-		}
-		return "Add dep"
+		return addDepCrumbsPlain(m)
 	}
 
-	return ""
-}
-
-func depWizardStepLabel(s depWizardStep) string {
-	switch s {
-	case depStepChooseSource:
-		return "Choose source"
-	case depStepCatalog:
-		return "Catalog"
-	case depStepCatalogDetail:
-		return "Catalog detail"
-	case depStepCatalogCollision:
-		return "Resolve collision"
-	case depStepAHQuery:
-		return "Artifact Hub search"
-	case depStepAHResults:
-		return "Artifact Hub results"
-	case depStepAHVersions:
-		return "Artifact Hub versions"
-	case depStepAHDetail:
-		return "Artifact Hub detail"
-	case depStepArbitrary:
-		return "Arbitrary"
-	default:
-		return ""
-	}
+	return nil
 }

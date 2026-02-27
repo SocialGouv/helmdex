@@ -3,6 +3,8 @@ package tui
 import (
 	"testing"
 
+	"helmdex/internal/artifacthub"
+	"helmdex/internal/catalog"
 	"helmdex/internal/instances"
 )
 
@@ -32,6 +34,28 @@ func TestBuildWindowTitle(t *testing.T) {
 				return AppModel{screen: ScreenInstance, selected: &inst, addingDep: true, depStep: depStepAHQuery}
 			}(),
 			want: "🧭 HelmDex — Dashboard › Instance › my-app › Add dep › Artifact Hub search",
+		},
+		{
+			name: "add dep catalog detail includes source + entry id",
+			m: func() AppModel {
+				inst := instances.Instance{Name: "my-app"}
+				m := AppModel{screen: ScreenInstance, selected: &inst, addingDep: true, depStep: depStepCatalogDetail}
+				m.catalogDetailEntry = &catalog.EntryWithSource{SourceName: "remote-source", Entry: catalog.Entry{ID: "bitnami-nginx-15.0.0"}}
+				return m
+			}(),
+			want: "🧭 HelmDex — Dashboard › Instance › my-app › Add dep › Catalog › remote-source › bitnami-nginx-15.0.0",
+		},
+		{
+			name: "add dep artifact hub detail includes chart + version",
+			m: func() AppModel {
+				inst := instances.Instance{Name: "my-app"}
+				sel := artifacthub.PackageSummary{Name: "postgresql", DisplayName: "postgresql"}
+				m := AppModel{screen: ScreenInstance, selected: &inst, addingDep: true, depStep: depStepAHDetail}
+				m.ahSelected = &sel
+				m.ahSelectedVersion = "15.5.0"
+				return m
+			}(),
+			want: "🧭 HelmDex — Dashboard › Instance › my-app › Add dep › Artifact Hub › postgresql › 15.5.0",
 		},
 		{
 			name: "help wins over wizard",

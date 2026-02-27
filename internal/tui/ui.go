@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/charmbracelet/lipgloss"
 )
@@ -106,13 +107,30 @@ func instanceContextLabel(m AppModel) string {
 	if m.applyOpen {
 		return withIcon(iconBusy, "Applying")
 	}
-	if m.addingDep {
-		return withIcon(iconAdd, "Add dep")
-	}
+	// NOTE: add-dep wizard breadcrumb is rendered by renderTopBar() using
+	// addDepCrumbsStyled(). Keep this function focused on non-wizard contexts.
 	if m.activeTab >= 0 && m.activeTab < len(m.tabNames) {
 		return m.tabNames[m.activeTab]
 	}
 	return ""
+}
+
+func truncateCrumbMiddle(s string, max int) string {
+	s = strings.TrimSpace(s)
+	if max <= 0 {
+		return ""
+	}
+	if utf8.RuneCountInString(s) <= max {
+		return s
+	}
+	// Keep both ends readable.
+	if max <= 1 {
+		return "…"
+	}
+	keepLeft := (max - 1) / 2
+	keepRight := max - 1 - keepLeft
+	r := []rune(s)
+	return string(r[:keepLeft]) + "…" + string(r[len(r)-keepRight:])
 }
 
 // renderTopBar renders the single-line persistent top bar.
@@ -128,8 +146,45 @@ func renderTopBar(m AppModel) string {
 			// Instance names are user content; keep them readable and unstyled.
 			parts = append(parts, withIcon(iconInstance, m.selected.Name))
 		}
-		if ctx := instanceContextLabel(m); strings.TrimSpace(ctx) != "" {
-			parts = append(parts, ctx)
+		if m.addingDep {
+			// Add-dep wizard: render a complete breadcrumb including source kind.
+			parts = append(parts, addDepCrumbsStyled(m)...)
+			// Prefer truncating the earliest long crumb (typically the entry ID).
+			// Keep this conservative; terminals vary (emoji width etc.).
+			if m.width > 0 {
+				maxTotal := max(20, m.width-4)
+				// Approximate rendered width by rune count (best-effort).
+				sep := " › "
+				for {
+					total := 0
+					for i, p := range parts {
+						if i > 0 {
+							total += utf8.RuneCountInString(sep)
+						}
+						total += utf8.RuneCountInString(p)
+					}
+					if total <= maxTotal {
+						break
+					}
+					// Find earliest crumb after the 3 fixed crumbs (repo, instance, Add dep)
+					// that can be shortened.
+					idx := -1
+					for i := 3; i < len(parts); i++ {
+						if utf8.RuneCountInString(parts[i]) > 12 {
+							idx = i
+							break
+						}
+					}
+					if idx == -1 {
+						break
+					}
+					parts[idx] = truncateCrumbMiddle(parts[idx], 12)
+				}
+			}
+		} else {
+			if ctx := instanceContextLabel(m); strings.TrimSpace(ctx) != "" {
+				parts = append(parts, ctx)
+			}
 		}
 	}
 
@@ -138,6 +193,9 @@ func renderTopBar(m AppModel) string {
 	soft := styleCrumbSoft
 	strong := styleCrumbStrong
 	bar := styleCrumbBar
+	// Ensure the bar is always a single line and doesn't blank out if it exceeds
+	// terminal width (some terminals clear lines on overflow in alt-screen).
+	bar = bar.Width(max(0, m.width-2))
 
 	sep := " " + sepStyle.Render("›") + "  "
 	out := ""

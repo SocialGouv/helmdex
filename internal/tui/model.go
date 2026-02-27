@@ -743,6 +743,8 @@ func NewAppModel(p Params) AppModel {
 	catSets.Title = ""
 	catSets.SetShowTitle(false)
 	catSets.SetShowHelp(false)
+	catSets.SetShowStatusBar(false)
+	catSets.SetShowPagination(false)
 	catSets.SetFilteringEnabled(false)
 
 	depSets := list.New([]list.Item{}, list.NewDefaultDelegate(), 0, 0)
@@ -752,11 +754,19 @@ func NewAppModel(p Params) AppModel {
 	depSets.SetFilteringEnabled(false)
 
 	src := list.New([]list.Item{sourceItem("Predefined catalog"), sourceItem("Artifact Hub"), sourceItem("Arbitrary")}, list.NewDefaultDelegate(), 0, 0)
-	src.Title = withIcon(iconWizard, "Select source")
+	// Title/status are hidden: the global breadcrumb already provides context
+	// (Add dep › Choose source).
+	src.Title = ""
+	src.SetShowTitle(false)
 	src.SetShowHelp(false)
+	src.SetShowStatusBar(false)
+	src.SetShowPagination(false)
 
 	catList := list.New([]list.Item{}, list.NewDefaultDelegate(), 0, 0)
-	catList.Title = withIcon(iconCatalog, "Catalog")
+	// Title is intentionally blank: the global breadcrumb already shows
+	// Add dep › Catalog, and we keep the add-dep modal header consistent.
+	catList.Title = ""
+	catList.SetShowTitle(false)
 	catList.SetFilteringEnabled(true)
 	catList.SetShowHelp(false)
 
@@ -2429,7 +2439,10 @@ func (m AppModel) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.valuesList.SetSize(msg.Width-2, msg.Height-8)
 		m.depSource.SetSize(msg.Width-2, msg.Height-7)
 		m.catalogList.SetSize(msg.Width-2, msg.Height-7)
-		m.catalogSetList.SetSize(msg.Width-2, msg.Height-12)
+		// Catalog detail view includes a fair amount of text above/below the sets list.
+		// Keep the list shorter so the overall screen doesn't scroll (which would push
+		// the global breadcrumb/top bar off-screen in AltScreen).
+		m.catalogSetList.SetSize(msg.Width-2, max(5, msg.Height-18))
 		m.ahResults.SetSize(msg.Width-2, msg.Height-7)
 		// The Artifact Hub versions list appears inside the Add-dep detail view,
 		// which already renders a header + tabs + footer hints. If the list is too
@@ -4516,7 +4529,12 @@ func renderAddDepView(m AppModel) string {
 
 	switch m.depStep {
 	case depStepChooseSource:
-		return header + "\n\n" + m.depSource.View()
+		// Breadcrumb already indicates Add dep › Choose source; avoid repeating
+		// additional headers and list chrome here.
+		if m.modalErr != "" {
+			return styleErrStrong.Render(withIcon(iconErr, "Error:")+" "+m.modalErr) + "\n\n" + m.depSource.View()
+		}
+		return m.depSource.View()
 	case depStepCatalog:
 		if len(m.catalogEntries) == 0 {
 			lines := []string{}
@@ -4601,7 +4619,8 @@ func renderAddDepView(m AppModel) string {
 		lines = append(lines, styleMuted.Render("↑/↓ select • enter confirm • esc back"))
 		return header + "\n\n" + strings.Join(lines, "\n")
 	case depStepAHQuery:
-		return header + "\n\n" + withIcon(iconAH, "Artifact Hub search") + "\n\n" + m.ahQuery.View() + "\n\n(enter to search)"
+		// Breadcrumb already indicates Artifact Hub; avoid repeating that in the body.
+		return header + "\n\n" + m.ahQuery.View() + "\n\n(enter to search)"
 	case depStepAHResults:
 		return header + "\n\n" + m.ahResults.View() + "\n\n" + styleMuted.Render("enter: open details")
 	case depStepAHVersions:
