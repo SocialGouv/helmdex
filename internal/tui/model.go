@@ -66,9 +66,6 @@ type AppModel struct {
 	// Instance tab navigable actions list
 	instanceActions list.Model
 
-	// AH detail Actions tab list
-	ahActionsList list.Model
-
 	// Dep detail Actions tab list
 	depDetailActions list.Model
 
@@ -142,6 +139,7 @@ type AppModel struct {
 	ahSelectedVersion string
 	ahDetailTab       int
 	ahDetailTabNames  []string
+	ahMenuFocused     bool // true when the Install action row above tabs is focused
 	ahReadme          string
 	ahValues          string
 	ahLoading         bool
@@ -1034,7 +1032,6 @@ const (
 	ahDetailTabReadme   = 0
 	ahDetailTabValues   = 1
 	ahDetailTabVersions = 2
-	ahDetailTabActions  = 3
 )
 
 type instanceManageMode int
@@ -1284,14 +1281,6 @@ func NewAppModel(p Params) AppModel {
 	instActions.SetShowStatusBar(false)
 	instActions.SetFilteringEnabled(false)
 
-	ahActions := list.New([]list.Item{
-		actionItem{ID: actAddAHDep, Icon: iconAdd, Name: "Add dependency", Desc: "Add selected chart to instance"},
-	}, actionDelegate, 0, 0)
-	ahActions.SetShowTitle(false)
-	ahActions.SetShowHelp(false)
-	ahActions.SetShowStatusBar(false)
-	ahActions.SetFilteringEnabled(false)
-
 	depDetailActionsList := list.New([]list.Item{
 		actionItem{ID: actDeleteDep, Icon: iconTrash, Name: "Remove dependency", Desc: "Remove from Chart.yaml"},
 	}, actionDelegate, 0, 0)
@@ -1430,7 +1419,6 @@ func NewAppModel(p Params) AppModel {
 		withIcon(iconReadme, "README"),
 		withIcon(iconAHValues, "Values"),
 		withIcon(iconVersions, "Versions"),
-		withIcon(iconCmd, "Actions"),
 	}
 	depDetailTabNames, depDetailTabKinds := depDetailTabs(depSourceMeta{}, false)
 	vp := viewport.New(0, 0)
@@ -1471,7 +1459,6 @@ func NewAppModel(p Params) AppModel {
 		newName:                newName,
 		instanceManageName:     instManageName,
 		instanceActions:        instActions,
-		ahActionsList:          ahActions,
 		depDetailActions:       depDetailActionsList,
 		arbRepo:                arbRepo,
 		arbStep:                arbStepRepo,
@@ -3036,7 +3023,6 @@ func (m AppModel) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// tall, the terminal can scroll and push the header off-screen.
 		// Keep it aligned with the preview viewport height.
 		m.ahVersions.SetSize(msg.Width-2, max(5, msg.Height-11))
-		m.ahActionsList.SetSize(msg.Width-2, max(5, msg.Height-11))
 		m.depEditVersions.SetSize(max(10, msg.Width-6), max(5, msg.Height-12))
 		m.palette.SetSize(min(70, msg.Width-4), min(14, msg.Height-6))
 		m.depDetailPreview.Width = max(10, msg.Width-6)
@@ -3888,15 +3874,17 @@ func (m AppModel) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// When the add-dependency wizard is open, left/right should switch the wizard
 		// detail tabs (README/Values/Versions), not the instance tabs.
 		if m.screen == ScreenInstance && m.addingDep && m.depStep == depStepAHDetail {
-			if key.Matches(msg, m.keys.TabLeft) {
-				m.ahDetailTab = (m.ahDetailTab - 1 + len(m.ahDetailTabNames)) % len(m.ahDetailTabNames)
-				m.ahPreview.SetContent(m.renderAHDetailBody())
-				return m, nil
-			}
-			if key.Matches(msg, m.keys.TabRight) {
-				m.ahDetailTab = (m.ahDetailTab + 1) % len(m.ahDetailTabNames)
-				m.ahPreview.SetContent(m.renderAHDetailBody())
-				return m, nil
+			if !m.ahMenuFocused {
+				if key.Matches(msg, m.keys.TabLeft) {
+					m.ahDetailTab = (m.ahDetailTab - 1 + len(m.ahDetailTabNames)) % len(m.ahDetailTabNames)
+					m.ahPreview.SetContent(m.renderAHDetailBody())
+					return m, nil
+				}
+				if key.Matches(msg, m.keys.TabRight) {
+					m.ahDetailTab = (m.ahDetailTab + 1) % len(m.ahDetailTabNames)
+					m.ahPreview.SetContent(m.renderAHDetailBody())
+					return m, nil
+				}
 			}
 		}
 
@@ -4171,6 +4159,7 @@ func (m AppModel) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.depStep = depStepAHDetail
 				m.modalErr = ""
 				m.ahDetailTab = 0
+				m.ahMenuFocused = false
 				// UX: pick a default version immediately so README/Values load without
 				// forcing the user into the Versions tab first.
 				m.ahSelectedVersion = strings.TrimSpace(sel.LatestVersion)
@@ -4196,19 +4185,29 @@ func (m AppModel) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, cmd
 		case depStepAHDetail:
-			// Actions tab has its own interactive list.
-			if m.ahDetailTab == ahDetailTabActions {
-				var cmd tea.Cmd
-				m.ahActionsList, cmd = m.ahActionsList.Update(msg)
-				if km, ok := msg.(tea.KeyMsg); ok && km.Type == tea.KeyEnter {
-					if act, ok := m.ahActionsList.SelectedItem().(actionItem); ok {
-						return m.dispatchAction(act.ID)
+			// Top menu: Install action row (↑/↓ to focus, Enter to run).
+			if m.ahMenuFocused {
+				if km, ok := msg.(tea.KeyMsg); ok {
+					switch {
+					case km.Type == tea.KeyEnter:
+						return m.dispatchAction(actAddAHDep)
+					case km.Type == tea.KeyDown || km.String() == "j":
+						m.ahMenuFocused = false
+						return m, nil
 					}
 				}
-				return m, cmd
+				return m, nil
 			}
+
 			// Versions tab has an interactive list.
 			if m.ahDetailTab == ahDetailTabVersions {
+				// ↑ on first item focuses the Install menu.
+				if km, ok := msg.(tea.KeyMsg); ok {
+					if (km.Type == tea.KeyUp || km.String() == "k") && m.ahVersions.Index() == 0 {
+						m.ahMenuFocused = true
+						return m, nil
+					}
+				}
 				var cmd tea.Cmd
 				m.ahVersions, cmd = m.ahVersions.Update(msg)
 				if km, ok := msg.(tea.KeyMsg); ok {
@@ -4237,28 +4236,14 @@ func (m AppModel) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 						}
 						return m, tea.Batch(cmd, m.loadHelmPreviewsCmd(m.ahSelected.RepositoryURL, m.ahSelected.Name, vi.V.Version))
 					}
-					if km.String() == "a" || km.String() == "A" {
-						if m.ahSelected != nil && m.ahSelectedVersion != "" {
-							dep := yamlchart.Dependency{Name: m.ahSelected.Name, Repository: m.ahSelected.RepositoryURL, Version: m.ahSelectedVersion}
-							_ = m.writeSelectedDepSourceMeta(dep, depSourceMeta{Kind: depSourceArtifactHub})
-							return m, m.applyDependencyAndApplyInstanceCmd(dep)
-						}
-						m.modalErr = "select a version (Enter) before adding"
-						return m, cmd
-					}
 				}
 				return m, cmd
 			}
 
-			// Non-versions/actions tabs: allow quick add if a version is selected.
+			// Non-versions tabs: ↑ focuses the Install menu.
 			if km, ok := msg.(tea.KeyMsg); ok {
-				if km.String() == "a" || km.String() == "A" {
-					if m.ahSelected != nil && m.ahSelectedVersion != "" {
-						dep := yamlchart.Dependency{Name: m.ahSelected.Name, Repository: m.ahSelected.RepositoryURL, Version: m.ahSelectedVersion}
-						_ = m.writeSelectedDepSourceMeta(dep, depSourceMeta{Kind: depSourceArtifactHub})
-						return m, m.applyDependencyAndApplyInstanceCmd(dep)
-					}
-					m.modalErr = "select a version in the Versions tab first"
+				if km.Type == tea.KeyUp || km.String() == "k" {
+					m.ahMenuFocused = true
 					return m, nil
 				}
 			}
@@ -4920,13 +4905,14 @@ func (m AppModel) contextHelpLine() string {
 			case depStepAHVersions:
 				return "↑/↓ select • Enter draft • Esc back"
 			case depStepAHDetail:
+				if m.ahMenuFocused {
+					return "↓ tabs • Enter install • Esc back"
+				}
 				switch m.ahDetailTab {
 				case ahDetailTabVersions:
-					return "←/→ tabs • ↑/↓ select • Enter/Space select version • a add • Esc back"
-				case ahDetailTabActions:
-					return "←/→ tabs • ↑/↓ select • Enter run • Esc back"
+					return "←/→ tabs • ↑/↓ select • Enter/Space select version • Esc back"
 				default:
-					return "←/→ tabs • a add • Esc back"
+					return "←/→ tabs • ↑ install • Esc back"
 				}
 			case depStepArbitrary:
 				switch m.arbStep {
@@ -5494,16 +5480,25 @@ func renderAddDepView(m AppModel) string {
 	case depStepAHVersions:
 		return header + "\n\n" + m.ahVersions.View()
 	case depStepAHDetail:
-		body := renderTabs(m.ahDetailTabNames, m.ahDetailTab) + "\n"
+		// Top menu: Install action row (arrow-browsable with ↑/↓).
+		installLabel := withIcon(iconAdd, "Install")
+		if m.ahMenuFocused {
+			installLabel = styleTabActive.Render(installLabel)
+		} else {
+			installLabel = styleTabInactive.Render(installLabel)
+		}
+		menuLine := installLabel
+
+		tabsLine := renderTabs(m.ahDetailTabNames, m.ahDetailTab)
+
+		var content string
 		switch m.ahDetailTab {
 		case ahDetailTabVersions:
-			body += m.ahVersions.View()
-		case ahDetailTabActions:
-			body += m.ahActionsList.View()
+			content = m.ahVersions.View()
 		default:
-			body += m.ahPreview.View()
+			content = m.ahPreview.View()
 		}
-		return header + "\n\n" + body
+		return header + "\n\n" + menuLine + "\n" + tabsLine + "\n" + content
 	case depStepArbitrary:
 		return header + "\n\n" + m.renderArbitraryWizardView()
 	default:
