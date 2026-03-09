@@ -43,11 +43,12 @@ describe('TUI command palette + sources', () => {
     await h.press(['m']);
     await h.waitForText('Command palette');
 
-    // Filter to sources.
+    // Filter to sources; wait for results before selecting.
     await h.type('sources');
+    await h.waitForText('2 items');
     await h.press(['Enter']);
-
-    await h.waitForText('Configure sources');
+    // Wait for the sources modal to appear before asserting.
+    await h.waitForText('Tab next field');
     // UX: sources modal footer hints are normalized.
     await h.screenshotAndAssertIncludes('Tab next field');
 

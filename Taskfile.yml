@@ -6,8 +6,6 @@ vars:
   BIN_DIR: bin
   HELMDEX_BIN: '{{.BIN_DIR}}/helmdex'
   AGENT_TUI_SOCKET: '{{.AGENT_TUI_SOCKET | default "/tmp/agent-tui-test.sock"}}'
-  AGENT_TUI_NATIVE:
-    sh: node -p "require('./node_modules/agent-tui/scripts/platform').resolveBinaryPath().binPath"
 
 tasks:
   default:
@@ -36,23 +34,35 @@ tasks:
   test-tui:
     desc: Run TUI E2E tests (vitest)
     deps: [deps, build]
+    vars:
+      AGENT_TUI_NATIVE:
+        sh: node -p "require('./node_modules/agent-tui/scripts/platform').resolveBinaryPath().binPath"
     env:
       AGENT_TUI_SOCKET: '{{.AGENT_TUI_SOCKET}}'
       AGENT_TUI_BIN: '{{.AGENT_TUI_NATIVE}}'
     cmds:
       - task: tui:daemon:native
-      - defer: { task: tui:stop:native }
+        vars: { AGENT_TUI_NATIVE: '{{.AGENT_TUI_NATIVE}}' }
+      - defer:
+          task: tui:stop:native
+          vars: { AGENT_TUI_NATIVE: '{{.AGENT_TUI_NATIVE}}' }
       - corepack pnpm exec vitest run --config tests/tui/vitest.config.ts
 
   test-tui:ci:
     desc: Run TUI E2E tests (vitest) in CI (frozen lockfile)
     deps: [deps:ci, build]
+    vars:
+      AGENT_TUI_NATIVE:
+        sh: node -p "require('./node_modules/agent-tui/scripts/platform').resolveBinaryPath().binPath"
     env:
       AGENT_TUI_SOCKET: '{{.AGENT_TUI_SOCKET}}'
       AGENT_TUI_BIN: '{{.AGENT_TUI_NATIVE}}'
     cmds:
       - task: tui:daemon:native
-      - defer: { task: tui:stop:native }
+        vars: { AGENT_TUI_NATIVE: '{{.AGENT_TUI_NATIVE}}' }
+      - defer:
+          task: tui:stop:native
+          vars: { AGENT_TUI_NATIVE: '{{.AGENT_TUI_NATIVE}}' }
       - corepack pnpm exec vitest run --config tests/tui/vitest.config.ts
 
   tui:daemon:native:
