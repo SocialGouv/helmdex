@@ -2,22 +2,13 @@ name: 🏷️ Version
 
 on:
   workflow_dispatch:
-    inputs:
-      increment:
-        description: "Version increment"
-        required: true
-        default: "patch"
-        type: choice
-        options:
-          - patch
-          - minor
-          - major
   pull_request:
     types: [closed]
     branches: [main]
 
 permissions:
   contents: write
+  id-token: write  # Required for OIDC token generation
 
 jobs:
   version:
@@ -26,10 +17,17 @@ jobs:
       (github.event_name == 'pull_request' && github.event.pull_request.merged == true)
     runs-on: ubuntu-latest
     steps:
+      - name: Get GitHub App Token
+        id: token
+        uses: SocialGouv/token-bureau@main
+        with:
+          token-bureau-url: https://token-bureau.fabrique.social.gouv.fr
+          audience: socialgouv
+
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
-          token: ${{ secrets.GITHUB_TOKEN }}
+          token: ${{ steps.token.outputs.token }}
 
       - uses: actions/setup-go@v6
         with:
@@ -54,19 +52,7 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-      - name: Determine increment
-        id: increment
-        run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "value=${{ inputs.increment }}" >> "$GITHUB_OUTPUT"
-          else
-            echo "value=patch" >> "$GITHUB_OUTPUT"
-          fi
-
       - name: Run release-it
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: >-
-          devbox run -- corepack pnpm exec release-it
-          ${{ steps.increment.outputs.value }}
-          --ci
+        run: devbox run -- corepack pnpm exec release-it --ci

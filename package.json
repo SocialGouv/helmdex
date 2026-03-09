@@ -10,12 +10,13 @@
     "tui:run": "tsx tests/tui/scripts/app-run.ts"
   },
   "devDependencies": {
-    "agent-tui": "1.0.1",
+    "@release-it/conventional-changelog": "^10.0.5",
     "@types/node": "^22.13.1",
+    "agent-tui": "1.0.1",
+    "release-it": "^19",
     "tsx": "^4.19.2",
     "typescript": "^5.7.3",
-    "vitest": "^2.1.8",
-    "release-it": "^18"
+    "vitest": "^2.1.8"
   },
   "dependencies": {
     "strip-ansi": "^7.1.0"
