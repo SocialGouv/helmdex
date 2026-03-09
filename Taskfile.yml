@@ -70,11 +70,20 @@ tasks:
       - ./go.sum
       - ./cmd/**/*.go
       - ./internal/**/*.go
+      - ./package.json
     generates:
       - '{{.HELMDEX_BIN}}'
+    vars:
+      VERSION:
+        sh: node -p "require('./package.json').version"
+      COMMIT:
+        sh: git rev-parse --short HEAD 2>/dev/null || echo ""
     cmds:
       - mkdir -p '{{.BIN_DIR}}'
-      - go build -o '{{.HELMDEX_BIN}}' ./cmd/helmdex
+      - >-
+        go build
+        -ldflags "-X helmdex/internal/appinfo.Version=v{{.VERSION}} -X helmdex/internal/appinfo.Commit={{.COMMIT}}"
+        -o '{{.HELMDEX_BIN}}' ./cmd/helmdex
 
   test:
     desc: Run Go unit tests

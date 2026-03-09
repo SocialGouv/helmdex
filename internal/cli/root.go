@@ -68,6 +68,7 @@ func NewRootCmd() *cobra.Command {
 	cmd.AddCommand(newArtifactHubCmd())
 	cmd.AddCommand(newTUICmd(&f))
 
+	cmd.Version = appinfo.FullVersion()
 	cmd.SetOut(os.Stdout)
 	cmd.SetErr(os.Stderr)
 	cmd.SilenceUsage = true

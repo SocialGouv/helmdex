@@ -1,5 +1,6 @@
 {
-  "name": "helmdex-tui-tests",
+  "name": "helmdex",
+  "version": "0.1.0",
   "private": true,
   "packageManager": "pnpm@10.5.2",
   "scripts": {
@@ -13,7 +14,8 @@
     "@types/node": "^22.13.1",
     "tsx": "^4.19.2",
     "typescript": "^5.7.3",
-    "vitest": "^2.1.8"
+    "vitest": "^2.1.8",
+    "release-it": "^18"
   },
   "dependencies": {
     "strip-ansi": "^7.1.0"
