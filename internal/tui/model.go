@@ -93,9 +93,6 @@ type AppModel struct {
 	depsList list.Model
 	chart    *yamlchart.Chart
 
-	// presets resolution (computed on demand for the Presets tab)
-	presetErr string
-
 	// add dep wizard
 	addingDep bool
 	depStep   depWizardStep
@@ -235,9 +232,8 @@ type AppModel struct {
 	arbSelectedVersion string
 
 	// repo step
-	arbRepoKind    arbRepoKind
-	arbRepoLoading bool
-	arbRepoErr     string
+	arbRepoKind arbRepoKind
+	arbRepoErr  string
 
 	// chart selection (classic repos only)
 	arbChartsLoading bool
@@ -1145,10 +1141,6 @@ type applyDoneMsg struct {
 	err     error
 }
 
-type applyCancelDoneMsg struct {
-	applyID int
-}
-
 type collisionChoice int
 
 const (
@@ -1636,9 +1628,7 @@ type editValuesDoneMsg struct{}
 
 type appliedMsg struct{}
 
-type instanceRenamedMsg struct{ inst instances.Instance }
-
-type instanceDeletedMsg struct{ name string }
+type instanceDeletedMsg struct{}
 
 type instanceRenameRequest struct{ newName string }
 
@@ -1835,15 +1825,6 @@ func readSelectedDepSetsForDep(instancePath string, depID string) ([]string, err
 	sort.Strings(sets)
 	sets = uniqueStrings(sets)
 	return sets, nil
-}
-
-func (m AppModel) applyCatalogDependencyWithSetsCmd(dep yamlchart.Dependency, sets []string) tea.Cmd {
-	return func() tea.Msg {
-		// Backward-compat: run as a normal apply without collision prompting.
-		ctx, cancel := context.WithCancel(contextBG())
-		defer cancel()
-		return m.applyCatalogDependencyWithSetsCmdCtx(ctx, 0, dep, sets, applyOptions{Override: true, DeleteMarkersForDepID: false})()
-	}
 }
 
 type applyOptions struct {
@@ -2418,9 +2399,9 @@ func (m AppModel) loadHelmPreviewsCmd(repoURL, chartName, version string) tea.Cm
 				if readme, values, err2 := helmutil.ReadChartArchiveFiles(tgzPath); err2 == nil {
 					_ = helmutil.WriteShowCache(m.params.RepoRoot, repoURL, chartName, version, helmutil.ShowKindReadme, readme)
 					_ = helmutil.WriteShowCache(m.params.RepoRoot, repoURL, chartName, version, helmutil.ShowKindValues, values)
-						return ahDetailMsg{readme: readme, values: values, err: nil}
-					}
+					return ahDetailMsg{readme: readme, values: values, err: nil}
 				}
+			}
 			readme, err := helmutil.ShowReadme(ctx, env, ref, version)
 			if err != nil {
 				return ahDetailMsg{err: err}
@@ -2577,9 +2558,8 @@ func (m AppModel) loadDepDetailPreviewsCmd(dep yamlchart.Dependency) tea.Cmd {
 				}
 				return depDetailPreviewsMsg{ID: id, readme: readme, defaultValues: values, schema: schema}
 			}
-		} else {
-			// Preserve pull error for the final error message if we also fail helm show.
 		}
+		// Pull errors are non-fatal; fall through to helm show as last resort.
 
 		// 4) Last resort: helm show.
 		if strings.HasPrefix(dep.Repository, "oci://") {
@@ -3004,9 +2984,9 @@ func (m AppModel) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.content.Height = msg.Height - 8
 		m.ahPreview.Width = msg.Width - 2
 		m.ahPreview.Height = msg.Height - 11
-		// Deps tab also has the shared tab bar.
-		m.depsList.SetSize(msg.Width-2, msg.Height-8)
-		m.valuesList.SetSize(msg.Width-2, msg.Height-8)
+		// Deps tab also has the shared tab bar + optional empty-state message.
+		m.depsList.SetSize(msg.Width-2, msg.Height-9)
+		m.valuesList.SetSize(msg.Width-2, msg.Height-9)
 		m.instanceActions.SetSize(msg.Width-2, msg.Height-14)
 		m.depSource.SetSize(msg.Width-2, msg.Height-7)
 		m.catalogList.SetSize(msg.Width-2, msg.Height-7)
@@ -3511,7 +3491,7 @@ func (m AppModel) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.ahVersionsData = msg.versions
 		// If we're already in the detail screen, keep it there; otherwise the legacy
 		// versions-only step is used.
-		if !(m.addingDep && m.depStep == depStepAHDetail) {
+		if !m.addingDep || m.depStep != depStepAHDetail {
 			m.depStep = depStepAHVersions
 		}
 		// In the detail screen, auto-select the highest stable SemVer and load
@@ -4173,10 +4153,10 @@ func (m AppModel) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 					if strings.TrimSpace(sel.RepositoryURL) == "" {
 						m.modalErr = "selected chart has no repository URL; cannot run helm show"
 						m.ahLoading = false
-							m.ahPreview.SetContent(m.renderAHDetailBody())
-							// Do not treat this as a global error; keep it local to the wizard.
-							return m, tea.Batch(append([]tea.Cmd{cmd}, cmds...)...)
-						}
+						m.ahPreview.SetContent(m.renderAHDetailBody())
+						// Do not treat this as a global error; keep it local to the wizard.
+						return m, tea.Batch(append([]tea.Cmd{cmd}, cmds...)...)
+					}
 					m.ahLoading = true
 					m.ahPreview.SetContent(m.renderAHDetailBody())
 					cmds = append(cmds, m.beginBusy("Fetching chart"), m.loadHelmPreviewsCmd(sel.RepositoryURL, sel.Name, m.ahSelectedVersion))
@@ -4641,14 +4621,6 @@ func (m AppModel) View() string {
 
 	// Persistent single-line top bar (repo + context).
 	topBar := renderTopBar(m)
-	// DEBUG: log top bar to stderr for E2E debugging
-	if m.screen == ScreenInstance {
-		selName := "<nil>"
-		if m.selected != nil {
-			selName = m.selected.Name
-		}
-		_, _ = fmt.Fprintf(os.Stderr, "DEBUG topBar width=%d sel=%q stripped=%q\n", m.width, selName, stripANSI(topBar))
-	}
 
 	var body string
 	if m.infoOpen {
@@ -4719,7 +4691,7 @@ func (m AppModel) currentBodyView() string {
 		prefix := tabsLine + "\n\n"
 		if m.activeTab == InstanceTabDeps {
 			if m.chart != nil && len(m.chart.Dependencies) == 0 && m.depsList.FilterState() == list.Unfiltered {
-				empty := styleMuted.Render("No dependencies yet.") + "\n\n" +
+				empty := styleMuted.Render("No dependencies yet.") + "\n" +
 					m.depsList.View()
 				return prefix + empty
 			}
@@ -4734,6 +4706,7 @@ func (m AppModel) currentBodyView() string {
 				lines = append(lines, styleHeading.Render(m.selected.Name))
 				lines = append(lines, styleMuted.Render(m.selected.Path))
 				lines = append(lines, "")
+				lines = append(lines, "  Name: "+m.selected.Name)
 				depCount := 0
 				if m.chart != nil {
 					depCount = len(m.chart.Dependencies)
@@ -4840,10 +4813,10 @@ func (m AppModel) renderApplyOverlay() string {
 		lines = append(lines, styleMuted.Render("y: cancel • n: continue"))
 	} else if m.applyCancelRequested {
 		lines = append(lines, styleMuted.Render("Cancelling…"))
-		} else {
-			lines = append(lines, styleMuted.Render("Esc cancel"))
-		}
-		return box.Render(strings.Join(lines, "\n"))
+	} else {
+		lines = append(lines, styleMuted.Render("Esc cancel"))
+	}
+	return box.Render(strings.Join(lines, "\n"))
 }
 
 func shortHelp(k keyMap) string {
@@ -4982,7 +4955,7 @@ func (m AppModel) contextHelpLine() string {
 			return "←/→ tabs • ↑/↓ select • Enter preview/action • e edit values.instance.yaml • p apply • m commands • Esc back • q quit"
 		}
 		if m.activeTab == InstanceTabInstance {
-			return "←/→ tabs • ↑/↓ select • Enter action • r rename • d delete • Esc back • q quit"
+			return "←/→ tabs • ↑/↓ select • Enter action • r: rename • d: delete • Esc back • q quit"
 		}
 		return "←/→ tabs • a add dep • e edit values • p apply • r regen values • m commands • Esc back • q quit"
 	}
@@ -4990,7 +4963,7 @@ func (m AppModel) contextHelpLine() string {
 }
 
 type instanceItem struct {
-	Inst    instances.Instance
+	Inst     instances.Instance
 	RepoRoot string
 }
 
@@ -5060,8 +5033,6 @@ func (s sourceItem) Title() string {
 	}
 }
 func (s sourceItem) Description() string { return "" }
-
-type catalogItem catalog.Entry
 
 // Wrap catalog.Entry (which has a `Description` field) to avoid method/field name collisions.
 type catalogListItem struct{ E catalog.EntryWithSource }
@@ -5324,7 +5295,7 @@ func (m AppModel) handleMouseClick(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 			x := 1 // account for base padding
 			for i, name := range m.tabNames {
 				tabWidth := lipgloss.Width(name) + 2 // padding
-				gap := 2                              // gap between tabs
+				gap := 2                             // gap between tabs
 				if msg.X >= x && msg.X < x+tabWidth {
 					if i != m.activeTab {
 						m.activeTab = i
@@ -6524,20 +6495,6 @@ func (m AppModel) openDepEditSelected() (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m AppModel) loadDepVersionsCmd(dep yamlchart.Dependency) tea.Cmd {
-	return func() tea.Msg {
-		// Allow enough time for a first `helm search repo` attempt, and (if needed)
-		// one stale-aware `helm repo update` + retry.
-		ctx, cancel := context.WithTimeout(contextBG(), 60*time.Second)
-		defer cancel()
-		vs, err := helmutil.RepoChartVersions(ctx, m.params.RepoRoot, dep.Repository, dep.Name, 24*time.Hour)
-		if err != nil {
-			return errMsg{err}
-		}
-		return depVersionsMsg{ID: yamlchart.DependencyID(dep), Versions: vs}
-	}
-}
-
 func (m AppModel) upgradeSelectedDepCmd() (tea.Model, tea.Cmd) {
 	it := m.depsList.SelectedItem()
 	if it == nil {
@@ -7086,82 +7043,6 @@ func (m *AppModel) refreshAHVersionsList() {
 	m.ahVersions.SetItems(items)
 	if m.ahSelectedVersion != "" {
 		m.ahVersions.Select(selectedIdx)
-	}
-}
-
-func readResolvedCommit(metaPath string) string {
-	b, err := os.ReadFile(metaPath)
-	if err != nil {
-		return ""
-	}
-	var m map[string]any
-	if err := yaml.Unmarshal(b, &m); err != nil {
-		return ""
-	}
-	if v, ok := m["resolvedCommit"].(string); ok {
-		if len(v) > 12 {
-			return v[:12]
-		}
-		return v
-	}
-	return ""
-}
-
-func (m AppModel) renderValuesTab() string {
-	// Deprecated: Values tab now renders via valuesList.
-	return ""
-}
-
-// renderPresetsTab removed: preset resolution is still used internally (catalog set discovery
-// and preset import on apply), but the instance Presets tab is intentionally hidden.
-
-func (m AppModel) removeSelectedDepCmd() tea.Cmd {
-	return func() tea.Msg {
-		if m.selected == nil {
-			return errMsg{fmt.Errorf("no instance selected")}
-		}
-		instName := strings.TrimSpace(m.selected.Name)
-		if instName == "" {
-			return errMsg{fmt.Errorf("no instance selected")}
-		}
-		it := m.depsList.SelectedItem()
-		if it == nil {
-			return errMsg{fmt.Errorf("no dependency selected")}
-		}
-		di, ok := it.(depItem)
-		if !ok {
-			return errMsg{fmt.Errorf("unexpected dependency item type")}
-		}
-		id := yamlchart.DependencyID(di.Dep)
-		chartPath := filepath.Join(m.selected.Path, "Chart.yaml")
-		c, err := yamlchart.ReadChart(chartPath)
-		if err != nil {
-			return errMsg{err}
-		}
-		if ok := c.RemoveDependencyByID(id); !ok {
-			return errMsg{fmt.Errorf("dependency %q not found", id)}
-		}
-		if err := yamlchart.WriteChart(chartPath, c); err != nil {
-			return errMsg{err}
-		}
-
-		// Cleanup depID-keyed data.
-		if err := deleteDepOverrideKey(m.selected.Path, string(id)); err != nil {
-			return errMsg{err}
-		}
-		_ = deleteDepSetMarkersForID(m.selected.Path, id)
-		_ = deleteDepMetaFile(m.params.RepoRoot, instName, id)
-
-		// Apply pipeline.
-		if m.params.Config != nil {
-			if _, err := presets.Import(presets.ImportParams{RepoRoot: m.params.RepoRoot, InstancePath: m.selected.Path, Config: *m.params.Config, Dependencies: c.Dependencies}); err != nil {
-				return errMsg{err}
-			}
-		}
-		if err := values.GenerateMergedValues(m.selected.Path); err != nil {
-			return errMsg{err}
-		}
-		return depAppliedMsg{chart: c}
 	}
 }
 

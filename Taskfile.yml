@@ -5,6 +5,9 @@ silent: true
 vars:
   BIN_DIR: bin
   HELMDEX_BIN: '{{.BIN_DIR}}/helmdex'
+  AGENT_TUI_SOCKET: '{{.AGENT_TUI_SOCKET | default "/tmp/agent-tui-test.sock"}}'
+  AGENT_TUI_NATIVE:
+    sh: node -p "require('./node_modules/agent-tui/scripts/platform').resolveBinaryPath().binPath"
 
 tasks:
   default:
@@ -33,14 +36,40 @@ tasks:
   test-tui:
     desc: Run TUI E2E tests (vitest)
     deps: [deps, build]
+    env:
+      AGENT_TUI_SOCKET: '{{.AGENT_TUI_SOCKET}}'
+      AGENT_TUI_BIN: '{{.AGENT_TUI_NATIVE}}'
     cmds:
+      - task: tui:daemon:native
+      - defer: { task: tui:stop:native }
       - corepack pnpm exec vitest run --config tests/tui/vitest.config.ts
 
   test-tui:ci:
     desc: Run TUI E2E tests (vitest) in CI (frozen lockfile)
     deps: [deps:ci, build]
+    env:
+      AGENT_TUI_SOCKET: '{{.AGENT_TUI_SOCKET}}'
+      AGENT_TUI_BIN: '{{.AGENT_TUI_NATIVE}}'
     cmds:
+      - task: tui:daemon:native
+      - defer: { task: tui:stop:native }
       - corepack pnpm exec vitest run --config tests/tui/vitest.config.ts
+
+  tui:daemon:native:
+    desc: Start agent-tui daemon using the native binary (avoids Node.js PTY sandbox)
+    internal: true
+    env:
+      AGENT_TUI_SOCKET: '{{.AGENT_TUI_SOCKET}}'
+    cmds:
+      - '{{.AGENT_TUI_NATIVE}} daemon start --json'
+
+  tui:stop:native:
+    desc: Stop agent-tui daemon (native binary)
+    internal: true
+    env:
+      AGENT_TUI_SOCKET: '{{.AGENT_TUI_SOCKET}}'
+    cmds:
+      - '{{.AGENT_TUI_NATIVE}} daemon stop --json || true'
 
   tui:daemon:
     desc: Start agent-tui daemon (idempotent)

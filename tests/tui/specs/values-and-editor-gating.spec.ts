@@ -22,13 +22,12 @@ describe('TUI values tab', () => {
     const h = await startHelmdexTui(repo);
     cleanup.push(() => h.kill());
 
-    // Create + open instance.
+    // Create instance (app auto-navigates to the instance view).
     await h.press(['n']);
     await h.waitStable(30_000);
     await h.type('alpha');
     await h.press(['Enter']);
     await h.waitForText('alpha');
-    await h.press(['Enter']);
     await h.waitForText('Dependencies');
 
     // Go to Values tab and open preview.
@@ -55,7 +54,6 @@ describe('TUI values tab', () => {
     await h.type('alpha');
     await h.press(['Enter']);
     await h.waitForText('alpha');
-    await h.press(['Enter']);
     await h.waitForText('Dependencies');
 
     await h.press(['r']);
@@ -75,7 +73,6 @@ describe('TUI values tab', () => {
     await h.type('alpha');
     await h.press(['Enter']);
     await h.waitForText('alpha');
-    await h.press(['Enter']);
     await h.waitForText('Dependencies');
 
     // Values tab: if selection is not values.instance.yaml, `e` errors.

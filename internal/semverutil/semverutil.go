@@ -61,9 +61,7 @@ func parseSemver(raw string) (semver, bool) {
 	if s == "" {
 		return semver{}, false
 	}
-	if strings.HasPrefix(s, "v") {
-		s = strings.TrimPrefix(s, "v")
-	}
+	s = strings.TrimPrefix(s, "v")
 	// Trim build metadata.
 	if i := strings.IndexByte(s, '+'); i >= 0 {
 		s = s[:i]

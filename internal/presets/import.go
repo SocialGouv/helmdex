@@ -100,24 +100,6 @@ const (
 	layerPlatform
 )
 
-func collectLayerFiles(res Resolution, kind layerKind) []string {
-	paths := []string{}
-	for _, rd := range res.ByID {
-		switch kind {
-		case layerDefault:
-			if rd.DefaultPath != "" {
-				paths = append(paths, rd.DefaultPath)
-			}
-		case layerPlatform:
-			if rd.PlatformPath != "" {
-				paths = append(paths, rd.PlatformPath)
-			}
-		}
-	}
-	sort.Strings(paths)
-	return paths
-}
-
 func importDepLayer(outPath string, res Resolution, kind layerKind) error {
 	// Build a single mapping: depID -> valuesMap.
 	// This ensures each dependency's presets apply under its umbrella key.

@@ -31,13 +31,13 @@ func ReadChartArchiveFilesWithSchema(tgzPath string) (readme string, values stri
 	if err != nil {
 		return "", "", "", err
 	}
-	defer f.Close()
+	defer f.Close() //nolint:errcheck // file close
 
 	gz, err := gzip.NewReader(f)
 	if err != nil {
 		return "", "", "", fmt.Errorf("gzip reader: %w", err)
 	}
-	defer gz.Close()
+	defer gz.Close() //nolint:errcheck // gzip reader close
 
 	tr := tar.NewReader(gz)
 	var readmeFallback string

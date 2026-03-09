@@ -258,9 +258,8 @@ func mustRunCLI(t *testing.T, repoRoot string, cfgPath *string, args ...string) 
 	if err := cmd.Execute(); err != nil {
 		t.Fatalf("helmdex %v failed: %v\nstdout:\n%s\nstderr:\n%s", args, err, stdout.String(), stderr.String())
 	}
-	if stderr.Len() > 0 {
-		// Cobra commands occasionally write non-fatal info to stderr. Keep it visible in failure output.
-	}
+	// Cobra commands occasionally write non-fatal info to stderr.
+	// stderr content is visible in failure output above.
 	return stdout.String()
 }
 
@@ -300,12 +299,12 @@ func copyDir(t *testing.T, src string, dst string) {
 		if err != nil {
 			return err
 		}
-		defer in.Close()
+		defer in.Close() //nolint:errcheck // file close in walk
 		out, err := os.Create(target)
 		if err != nil {
 			return err
 		}
-		defer out.Close()
+		defer out.Close() //nolint:errcheck // file close in walk
 		if _, err := io.Copy(out, in); err != nil {
 			return err
 		}

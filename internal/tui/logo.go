@@ -14,7 +14,7 @@ import (
 var dashboardLogoANSI string
 
 // ANSI SGR sequences (e.g. \x1b[38;2;...m).
-var ansiSGR = regexp.MustCompile("\\x1b\\[[0-9;]*m")
+var ansiSGR = regexp.MustCompile(`\x1b\[[0-9;]*m`)
 
 func stripANSI(s string) string {
 	return ansiSGR.ReplaceAllString(s, "")
@@ -32,10 +32,7 @@ var dashboardLogoLineCount = func() int {
 }()
 
 func dashboardLogoEnabled() bool {
-	if strings.TrimSpace(os.Getenv("HELMDEX_NO_LOGO")) == "1" {
-		return false
-	}
-	return true
+	return strings.TrimSpace(os.Getenv("HELMDEX_NO_LOGO")) != "1"
 }
 
 // shouldShowDashboardLogo returns whether we should render the decorative logo.

@@ -16,12 +16,12 @@ func TestReadChartArchiveFilesWithSchema_PrefersTopLevel(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
-	defer f.Close()
+	defer f.Close() //nolint:errcheck // test file close
 
 	gz := gzip.NewWriter(f)
-	defer gz.Close()
+	defer gz.Close() //nolint:errcheck // test gzip close
 	tr := tar.NewWriter(gz)
-	defer tr.Close()
+	defer tr.Close() //nolint:errcheck // test tar close
 
 	write := func(name, content string) {
 		b := []byte(content)

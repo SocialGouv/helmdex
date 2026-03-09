@@ -81,8 +81,7 @@ var (
 	styleTabActive   = lipgloss.NewStyle().Bold(true).Background(colBgSubtle).Padding(0, 1)
 	styleTabInactive = lipgloss.NewStyle().Faint(true).Padding(0, 1)
 	// Decorative ASCII art.
-	styleLogoArt    = lipgloss.NewStyle().Foreground(colSep).Faint(true)
-	styleLogoAccent = lipgloss.NewStyle().Foreground(colInfo).Bold(true)
+	styleLogoArt = lipgloss.NewStyle().Foreground(colSep).Faint(true)
 
 	styleMuted     = lipgloss.NewStyle().Faint(true)
 	styleErrStrong = lipgloss.NewStyle().Foreground(colErr).Bold(true)

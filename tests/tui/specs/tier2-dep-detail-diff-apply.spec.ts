@@ -25,13 +25,12 @@ describe('TUI tier 2 flows (env-gated stubs)', () => {
     const h = await startHelmdexTui(repo);
     cleanup.push(() => h.kill());
 
-    // Create + open instance.
+    // Create instance (app auto-navigates to the instance view).
     await h.press(['n']);
     await h.waitStable(30_000);
     await h.type('alpha');
     await h.press(['Enter']);
     await h.waitForText('alpha');
-    await h.press(['Enter']);
     await h.waitForText('Dependencies');
 
     // Draft a dep so dep detail can open.
@@ -54,7 +53,8 @@ describe('TUI tier 2 flows (env-gated stubs)', () => {
 
     // Open dep detail by pressing Enter on deps list.
     await h.press(['Enter']);
-    await h.waitForText('Dependency');
+    // Wait for the detail modal footer hint (unique to the detail view).
+    await h.waitForText('Esc close');
     await h.screenshotAndAssertIncludes('Esc close');
 
     // Tab switch.
@@ -82,13 +82,12 @@ describe('TUI tier 2 flows (env-gated stubs)', () => {
     const h = await startHelmdexTui(repo);
     cleanup.push(() => h.kill());
 
-    // Create + open instance.
+    // Create instance (app auto-navigates to the instance view).
     await h.press(['n']);
     await h.waitStable(30_000);
     await h.type('alpha');
     await h.press(['Enter']);
     await h.waitForText('alpha');
-    await h.press(['Enter']);
     await h.waitForText('Dependencies');
 
     // Draft dep.
@@ -130,13 +129,12 @@ describe('TUI tier 2 flows (env-gated stubs)', () => {
     const h = await startHelmdexTui(repo);
     cleanup.push(() => h.kill());
 
-    // Create + open instance.
+    // Create instance (app auto-navigates to the instance view).
     await h.press(['n']);
     await h.waitStable(30_000);
     await h.type('alpha');
     await h.press(['Enter']);
     await h.waitForText('alpha');
-    await h.press(['Enter']);
     await h.waitForText('Dependencies');
 
     // Start apply.

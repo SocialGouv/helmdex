@@ -37,7 +37,8 @@ describe('TUI confirm modal', () => {
     await h.screenshotAndAssertIncludes(['y delete • n cancel • Esc cancel', 'Delete instance']);
 
     await h.press(['n']);
-    await h.waitForText('Instances');
+    // Wait for the dashboard footer hint that is only visible after the confirm modal closes.
+    await h.waitForText('/ filter');
     await h.screenshotAndAssertIncludes('/ filter');
   });
 });

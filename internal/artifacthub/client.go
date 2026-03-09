@@ -181,7 +181,7 @@ func (c *Client) doJSON(ctx context.Context, url string, out any) error {
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer resp.Body.Close() //nolint:errcheck // response body close
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return fmt.Errorf("artifacthub http %d", resp.StatusCode)
 	}

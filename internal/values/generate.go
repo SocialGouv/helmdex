@@ -37,16 +37,12 @@ func GenerateMergedValues(instanceDir string) error {
 	}
 
 	setFiles, _ := filepath.Glob(filepath.Join(instanceDir, "values.set.*.yaml"))
-	for _, p := range setFiles {
-		paths = append(paths, p)
-	}
+	paths = append(paths, setFiles...)
 
 	// Per-dependency set layers (selected via marker files, downloaded on apply).
 	// These files are expected to contain a YAML map keyed by depID.
 	depSetFiles, _ := filepath.Glob(filepath.Join(instanceDir, "values.dep-set.*--*.yaml"))
-	for _, p := range depSetFiles {
-		paths = append(paths, p)
-	}
+	paths = append(paths, depSetFiles...)
 
 	if err := addIfExists(filepath.Join(instanceDir, "values.instance.yaml"), true); err != nil {
 		return err
@@ -76,7 +72,7 @@ func GenerateMergedValues(instanceDir string) error {
 	if err != nil {
 		return err
 	}
-	defer f.Close()
+	defer f.Close() //nolint:errcheck // file close
 
 	enc := yaml.NewEncoder(f)
 	enc.SetIndent(2)

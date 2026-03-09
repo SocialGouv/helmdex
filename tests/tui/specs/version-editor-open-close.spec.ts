@@ -22,13 +22,12 @@ describe('TUI dependency version editor (tier 1)', () => {
     const h = await startHelmdexTui(repo);
     cleanup.push(() => h.kill());
 
-    // Create + open instance.
+    // Create instance (app auto-navigates to the instance view).
     await h.press(['n']);
     await h.waitStable(30_000);
     await h.type('alpha');
     await h.press(['Enter']);
     await h.waitForText('alpha');
-    await h.press(['Enter']);
     await h.waitForText('Dependencies');
 
     // Draft an OCI dep (no helm/network needed).

@@ -459,45 +459,6 @@ func renderDiffLinesGitLike(lines []diffLine, maxLines int) string {
 	return out.String()
 }
 
-func renderDiffLinesGitLikeWrapped(lines []diffLine, maxLines int, width int) string {
-	// Render git-like diff then optionally word-wrap it to width.
-	text := renderDiffLinesGitLike(lines, maxLines)
-	if width <= 0 {
-		return text
-	}
-	// Wrap each line independently to preserve ANSI coloring boundaries.
-	linesIn := strings.Split(text, "\n")
-	out := strings.Builder{}
-	for i, ln := range linesIn {
-		if i == len(linesIn)-1 && ln == "" {
-			break
-		}
-		for _, seg := range wrapLine(ln, width, true) {
-			out.WriteString(seg)
-			out.WriteString("\n")
-		}
-	}
-	return out.String()
-}
-
-func wrapTextPlain(text string, width int) string {
-	if width <= 0 {
-		return text
-	}
-	linesIn := strings.Split(text, "\n")
-	out := strings.Builder{}
-	for i, ln := range linesIn {
-		if i == len(linesIn)-1 && ln == "" {
-			break
-		}
-		for _, seg := range wrapLine(ln, width, true) {
-			out.WriteString(seg)
-			out.WriteString("\n")
-		}
-	}
-	return out.String()
-}
-
 func diffRowsFromLines(lines []diffLine, maxRows int) (rows []diffRow) {
 	// Consolidate by path. We expect at most one '-' and one '+' per path.
 	// Ordering: stable by path.

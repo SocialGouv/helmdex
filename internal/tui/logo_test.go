@@ -37,7 +37,7 @@ func TestShouldShowDashboardLogo_SizeThreshold(t *testing.T) {
 
 func TestShouldShowDashboardLogo_DisabledByEnv(t *testing.T) {
 	old := os.Getenv("HELMDEX_NO_LOGO")
-	os.Setenv("HELMDEX_NO_LOGO", "1")
+	_ = os.Setenv("HELMDEX_NO_LOGO", "1")
 	t.Cleanup(func() { _ = os.Setenv("HELMDEX_NO_LOGO", old) })
 
 	m := NewAppModel(Params{RepoRoot: "."})

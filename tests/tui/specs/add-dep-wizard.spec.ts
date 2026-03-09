@@ -22,21 +22,17 @@ describe('TUI add-dependency wizard (tier 1)', () => {
     const h = await startHelmdexTui(repo);
     cleanup.push(() => h.kill());
 
-    // Create + open instance.
+    // Create instance (app auto-navigates to the instance view).
     await h.press(['n']);
     await h.waitStable(30_000);
     await h.type('alpha');
     await h.press(['Enter']);
     await h.waitForText('alpha');
-    await h.press(['Enter']);
     await h.waitForText('Dependencies');
 
     // Open add-dep wizard.
     await h.press(['a']);
-    // Depending on terminal size and breadcrumb rendering, "Add dependency" may
-    // appear in the header while the body is just the source list.
-    await h.waitForAnyText(['Add dependency', 'Choose source'], 30_000);
-    // Breadcrumb shows "Choose source"; older tests asserted "Select source".
+    await h.waitForText('Choose source');
     await h.screenshotAndAssertIncludes('Choose source');
 
     // Choose predefined catalog.
@@ -90,13 +86,12 @@ describe('TUI add-dependency wizard (tier 1)', () => {
     const h = await startHelmdexTui(repo);
     cleanup.push(() => h.kill());
 
-    // Create + open instance.
+    // Create instance (app auto-navigates to the instance view).
     await h.press(['n']);
     await h.waitStable(30_000);
     await h.type('alpha');
     await h.press(['Enter']);
     await h.waitForText('alpha');
-    await h.press(['Enter']);
     await h.waitForText('Dependencies');
 
     await h.press(['a']);
@@ -147,18 +142,16 @@ describe('TUI add-dependency wizard (tier 1)', () => {
     const h = await startHelmdexTui(repo, { cols: 120, rows: 40 });
     cleanup.push(() => h.kill());
 
-    // Create + open instance.
+    // Create instance (app auto-navigates to the instance view).
     await h.press(['n']);
     await h.waitStable(30_000);
     await h.type('alpha');
     await h.press(['Enter']);
     await h.waitForText('alpha');
-    await h.press(['Enter']);
     await h.waitForText('Dependencies');
 
     // Open add-dep wizard.
     await h.press(['a']);
-    await h.waitForAnyText(['Add dependency', 'Choose source'], 30_000);
     await h.waitForText('Choose source');
 
     // Move to Artifact Hub (second item).

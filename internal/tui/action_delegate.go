@@ -81,9 +81,11 @@ func newActionAwareDelegate() actionAwareDelegate {
 	}
 }
 
-func (d actionAwareDelegate) Height() int                             { return d.inner.Height() }
-func (d actionAwareDelegate) Spacing() int                            { return d.inner.Spacing() }
-func (d actionAwareDelegate) Update(msg tea.Msg, m *list.Model) tea.Cmd { return d.inner.Update(msg, m) }
+func (d actionAwareDelegate) Height() int  { return d.inner.Height() }
+func (d actionAwareDelegate) Spacing() int { return d.inner.Spacing() }
+func (d actionAwareDelegate) Update(msg tea.Msg, m *list.Model) tea.Cmd {
+	return d.inner.Update(msg, m)
+}
 
 func (d actionAwareDelegate) Render(w io.Writer, m list.Model, index int, item list.Item) {
 	// Check for chosen items first (they take priority over default rendering
@@ -121,7 +123,7 @@ func (d actionAwareDelegate) renderChosen(w io.Writer, m list.Model, index int, 
 		title = d.chosenNormal.Render(title)
 	}
 	// Chosen items are version strings with no description; single line.
-	fmt.Fprintf(w, "%s", title)
+	_, _ = fmt.Fprintf(w, "%s", title)
 }
 
 func (d actionAwareDelegate) renderAction(w io.Writer, m list.Model, index int, act actionItem) {
@@ -152,8 +154,8 @@ func (d actionAwareDelegate) renderAction(w io.Writer, m list.Model, index int, 
 	}
 
 	if d.inner.ShowDescription {
-		fmt.Fprintf(w, "%s\n%s", title, desc)
+		_, _ = fmt.Fprintf(w, "%s\n%s", title, desc)
 		return
 	}
-	fmt.Fprintf(w, "%s", title)
+	_, _ = fmt.Fprintf(w, "%s", title)
 }

@@ -5,7 +5,6 @@ import (
 	"strings"
 
 	"helmdex/internal/values"
-	"helmdex/internal/yamlchart"
 
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
@@ -37,15 +36,6 @@ func depValuesFullPath(depID string, rel string) (string, error) {
 	// Join: $.<depID> + suffix ("" or ".x" or "[0]...")
 	suffix := strings.TrimPrefix(rel, "$")
 	return "$." + depID + suffix, nil
-}
-
-func findDepByID(chart yamlchart.Chart, id yamlchart.DepID) (*yamlchart.Dependency, bool) {
-	for i := range chart.Dependencies {
-		if yamlchart.DependencyID(chart.Dependencies[i]) == id {
-			return &chart.Dependencies[i], true
-		}
-	}
-	return nil, false
 }
 
 func newInstanceDepValuesGetCmd(f *rootFlags) *cobra.Command {

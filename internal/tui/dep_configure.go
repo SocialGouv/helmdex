@@ -63,15 +63,13 @@ type depConfigureModel struct {
 	lines  []cfgLine
 	cursor int
 
-	editing      bool
-	editMode     cfgEditMode
-	editPathKey  string
-	editSchema   *schemaform.Schema
-	editInput    textinput.Model
-	editErr      string
-	editEnumIdx  int
-	editPropName string
-	editPropKey  textinput.Model
+	editing     bool
+	editMode    cfgEditMode
+	editPathKey string
+	editSchema  *schemaform.Schema
+	editInput   textinput.Model
+	editErr     string
+	editPropKey textinput.Model
 
 	status string
 }

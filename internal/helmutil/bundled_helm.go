@@ -1,9 +1,9 @@
 package helmutil
 
 import (
-	"bytes"
 	"archive/tar"
 	"archive/zip"
+	"bytes"
 	"compress/gzip"
 	"context"
 	"crypto/sha256"
@@ -347,7 +347,7 @@ func downloadBytes(ctx context.Context, url string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer resp.Body.Close() //nolint:errcheck // response body close
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
 		b, _ := io.ReadAll(io.LimitReader(resp.Body, 8<<10))
 		return nil, fmt.Errorf("download %s: http %s (%s)", url, resp.Status, strings.TrimSpace(string(b)))
@@ -368,7 +368,7 @@ func extractHelmFromTarGz(archive []byte) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer gz.Close()
+	defer gz.Close() //nolint:errcheck // gzip reader close
 
 	tr := tar.NewReader(gz)
 	for {

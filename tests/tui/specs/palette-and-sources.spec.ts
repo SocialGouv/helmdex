@@ -28,7 +28,8 @@ describe('TUI command palette + sources', () => {
     await h.screenshotAndAssertIncludes('type to search');
 
     await h.press(['Escape']);
-    await h.waitForText('Instances');
+    // Wait for the dashboard footer hint that is only visible when the palette is closed.
+    await h.waitForText('/ filter');
     await h.screenshotAndAssertIncludes('/ filter');
   });
 
@@ -51,7 +52,8 @@ describe('TUI command palette + sources', () => {
     await h.screenshotAndAssertIncludes('Tab next field');
 
     await h.press(['Escape']);
-    await h.waitForText('Instances');
+    // Wait for the dashboard footer hint that is only visible when the sources modal is closed.
+    await h.waitForText('/ filter');
     await h.screenshotAndAssertIncludes('/ filter');
   });
 });

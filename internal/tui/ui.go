@@ -24,13 +24,6 @@ func modalMaxHeight(m AppModel) int {
 	return max(8, m.height-9)
 }
 
-func renderWithModal(m AppModel, body, modal string) string {
-	// Simple composition for now: render modal above body.
-	// (True terminal overlay can be added later without changing call sites.)
-	modalBlock := lipgloss.NewStyle().MarginBottom(1).Render(modal)
-	return modalBlock + "\n" + body
-}
-
 func renderHelpOverlay(m AppModel) string {
 	panel := stylePanelBox
 
@@ -223,14 +216,14 @@ func renderToastBar(m AppModel) string {
 		if m.width > 0 {
 			bar = bar.Width(max(0, m.width-2))
 		}
-		return bar.Render(withIcon(iconErr, m.statusErr))
+		return bar.Render(withIcon(iconErr, "ERR") + " " + m.statusErr)
 	}
 	if strings.TrimSpace(m.statusOK) != "" {
 		bar := lipgloss.NewStyle().Background(colSuccess).Foreground(lipgloss.Color("0")).Bold(true).Padding(0, 1)
 		if m.width > 0 {
 			bar = bar.Width(max(0, m.width-2))
 		}
-		return bar.Render(withIcon(iconOK, m.statusOK))
+		return bar.Render(withIcon(iconOK, "OK") + " " + m.statusOK)
 	}
 	return ""
 }
@@ -263,7 +256,7 @@ func renderFooterStatusLine(m AppModel) string {
 	if strings.TrimSpace(m.statusErr) != "" {
 		left = styleErrStrong.Render(withIcon(iconErr, "ERR") + " " + m.statusErr)
 	} else if strings.TrimSpace(m.statusOK) != "" {
-		left = styleSuccess.Render(withIcon(iconOK, m.statusOK))
+		left = styleSuccess.Render(withIcon(iconOK, "OK") + " " + m.statusOK)
 	} else if m.quitArmed {
 		left = styleInfo.Render("Press Ctrl+C again to quit")
 	}
@@ -513,7 +506,7 @@ func renderStepIndicator(current, total int) string {
 	}
 	parts := make([]string, 0, total*2-1)
 	for i := 0; i < total; i++ {
-		dot := "○"
+		var dot string
 		if i < current {
 			dot = styleInfo.Render("●") // completed
 		} else if i == current {

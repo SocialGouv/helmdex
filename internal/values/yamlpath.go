@@ -147,7 +147,6 @@ func setAt(root any, p yamlPath, v any) any {
 		obj, ok := cur.(map[string]any)
 		if !ok {
 			obj = map[string]any{}
-			cur = obj
 			if i == 0 {
 				root = obj
 			}
