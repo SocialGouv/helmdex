@@ -97,8 +97,8 @@ func TestValuesTabListShowsDescriptionsAndOrdering(t *testing.T) {
 		"values.platform.yaml",
 		"values.set.team-a.yaml",
 		"values.set.team-b.yaml",
-		"values.instance.yaml",
-		"values.yaml",
+		withIcon(iconRename, "values.instance.yaml"),
+		withIcon(iconRegen, "values.yaml"),
 	}
 	for i := range wantTitles {
 		if gotTitles[i] != wantTitles[i] {
@@ -108,12 +108,12 @@ func TestValuesTabListShowsDescriptionsAndOrdering(t *testing.T) {
 
 	// Verify descriptions.
 	wantDescs := []string{
-		"Baseline defaults",
-		"Platform overrides",
-		"Preset layer: team-a",
-		"Preset layer: team-b",
-		"User overrides (editable)",
-		"Merged output (generated)",
+		"Layer 1 · Baseline defaults",
+		"Layer 2 · Platform overrides",
+		"Layer 3 · Preset: team-a",
+		"Layer 3 · Preset: team-b",
+		"Layer 4 · Your overrides (editable)",
+		"Output · Merged result (generated)",
 	}
 	for i := range wantDescs {
 		if gotDescs[i] != wantDescs[i] {

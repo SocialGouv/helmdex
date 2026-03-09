@@ -3,6 +3,8 @@ package tui
 import (
 	"context"
 	"fmt"
+	"os"
+	"strings"
 
 	"helmdex/internal/config"
 	"helmdex/internal/helmutil"
@@ -39,7 +41,11 @@ func Run(ctx context.Context, p Params) error {
 	defer helmutil.SetBundledHelmEventSink(nil)
 
 	m := NewAppModel(p)
-	prog := tea.NewProgram(m, tea.WithAltScreen(), tea.WithContext(ctx))
+	opts := []tea.ProgramOption{tea.WithAltScreen(), tea.WithContext(ctx)}
+	if strings.TrimSpace(os.Getenv("HELMDEX_MOUSE")) == "1" {
+		opts = append(opts, tea.WithMouseCellMotion())
+	}
+	prog := tea.NewProgram(m, opts...)
 
 	// Forward helmutil events into the Bubble Tea update loop.
 	done := make(chan struct{})

@@ -215,6 +215,26 @@ func renderTopBar(m AppModel) string {
 	return bar.Render(out)
 }
 
+// renderToastBar renders an optional full-width notification bar above the
+// status line for high-visibility feedback. Returns "" when no toast is active.
+func renderToastBar(m AppModel) string {
+	if strings.TrimSpace(m.statusErr) != "" {
+		bar := lipgloss.NewStyle().Background(colErr).Foreground(lipgloss.Color("231")).Bold(true).Padding(0, 1)
+		if m.width > 0 {
+			bar = bar.Width(max(0, m.width-2))
+		}
+		return bar.Render(withIcon(iconErr, m.statusErr))
+	}
+	if strings.TrimSpace(m.statusOK) != "" {
+		bar := lipgloss.NewStyle().Background(colSuccess).Foreground(lipgloss.Color("0")).Bold(true).Padding(0, 1)
+		if m.width > 0 {
+			bar = bar.Width(max(0, m.width-2))
+		}
+		return bar.Render(withIcon(iconOK, m.statusOK))
+	}
+	return ""
+}
+
 // renderFooterStatusLine renders transient state (errors, modes, spinners) at
 // the bottom. Errors never replace the top breadcrumb.
 func renderFooterStatusLine(m AppModel) string {
@@ -223,7 +243,12 @@ func renderFooterStatusLine(m AppModel) string {
 		flags = append(flags, styleInfo.Render(withIcon(iconCmd, "CMD")))
 	}
 	if m.isAnyFilterActive() {
-		flags = append(flags, styleInfo.Render(withIcon(iconFilter, "FILTER")))
+		q, n, total := m.activeFilterInfo()
+		if q != "" {
+			flags = append(flags, styleInfo.Render(fmt.Sprintf("%s \"%s\" (%d/%d)  Esc: clear", iconFilter, q, n, total)))
+		} else {
+			flags = append(flags, styleInfo.Render(withIcon(iconFilter, "FILTER")))
+		}
 	}
 	if m.busy > 0 {
 		label := strings.TrimSpace(m.busyLabel)
@@ -238,7 +263,7 @@ func renderFooterStatusLine(m AppModel) string {
 	if strings.TrimSpace(m.statusErr) != "" {
 		left = styleErrStrong.Render(withIcon(iconErr, "ERR") + " " + m.statusErr)
 	} else if strings.TrimSpace(m.statusOK) != "" {
-		left = styleInfo.Render(withIcon("", "OK") + " " + m.statusOK)
+		left = styleSuccess.Render(withIcon(iconOK, m.statusOK))
 	} else if m.quitArmed {
 		left = styleInfo.Render("Press Ctrl+C again to quit")
 	}
@@ -379,14 +404,18 @@ func renderConfirmModal(m AppModel) string {
 	body := ""
 	switch m.confirmKind {
 	case confirmDeleteInstance:
+		// Red border for destructive actions.
+		box = box.BorderForeground(colErr)
 		header = styleHeading.Render(withIcon(iconTrash, "Delete instance"))
 		name := strings.TrimSpace(m.confirmInstanceName)
 		if name != "" {
 			header += "\n" + styleMuted.Render(name)
 		}
 		body = styleErrStrong.Render("This will delete the instance directory and its depmeta.") + "\n\n" +
-			styleMuted.Render("y delete • n cancel • Esc cancel")
+			styleErrStrong.Render("y") + styleMuted.Render(" delete • ") + styleMuted.Render("n cancel • Esc cancel")
 	case confirmDeleteDependency:
+		// Red border for destructive actions.
+		box = box.BorderForeground(colErr)
 		header = styleHeading.Render(withIcon(iconTrash, "Delete dependency"))
 		dep := m.confirmDep
 		line := ""
@@ -400,7 +429,7 @@ func renderConfirmModal(m AppModel) string {
 			header += "\n" + styleMuted.Render(line)
 		}
 		body = styleErrStrong.Render("This will remove it from Chart.yaml and delete depID-keyed data (values.instance.yaml key, values.dep-set markers, depmeta).") + "\n\n" +
-			styleMuted.Render("y delete • n cancel • Esc cancel")
+			styleErrStrong.Render("y") + styleMuted.Render(" delete • ") + styleMuted.Render("n cancel • Esc cancel")
 	default:
 		header = styleHeading.Render(withIcon(iconErr, "Confirm"))
 		body = styleMuted.Render("No action") + "\n\n" + styleMuted.Render("Esc cancel")
@@ -467,4 +496,32 @@ func renderValuesPreviewModal(m AppModel) string {
 	body := m.valuesPreview.View()
 	footer := styleMuted.Render("Esc close")
 	return box.Render(header + "\n\n" + body + "\n\n" + footer)
+}
+
+// renderStepIndicator renders a visual progress indicator for multi-step wizards.
+// current is 0-based, total is the total number of steps.
+func renderStepIndicator(current, total int) string {
+	if total <= 1 {
+		return ""
+	}
+	parts := make([]string, 0, total*2-1)
+	for i := 0; i < total; i++ {
+		dot := "○"
+		if i < current {
+			dot = styleInfo.Render("●") // completed
+		} else if i == current {
+			dot = styleInfo.Render("●") // active
+		} else {
+			dot = styleMuted.Render("○") // pending
+		}
+		parts = append(parts, dot)
+		if i < total-1 {
+			if i < current {
+				parts = append(parts, styleInfo.Render("━━"))
+			} else {
+				parts = append(parts, styleMuted.Render("━━"))
+			}
+		}
+	}
+	return fmt.Sprintf("Step %d/%d  %s", current+1, total, strings.Join(parts, ""))
 }

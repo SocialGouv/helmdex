@@ -46,6 +46,7 @@ const (
 	iconFilter = "🔎"
 	iconBusy   = "⏳"
 	iconErr    = "✖"
+	iconOK     = "✓"
 	iconInfo   = "ℹ"
 	iconHelp   = "?"
 )
@@ -57,6 +58,7 @@ const (
 	colText     = lipgloss.Color("252")
 	colTextHi   = lipgloss.Color("231")
 	colErr      = lipgloss.Color("9")
+	colSuccess  = lipgloss.Color("10")
 	colDiffAdd  = lipgloss.Color("10")
 	colDiffDel  = lipgloss.Color("9")
 	colDiffHdr  = lipgloss.Color("39")
@@ -75,9 +77,9 @@ var (
 	styleHeading = lipgloss.NewStyle().Bold(true)
 	// Common bordered panels/modals.
 	stylePanelBox = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).Padding(1, 2)
-	// Tabs.
-	styleTabActive   = lipgloss.NewStyle().Bold(true).Underline(true)
-	styleTabInactive = lipgloss.NewStyle().Faint(true)
+	// Tabs (pill style: active gets a subtle background).
+	styleTabActive   = lipgloss.NewStyle().Bold(true).Background(colBgSubtle).Padding(0, 1)
+	styleTabInactive = lipgloss.NewStyle().Faint(true).Padding(0, 1)
 	// Decorative ASCII art.
 	styleLogoArt    = lipgloss.NewStyle().Foreground(colSep).Faint(true)
 	styleLogoAccent = lipgloss.NewStyle().Foreground(colInfo).Bold(true)
@@ -85,6 +87,7 @@ var (
 	styleMuted     = lipgloss.NewStyle().Faint(true)
 	styleErrStrong = lipgloss.NewStyle().Foreground(colErr).Bold(true)
 	styleInfo      = lipgloss.NewStyle().Foreground(colInfo)
+	styleSuccess   = lipgloss.NewStyle().Foreground(colSuccess)
 
 	// Diff styles (git-like).
 	styleDiffAdd = lipgloss.NewStyle().Foreground(colDiffAdd)

@@ -3023,6 +3023,13 @@ func (m AppModel) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.depDetailPreview.SetYOffset(oldDepOff)
 		}
 		return m, nil
+	case tea.MouseMsg:
+		// Optional mouse support (HELMDEX_MOUSE=1).
+		// Only handle left clicks; ignore motion/scroll/right-click.
+		if msg.Button == tea.MouseButtonLeft && msg.Action == tea.MouseActionPress {
+			return m.handleMouseClick(msg)
+		}
+		return m, nil
 	case instancesMsg:
 		m.endBusy()
 		m.insts = msg.items
@@ -4479,6 +4486,26 @@ func (m AppModel) isAnyFilterActive() bool {
 	return false
 }
 
+// activeFilterInfo returns the query string, visible count, and total count for
+// the currently active filtered list. Returns ("", 0, 0) if no filter is active.
+func (m AppModel) activeFilterInfo() (query string, visible, total int) {
+	type filterable struct {
+		l *list.Model
+	}
+	lists := []filterable{
+		{&m.instList}, {&m.catalogList}, {&m.depSource},
+		{&m.depsList}, {&m.valuesList}, {&m.depEditVersions},
+		{&m.depDetailVersions}, {&m.arbCharts}, {&m.arbVersions},
+	}
+	for _, f := range lists {
+		if f.l.FilterState() != list.Unfiltered {
+			q := strings.TrimSpace(f.l.FilterValue())
+			return q, len(f.l.VisibleItems()), len(f.l.Items())
+		}
+	}
+	return "", 0, 0
+}
+
 func (m AppModel) View() string {
 	base := styleBase
 
@@ -4520,9 +4547,15 @@ func (m AppModel) View() string {
 	}
 
 	contextHelp := styleMuted.Render(m.contextHelpLine())
+	toast := renderToastBar(m)
 	status := renderFooterStatusLine(m)
 
-	return base.Render(strings.TrimRight(topBar+"\n\n"+body+"\n\n"+contextHelp+"\n"+status, "\n"))
+	footer := contextHelp + "\n" + status
+	if toast != "" {
+		footer = toast + "\n" + contextHelp + "\n" + status
+	}
+
+	return base.Render(strings.TrimRight(topBar+"\n\n"+body+"\n\n"+footer, "\n"))
 }
 
 func (m AppModel) currentBodyView() string {
@@ -4547,6 +4580,11 @@ func (m AppModel) currentBodyView() string {
 		tabsLine := renderTabs(m.tabNames, m.activeTab)
 		prefix := tabsLine + "\n\n"
 		if m.activeTab == InstanceTabDeps {
+			if m.chart != nil && len(m.chart.Dependencies) == 0 && m.depsList.FilterState() == list.Unfiltered {
+				empty := styleMuted.Render("No dependencies yet.") + "\n\n" +
+					styleMuted.Render("a: add dependency  •  m: commands")
+				return prefix + empty
+			}
 			return prefix + m.depsList.View()
 		}
 		if m.activeTab == InstanceTabValues {
@@ -4555,8 +4593,27 @@ func (m AppModel) currentBodyView() string {
 		if m.activeTab == InstanceTabInstance {
 			lines := []string{}
 			if m.selected != nil {
-				lines = append(lines, styleMuted.Render("Name: "+m.selected.Name))
-				lines = append(lines, styleMuted.Render("Path: "+m.selected.Path))
+				lines = append(lines, styleHeading.Render(m.selected.Name))
+				lines = append(lines, styleMuted.Render(m.selected.Path))
+				lines = append(lines, "")
+				depCount := 0
+				if m.chart != nil {
+					depCount = len(m.chart.Dependencies)
+				}
+				valuesCount := len(m.valuesList.Items())
+				lines = append(lines, fmt.Sprintf("  Dependencies:  %d", depCount))
+				lines = append(lines, fmt.Sprintf("  Values layers: %d", valuesCount))
+				if m.params.Config != nil && strings.TrimSpace(m.params.Config.Platform.Name) != "" {
+					lines = append(lines, fmt.Sprintf("  Platform:      %s", m.params.Config.Platform.Name))
+				}
+				if m.selected.Path != "" {
+					lockPath := filepath.Join(m.selected.Path, "Chart.lock")
+					if _, err := os.Stat(lockPath); err == nil {
+						lines = append(lines, "  Lock file:     "+styleSuccess.Render("present"))
+					} else {
+						lines = append(lines, "  Lock file:     "+styleMuted.Render("missing"))
+					}
+				}
 			}
 			lines = append(lines, "")
 			lines = append(lines, styleMuted.Render("r: rename • d: delete"))
@@ -4775,6 +4832,9 @@ func (m AppModel) contextHelpLine() string {
 		if m.activeTab == InstanceTabDeps {
 			return "←/→ tabs • d remove • v version • u upgrade • a add dep • m commands • Esc back • q quit"
 		}
+		if m.activeTab == InstanceTabValues {
+			return "←/→ tabs • Enter preview • e edit values.instance.yaml • p apply • m commands • Esc back • q quit"
+		}
 		if m.activeTab == InstanceTabInstance {
 			return "←/→ tabs • r rename • d delete • Esc back • q quit"
 		}
@@ -4977,28 +5037,47 @@ func (v versionItem) FilterValue() string { return string(v) }
 
 type valuesFileItem string
 
-func (v valuesFileItem) Title() string { return string(v) }
+func (v valuesFileItem) Title() string {
+	name := string(v)
+	switch name {
+	case "values.instance.yaml":
+		return withIcon(iconRename, name)
+	case "values.yaml":
+		return withIcon(iconRegen, name)
+	default:
+		return name
+	}
+}
+
 func (v valuesFileItem) Description() string {
 	name := string(v)
 	switch name {
 	case "values.default.yaml":
-		return "Baseline defaults"
+		return "Layer 1 · Baseline defaults"
 	case "values.platform.yaml":
-		return "Platform overrides"
+		return "Layer 2 · Platform overrides"
 	case "values.instance.yaml":
-		return "User overrides (editable)"
+		return "Layer 4 · Your overrides (editable)"
 	case "values.yaml":
-		return "Merged output (generated)"
+		return "Output · Merged result (generated)"
 	default:
-		// values.set.<name>.yaml
+		// values.set.<name>.yaml or values.dep-set.<name>.yaml
 		const prefix = "values.set."
 		const suffix = ".yaml"
 		if strings.HasPrefix(name, prefix) && strings.HasSuffix(name, suffix) {
 			setName := strings.TrimSuffix(strings.TrimPrefix(name, prefix), suffix)
 			if strings.TrimSpace(setName) != "" {
-				return "Preset layer: " + setName
+				return "Layer 3 · Preset: " + setName
 			}
-			return "Preset layer"
+			return "Layer 3 · Preset layer"
+		}
+		const depPrefix = "values.dep-set."
+		if strings.HasPrefix(name, depPrefix) && strings.HasSuffix(name, suffix) {
+			setName := strings.TrimSuffix(strings.TrimPrefix(name, depPrefix), suffix)
+			if strings.TrimSpace(setName) != "" {
+				return "Layer 3 · Dep preset: " + setName
+			}
+			return "Layer 3 · Dep preset layer"
 		}
 		return ""
 	}
@@ -5062,8 +5141,79 @@ func (m *AppModel) refreshValuesList() {
 	}
 }
 
+// handleMouseClick handles a left mouse click at the given coordinates.
+// Currently supports clicking tabs on the Instance screen.
+func (m AppModel) handleMouseClick(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
+	// Only handle tab clicks on Instance screen (row 3 is typically the tab bar).
+	// The tab bar is rendered at row index ~2 (topBar=0, blank=1, tabs=2).
+	if m.screen == ScreenInstance && !m.addingDep && m.noModalOpen() {
+		// Approximate the tab bar row. The top bar occupies row 0 (with padding),
+		// then a blank line, then tabs. In the base style with Padding(0,1), the
+		// tab bar is typically at Y=2.
+		tabRow := 2
+		if msg.Y == tabRow {
+			// Walk through tab names to find which one was clicked.
+			// Each tab is rendered with Padding(0,1) so each has 2 extra chars.
+			x := 1 // account for base padding
+			for i, name := range m.tabNames {
+				tabWidth := lipgloss.Width(name) + 2 // padding
+				gap := 2                              // gap between tabs
+				if msg.X >= x && msg.X < x+tabWidth {
+					if i != m.activeTab {
+						m.activeTab = i
+					}
+					return m, nil
+				}
+				x += tabWidth + gap
+			}
+		}
+	}
+	return m, nil
+}
+
+// addDepStepIndicator returns a rendered step progress indicator for the
+// add-dependency wizard based on the current flow and step.
+func addDepStepIndicator(m AppModel) string {
+	switch m.depStep {
+	// Catalog flow: 3 steps (Source → Entry → Sets)
+	case depStepChooseSource:
+		return renderStepIndicator(0, 3)
+	case depStepCatalog:
+		return renderStepIndicator(1, 3)
+	case depStepCatalogDetail, depStepCatalogCollision:
+		return renderStepIndicator(2, 3)
+	// Artifact Hub flow: 4 steps (Search → Results → Versions → Detail)
+	case depStepAHQuery:
+		return renderStepIndicator(0, 4)
+	case depStepAHResults:
+		return renderStepIndicator(1, 4)
+	case depStepAHVersions:
+		return renderStepIndicator(2, 4)
+	case depStepAHDetail:
+		return renderStepIndicator(3, 4)
+	// Arbitrary flow: 4 steps (Repo → Chart → Version → Alias)
+	case depStepArbitrary:
+		switch m.arbStep {
+		case arbStepRepo:
+			return renderStepIndicator(0, 4)
+		case arbStepChart:
+			return renderStepIndicator(1, 4)
+		case arbStepVersion:
+			return renderStepIndicator(2, 4)
+		case arbStepAlias:
+			return renderStepIndicator(3, 4)
+		}
+	}
+	return ""
+}
+
 func renderAddDepView(m AppModel) string {
 	header := styleHeading.Render(withIcon(iconAdd, "Add dependency"))
+
+	// Step progress indicator.
+	if step := addDepStepIndicator(m); step != "" {
+		header = header + "\n" + styleMuted.Render(step)
+	}
 
 	if m.modalErr != "" {
 		errLine := styleErrStrong.Render(withIcon(iconErr, "Error:") + " " + m.modalErr)
