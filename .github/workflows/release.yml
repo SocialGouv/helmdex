@@ -1,0 +1,72 @@
+name: 📦 Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build-binaries:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - goos: linux
+            goarch: amd64
+          - goos: linux
+            goarch: arm64
+          - goos: darwin
+            goarch: amd64
+          - goos: darwin
+            goarch: arm64
+          - goos: windows
+            goarch: amd64
+          - goos: windows
+            goarch: arm64
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      - name: Build binary
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+        run: |
+          VERSION="${GITHUB_REF_NAME}"
+          COMMIT="$(git rev-parse --short HEAD)"
+          EXT=""
+          if [ "$GOOS" = "windows" ]; then EXT=".exe"; fi
+          OUTPUT="helmdex-${GOOS}-${GOARCH}${EXT}"
+          go build \
+            -ldflags "-s -w -X helmdex/internal/appinfo.Version=${VERSION} -X helmdex/internal/appinfo.Commit=${COMMIT}" \
+            -o "${OUTPUT}" ./cmd/helmdex
+          sha256sum "${OUTPUT}" > "${OUTPUT}.sha256"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: helmdex-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: |
+            helmdex-${{ matrix.goos }}-${{ matrix.goarch }}*
+
+  release:
+    needs: build-binaries
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: artifacts/*

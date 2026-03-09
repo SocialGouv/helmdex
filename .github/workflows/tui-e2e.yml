@@ -1,4 +1,4 @@
-name: tui-e2e
+name: 🎭 TUI E2E
 
 on:
   push:
@@ -9,9 +9,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
-      # Install devbox (Jetify)
       - name: Install devbox
         uses: jetify-com/devbox-install-action@v0.12.0
 
