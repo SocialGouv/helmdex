@@ -1,0 +1,22 @@
+name: 🧪 Tests
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: Run Go tests
+        run: go test -mod=vendor ./...
+
+      - name: Run go vet
+        run: go vet -mod=vendor ./...

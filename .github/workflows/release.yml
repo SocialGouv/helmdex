@@ -32,6 +32,7 @@ jobs:
       - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
+          cache: false
 
       - name: Build binary
         env:
@@ -43,7 +44,7 @@ jobs:
           EXT=""
           if [ "$GOOS" = "windows" ]; then EXT=".exe"; fi
           OUTPUT="helmdex-${GOOS}-${GOARCH}${EXT}"
-          go build \
+          go build -mod=vendor \
             -ldflags "-s -w -X helmdex/internal/appinfo.Version=${VERSION} -X helmdex/internal/appinfo.Commit=${COMMIT}" \
             -o "${OUTPUT}" ./cmd/helmdex
           sha256sum "${OUTPUT}" > "${OUTPUT}.sha256"

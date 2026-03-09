@@ -81,14 +81,14 @@ tasks:
     cmds:
       - mkdir -p '{{.BIN_DIR}}'
       - >-
-        go build
+        go build -mod=vendor
         -ldflags "-X helmdex/internal/appinfo.Version=v{{.VERSION}} -X helmdex/internal/appinfo.Commit={{.COMMIT}}"
         -o '{{.HELMDEX_BIN}}' ./cmd/helmdex
 
   test:
     desc: Run Go unit tests
     cmds:
-      - go test ./...
+      - go test -mod=vendor ./...
 
   fmt:
     desc: Format Go code (gofmt)
@@ -106,7 +106,7 @@ tasks:
   vet:
     desc: Run go vet
     cmds:
-      - go vet ./...
+      - go vet -mod=vendor ./...
 
   lint:
     desc: Run golangci-lint

@@ -4641,6 +4641,14 @@ func (m AppModel) View() string {
 
 	// Persistent single-line top bar (repo + context).
 	topBar := renderTopBar(m)
+	// DEBUG: log top bar to stderr for E2E debugging
+	if m.screen == ScreenInstance {
+		selName := "<nil>"
+		if m.selected != nil {
+			selName = m.selected.Name
+		}
+		_, _ = fmt.Fprintf(os.Stderr, "DEBUG topBar width=%d sel=%q stripped=%q\n", m.width, selName, stripANSI(topBar))
+	}
 
 	var body string
 	if m.infoOpen {
