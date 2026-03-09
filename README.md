@@ -73,6 +73,32 @@ flowchart TD
 
 ## Install
 
+Download the latest binary for your platform:
+
+```bash
+curl -fsSL "https://github.com/SocialGouv/helmdex/releases/latest/download/helmdex-$(uname -s | tr '[:upper:]' '[:lower:]')-$(uname -m | sed 's/x86_64/amd64/' | sed 's/aarch64/arm64/')" | sudo tee /usr/local/bin/helmdex > /dev/null && sudo chmod +x /usr/local/bin/helmdex
+```
+
+Or install to a local directory:
+
+```bash
+curl -fsSL "https://github.com/SocialGouv/helmdex/releases/latest/download/helmdex-$(uname -s | tr '[:upper:]' '[:lower:]')-$(uname -m | sed 's/x86_64/amd64/' | sed 's/aarch64/arm64/')" -o ./helmdex && chmod +x ./helmdex
+```
+
+**Windows** (PowerShell):
+
+```powershell
+Invoke-WebRequest -Uri "https://github.com/SocialGouv/helmdex/releases/latest/download/helmdex-windows-amd64.exe" -OutFile helmdex.exe
+```
+
+Verify the download (optional):
+
+```bash
+curl -fsSL "https://github.com/SocialGouv/helmdex/releases/latest/download/helmdex-$(uname -s | tr '[:upper:]' '[:lower:]')-$(uname -m | sed 's/x86_64/amd64/' | sed 's/aarch64/arm64/').sha256" | sha256sum -c
+```
+
+Or build from source:
+
 ```bash
 go install github.com/SocialGouv/helmdex/cmd/helmdex@latest
 ```
