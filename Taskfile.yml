@@ -114,6 +114,12 @@ tasks:
       - golangci-lint version
       - golangci-lint run
 
+  hooks:
+    desc: Install git hooks (using .githooks/)
+    cmds:
+      - git config core.hooksPath .githooks
+      - echo "Git hooks installed (using .githooks/)"
+
   clean:
     desc: Remove build artifacts
     cmds:
