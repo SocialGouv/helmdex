@@ -1,4 +1,4 @@
-name: 🎭 TUI E2E
+name: 🎭 Tests TUI E2E
 
 on:
   push:
