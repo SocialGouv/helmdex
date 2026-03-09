@@ -8,14 +8,11 @@
     "git"
   ],
   "env": {
-    // Keep corepack-managed binaries/cache writable (Nix store is read-only).
     "COREPACK_HOME": "${DEVBOX_PROJECT_ROOT}/.devbox/corepack"
   },
   "shell": {
     "init_hook": [
       "mkdir -p .devbox/corepack",
-      // IMPORTANT: do NOT run `corepack enable` under Nix; it tries to symlink
-      // shims into the Node binary dir (read-only in /nix/store).
       "corepack prepare pnpm@10.5.2 --activate",
       "corepack pnpm --version >/dev/null"
     ]
