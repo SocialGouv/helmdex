@@ -78,18 +78,24 @@ func TestValuesTabListShowsDescriptionsAndOrdering(t *testing.T) {
 	m.activeTab = InstanceTabValues
 	m.refreshValuesList()
 
-	items := m.valuesList.Items()
-	if len(items) != 6 {
-		t.Fatalf("expected 6 values items, got %d", len(items))
+	// Filter out action items; only inspect the valuesFileItem entries.
+	var dataItems []valuesFileItem
+	for _, it := range m.valuesList.Items() {
+		if vf, ok := it.(valuesFileItem); ok {
+			dataItems = append(dataItems, vf)
+		}
+	}
+	if len(dataItems) != 6 {
+		t.Fatalf("expected 6 values items, got %d", len(dataItems))
 	}
 
 	// Verify ordering:
 	// default, platform, set layers (sorted), instance, merged.
 	gotTitles := []string{}
 	gotDescs := []string{}
-	for _, it := range items {
-		gotTitles = append(gotTitles, it.(valuesFileItem).Title())
-		gotDescs = append(gotDescs, it.(valuesFileItem).Description())
+	for _, it := range dataItems {
+		gotTitles = append(gotTitles, it.Title())
+		gotDescs = append(gotDescs, it.Description())
 	}
 
 	wantTitles := []string{

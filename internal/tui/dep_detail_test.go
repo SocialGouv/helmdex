@@ -74,7 +74,7 @@ func TestDepDetailVersionsEnterSetsPendingVersion(t *testing.T) {
 		m.depDetailTabKinds[m.depDetailTab] = depDetailTabVersions
 	}
 	m.depDetailMode = depEditModeList
-	m.depDetailVersions.SetItems([]list.Item{versionItem("1.0.0"), versionItem("1.1.0")})
+	m.depDetailVersions.SetItems([]list.Item{versionItem{Ver: "1.0.0"}, versionItem{Ver: "1.1.0"}})
 	m.depDetailVersions.Select(1)
 
 	// Use the modal update directly (Update() routes here when depDetailOpen).

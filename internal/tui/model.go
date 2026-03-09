@@ -63,6 +63,15 @@ type AppModel struct {
 	instanceManageMode instanceManageMode
 	instanceManageName textinput.Model
 
+	// Instance tab navigable actions list
+	instanceActions list.Model
+
+	// AH detail Actions tab list
+	ahActionsList list.Model
+
+	// Dep detail Actions tab list
+	depDetailActions list.Model
+
 	// confirm modal (shared for destructive actions)
 	confirmOpen bool
 	confirmKind confirmKind
@@ -1020,6 +1029,14 @@ func instanceTabNames() []string {
 	}
 }
 
+// AH detail tabs (add-dep wizard detail view).
+const (
+	ahDetailTabReadme   = 0
+	ahDetailTabValues   = 1
+	ahDetailTabVersions = 2
+	ahDetailTabActions  = 3
+)
+
 type instanceManageMode int
 
 const (
@@ -1030,7 +1047,7 @@ const (
 // Catalog-backed deps get Sets as the first tab.
 func depDetailTabs(source depSourceMeta, ok bool) (names []string, kinds []depDetailTabKind) {
 	// Base (non-catalog) order.
-	kinds = []depDetailTabKind{depDetailTabValues, depDetailTabDependency, depDetailTabDefault, depDetailTabReadme, depDetailTabVersions}
+	kinds = []depDetailTabKind{depDetailTabValues, depDetailTabDependency, depDetailTabDefault, depDetailTabReadme, depDetailTabVersions, depDetailTabActions}
 	if ok && source.Kind == depSourceCatalog {
 		kinds = append([]depDetailTabKind{depDetailTabSets}, kinds...)
 	}
@@ -1050,6 +1067,8 @@ func depDetailTabs(source depSourceMeta, ok bool) (names []string, kinds []depDe
 			names = append(names, withIcon(iconReadme, "README"))
 		case depDetailTabVersions:
 			names = append(names, withIcon(iconVersions, "Versions"))
+		case depDetailTabActions:
+			names = append(names, withIcon(iconCmd, "Actions"))
 		default:
 			names = append(names, "")
 		}
@@ -1075,19 +1094,33 @@ const (
 	depDetailTabDefault
 	depDetailTabReadme
 	depDetailTabVersions
+	depDetailTabActions
 )
 
-type actionItem string
-
-func (a actionItem) Title() string       { return string(a) }
-func (a actionItem) Description() string { return "" }
-func (a actionItem) FilterValue() string { return string(a) }
+// actionItem – navigable in-list action (e.g. "New instance", "Add dependency").
+type actionID string
 
 const (
-	actionNewInstance          = "New instance"
-	actionReloadInstances      = "Reload"
-	actionForceRefreshAHDetail = "Force refresh chart detail"
+	actNewInstance   actionID = "new-instance"
+	actAddDep        actionID = "add-dep"
+	actAddAHDep      actionID = "add-ah-dep"
+	actEditValues    actionID = "edit-values"
+	actApplyInstance actionID = "apply-instance"
+	actRename        actionID = "rename-instance"
+	actDelete        actionID = "delete-instance"
+	actDeleteDep     actionID = "delete-dep"
 )
+
+type actionItem struct {
+	ID   actionID
+	Icon string
+	Name string
+	Desc string
+}
+
+func (a actionItem) Title() string       { return withIcon(a.Icon, a.Name) }
+func (a actionItem) Description() string { return a.Desc }
+func (a actionItem) FilterValue() string { return a.Name + " " + a.Desc }
 
 type depDetachedMsg struct {
 	dep yamlchart.Dependency
@@ -1219,7 +1252,9 @@ func NewAppModel(p Params) AppModel {
 		Help:        key.NewBinding(key.WithKeys("?"), key.WithHelp("?", "help")),
 	}
 
-	l := list.New([]list.Item{}, list.NewDefaultDelegate(), 0, 0)
+	actionDelegate := newActionAwareDelegate()
+
+	l := list.New([]list.Item{}, actionDelegate, 0, 0)
 	l.Title = "Instances"
 	l.SetShowHelp(false)
 	l.SetFilteringEnabled(true)
@@ -1227,18 +1262,43 @@ func NewAppModel(p Params) AppModel {
 	l.SetShowTitle(false)
 	l.SetShowStatusBar(false)
 
-	deps := list.New([]list.Item{}, list.NewDefaultDelegate(), 0, 0)
+	deps := list.New([]list.Item{}, actionDelegate, 0, 0)
 	// Title disabled: we render a consistent per-tab heading row in the instance view.
 	// Keeping the list title would look like the tab bar changes when switching to Deps.
 	deps.Title = ""
 	deps.SetShowTitle(false)
 	deps.SetShowHelp(false)
 
-	vals := list.New([]list.Item{}, list.NewDefaultDelegate(), 0, 0)
+	vals := list.New([]list.Item{}, actionDelegate, 0, 0)
 	vals.Title = ""
 	vals.SetShowTitle(false)
 	vals.SetShowHelp(false)
 	vals.SetFilteringEnabled(true)
+
+	instActions := list.New([]list.Item{
+		actionItem{ID: actRename, Icon: iconRename, Name: "Rename", Desc: "Rename this instance"},
+		actionItem{ID: actDelete, Icon: iconTrash, Name: "Delete", Desc: "Delete this instance"},
+	}, actionDelegate, 0, 0)
+	instActions.SetShowTitle(false)
+	instActions.SetShowHelp(false)
+	instActions.SetShowStatusBar(false)
+	instActions.SetFilteringEnabled(false)
+
+	ahActions := list.New([]list.Item{
+		actionItem{ID: actAddAHDep, Icon: iconAdd, Name: "Add dependency", Desc: "Add selected chart to instance"},
+	}, actionDelegate, 0, 0)
+	ahActions.SetShowTitle(false)
+	ahActions.SetShowHelp(false)
+	ahActions.SetShowStatusBar(false)
+	ahActions.SetFilteringEnabled(false)
+
+	depDetailActionsList := list.New([]list.Item{
+		actionItem{ID: actDeleteDep, Icon: iconTrash, Name: "Remove dependency", Desc: "Remove from Chart.yaml"},
+	}, actionDelegate, 0, 0)
+	depDetailActionsList.SetShowTitle(false)
+	depDetailActionsList.SetShowHelp(false)
+	depDetailActionsList.SetShowStatusBar(false)
+	depDetailActionsList.SetFilteringEnabled(false)
 
 	catSets := list.New([]list.Item{}, list.NewDefaultDelegate(), 0, 0)
 	catSets.Title = ""
@@ -1278,7 +1338,7 @@ func NewAppModel(p Params) AppModel {
 	ahRes.SetFilteringEnabled(false)
 	ahRes.SetShowHelp(false)
 
-	ahVers := list.New([]list.Item{}, list.NewDefaultDelegate(), 0, 0)
+	ahVers := list.New([]list.Item{}, actionDelegate, 0, 0)
 	ahVers.Title = withIcon(iconVersions, "Select version")
 	ahVers.SetShowHelp(false)
 
@@ -1323,7 +1383,7 @@ func NewAppModel(p Params) AppModel {
 	depVerInput.Placeholder = "exact version"
 	depVerInput.Prompt = "version> "
 
-	depDetailVersions := list.New([]list.Item{}, list.NewDefaultDelegate(), 0, 0)
+	depDetailVersions := list.New([]list.Item{}, actionDelegate, 0, 0)
 	depDetailVersions.Title = ""
 	depDetailVersions.SetShowTitle(false)
 	depDetailVersions.SetFilteringEnabled(true)
@@ -1370,6 +1430,7 @@ func NewAppModel(p Params) AppModel {
 		withIcon(iconReadme, "README"),
 		withIcon(iconAHValues, "Values"),
 		withIcon(iconVersions, "Versions"),
+		withIcon(iconCmd, "Actions"),
 	}
 	depDetailTabNames, depDetailTabKinds := depDetailTabs(depSourceMeta{}, false)
 	vp := viewport.New(0, 0)
@@ -1409,6 +1470,9 @@ func NewAppModel(p Params) AppModel {
 		spin:                   sp,
 		newName:                newName,
 		instanceManageName:     instManageName,
+		instanceActions:        instActions,
+		ahActionsList:          ahActions,
+		depDetailActions:       depDetailActionsList,
 		arbRepo:                arbRepo,
 		arbStep:                arbStepRepo,
 		arbRepoKind:            arbRepoKindUnknown,
@@ -2241,7 +2305,7 @@ func (m *AppModel) setVersionsList(items []string, which versionsTarget) {
 	}
 	its := make([]list.Item, 0, len(data))
 	for _, v := range data {
-		its = append(its, versionItem(v))
+		its = append(its, versionItem{Ver: v})
 	}
 	listModel.SetItems(its)
 	// Keep selection on current version when possible.
@@ -2813,7 +2877,7 @@ func (m AppModel) renderAHDetailBody() string {
 		return "Loading chart details via helm…"
 	}
 	switch m.ahDetailTab {
-	case 0:
+	case ahDetailTabReadme:
 		if m.ahReadme == "" {
 			if m.ahSelectedVersion == "" {
 				return "Select a version in the Versions tab to view README."
@@ -2827,7 +2891,7 @@ func (m AppModel) renderAHDetailBody() string {
 			return "README not available for this chart/version."
 		}
 		return renderMarkdownForDisplay(m.ahPreview.Width, m.ahReadme)
-	case 1:
+	case ahDetailTabValues:
 		if m.ahValues == "" {
 			if m.ahSelectedVersion == "" {
 				return "Select a version in the Versions tab to view default values."
@@ -2839,8 +2903,8 @@ func (m AppModel) renderAHDetailBody() string {
 			return "Default values not available for this chart/version."
 		}
 		return m.ahValues
-	case 2:
-		return "Select a version below (Enter)."
+	case ahDetailTabVersions:
+		return "Select a version below (Enter/Space)."
 	default:
 		return ""
 	}
@@ -2956,6 +3020,7 @@ func (m AppModel) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Deps tab also has the shared tab bar.
 		m.depsList.SetSize(msg.Width-2, msg.Height-8)
 		m.valuesList.SetSize(msg.Width-2, msg.Height-8)
+		m.instanceActions.SetSize(msg.Width-2, msg.Height-14)
 		m.depSource.SetSize(msg.Width-2, msg.Height-7)
 		m.catalogList.SetSize(msg.Width-2, msg.Height-7)
 		// Arbitrary wizard lists live in the add-dep modal.
@@ -2971,6 +3036,7 @@ func (m AppModel) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// tall, the terminal can scroll and push the header off-screen.
 		// Keep it aligned with the preview viewport height.
 		m.ahVersions.SetSize(msg.Width-2, max(5, msg.Height-11))
+		m.ahActionsList.SetSize(msg.Width-2, max(5, msg.Height-11))
 		m.depEditVersions.SetSize(max(10, msg.Width-6), max(5, msg.Height-12))
 		m.palette.SetSize(min(70, msg.Width-4), min(14, msg.Height-6))
 		m.depDetailPreview.Width = max(10, msg.Width-6)
@@ -3004,6 +3070,7 @@ func (m AppModel) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// (minus a couple of lines for the versions hint line) so the modal header
 		// stays visible and the output does not exceed the terminal height.
 		m.depDetailVersions.SetSize(m.depDetailPreview.Width, max(5, m.depDetailPreview.Height-2))
+		m.depDetailActions.SetSize(m.depDetailPreview.Width, max(5, m.depDetailPreview.Height-2))
 		m.valuesPreview.Width = max(10, msg.Width-6)
 		m.valuesPreview.Height = max(5, msg.Height-14)
 		// Ensure the viewport never ends up with negative size.
@@ -3056,6 +3123,7 @@ func (m AppModel) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 		}
+		items = append(items, actionItem{ID: actNewInstance, Icon: iconAdd, Name: "New instance", Desc: "Create a new Helm instance"})
 		m.instList.SetItems(items)
 		return m, nil
 	case instanceRenameRequest:
@@ -3455,11 +3523,6 @@ func (m AppModel) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case ahVersionsMsg:
 		m.endBusy()
 		m.ahVersionsData = msg.versions
-		items := make([]list.Item, 0, len(msg.versions))
-		for _, v := range msg.versions {
-			items = append(items, ahVersionItem(v))
-		}
-		m.ahVersions.SetItems(items)
 		// If we're already in the detail screen, keep it there; otherwise the legacy
 		// versions-only step is used.
 		if !(m.addingDep && m.depStep == depStepAHDetail) {
@@ -3479,17 +3542,8 @@ func (m AppModel) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				m.ahSelectedVersion = best
 			}
-
-			// Always try to select the currently chosen version in the versions list.
-			if m.ahSelectedVersion != "" {
-				for i := range msg.versions {
-					if strings.TrimSpace(msg.versions[i].Version) == strings.TrimSpace(m.ahSelectedVersion) {
-						m.ahVersions.Select(i)
-						break
-					}
-				}
-			}
 		}
+		m.refreshAHVersionsList()
 		m.ahPreview.SetContent(m.renderAHDetailBody())
 		return m, nil
 	case ahDetailMsg:
@@ -3818,6 +3872,9 @@ func (m AppModel) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Back/Esc is handled above, before input capture, so it works inside text inputs.
 		if key.Matches(msg, m.keys.Open) {
 			if m.screen == ScreenDashboard {
+				if act, ok := m.instList.SelectedItem().(actionItem); ok {
+					return m.dispatchAction(act.ID)
+				}
 				if it, ok := m.instList.SelectedItem().(instanceItem); ok {
 					inst := it.Inst
 					m.selected = &inst
@@ -4139,12 +4196,23 @@ func (m AppModel) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, cmd
 		case depStepAHDetail:
+			// Actions tab has its own interactive list.
+			if m.ahDetailTab == ahDetailTabActions {
+				var cmd tea.Cmd
+				m.ahActionsList, cmd = m.ahActionsList.Update(msg)
+				if km, ok := msg.(tea.KeyMsg); ok && km.Type == tea.KeyEnter {
+					if act, ok := m.ahActionsList.SelectedItem().(actionItem); ok {
+						return m.dispatchAction(act.ID)
+					}
+				}
+				return m, cmd
+			}
 			// Versions tab has an interactive list.
-			if m.ahDetailTab == 2 {
+			if m.ahDetailTab == ahDetailTabVersions {
 				var cmd tea.Cmd
 				m.ahVersions, cmd = m.ahVersions.Update(msg)
 				if km, ok := msg.(tea.KeyMsg); ok {
-					if km.Type == tea.KeyEnter {
+					if km.Type == tea.KeyEnter || km.String() == " " {
 						if m.ahSelected == nil {
 							return m, cmd
 						}
@@ -4156,8 +4224,8 @@ func (m AppModel) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 						if !ok {
 							return m, func() tea.Msg { return errMsg{fmt.Errorf("unexpected version item type")} }
 						}
-						v := artifacthub.Version(vi)
-						m.ahSelectedVersion = v.Version
+						m.ahSelectedVersion = vi.V.Version
+						m.refreshAHVersionsList()
 						m.ahLoading = true
 						m.ahReadme = ""
 						m.ahValues = ""
@@ -4167,7 +4235,7 @@ func (m AppModel) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 							m.modalErr = "selected chart has no repository URL; cannot run helm show"
 							return m, cmd
 						}
-						return m, tea.Batch(cmd, m.loadHelmPreviewsCmd(m.ahSelected.RepositoryURL, m.ahSelected.Name, v.Version))
+						return m, tea.Batch(cmd, m.loadHelmPreviewsCmd(m.ahSelected.RepositoryURL, m.ahSelected.Name, vi.V.Version))
 					}
 					if km.String() == "a" || km.String() == "A" {
 						if m.ahSelected != nil && m.ahSelectedVersion != "" {
@@ -4182,7 +4250,7 @@ func (m AppModel) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, cmd
 			}
 
-			// Non-versions tabs: allow quick add if a version is selected.
+			// Non-versions/actions tabs: allow quick add if a version is selected.
 			if km, ok := msg.(tea.KeyMsg); ok {
 				if km.String() == "a" || km.String() == "A" {
 					if m.ahSelected != nil && m.ahSelectedVersion != "" {
@@ -4198,7 +4266,7 @@ func (m AppModel) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case depStepAHVersions:
 			var cmd tea.Cmd
 			m.ahVersions, cmd = m.ahVersions.Update(msg)
-			if km, ok := msg.(tea.KeyMsg); ok && km.Type == tea.KeyEnter {
+			if km, ok := msg.(tea.KeyMsg); ok && (km.Type == tea.KeyEnter || km.String() == " ") {
 				if m.ahSelected == nil {
 					return m, cmd
 				}
@@ -4210,8 +4278,7 @@ func (m AppModel) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if !ok {
 					return m, func() tea.Msg { return errMsg{fmt.Errorf("unexpected version item type")} }
 				}
-				v := artifacthub.Version(vi)
-				dep := yamlchart.Dependency{Name: m.ahSelected.Name, Repository: m.ahSelected.RepositoryURL, Version: v.Version}
+				dep := yamlchart.Dependency{Name: m.ahSelected.Name, Repository: m.ahSelected.RepositoryURL, Version: vi.V.Version}
 				_ = m.writeSelectedDepSourceMeta(dep, depSourceMeta{Kind: depSourceArtifactHub})
 				return m, m.applyDependencyDraft(dep)
 			}
@@ -4253,6 +4320,9 @@ func (m AppModel) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if km, ok := msg.(tea.KeyMsg); ok && km.Type == tea.KeyEnter {
 				// When the deps list is filtering, Enter applies the filter.
 				if m.depsList.FilterState() != list.Filtering {
+					if act, ok := m.depsList.SelectedItem().(actionItem); ok {
+						return m.dispatchAction(act.ID)
+					}
 					return m.openDepDetailSelected()
 				}
 			}
@@ -4264,6 +4334,9 @@ func (m AppModel) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.valuesList, cmd = m.valuesList.Update(msg)
 			if km, ok := msg.(tea.KeyMsg); ok && km.Type == tea.KeyEnter {
 				if m.valuesList.FilterState() != list.Filtering {
+					if act, ok := m.valuesList.SelectedItem().(actionItem); ok {
+						return m.dispatchAction(act.ID)
+					}
 					it := m.valuesList.SelectedItem()
 					if vf, ok := it.(valuesFileItem); ok {
 						m.valuesPreviewOpen = true
@@ -4275,11 +4348,83 @@ func (m AppModel) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, cmd
 		}
+		// Instance tab uses its own action list.
+		if m.activeTab == InstanceTabInstance && !m.addingDep {
+			var cmd tea.Cmd
+			m.instanceActions, cmd = m.instanceActions.Update(msg)
+			if km, ok := msg.(tea.KeyMsg); ok && km.Type == tea.KeyEnter {
+				if act, ok := m.instanceActions.SelectedItem().(actionItem); ok {
+					mm, c := m.dispatchAction(act.ID)
+					return mm, tea.Batch(cmd, c)
+				}
+			}
+			return m, cmd
+		}
 		var cmd tea.Cmd
 		m.content, cmd = m.content.Update(msg)
 		return m, cmd
 	}
 
+	return m, nil
+}
+
+// dispatchAction executes an in-list action item (triggered via Enter on an
+// actionItem). The logic mirrors the existing keyboard-shortcut handlers.
+func (m AppModel) dispatchAction(id actionID) (tea.Model, tea.Cmd) {
+	switch id {
+	case actNewInstance:
+		m.creating = true
+		m.newName.SetValue("")
+		m.newName.Focus()
+		return m, nil
+	case actAddDep:
+		if m.screen == ScreenInstance && !m.addingDep {
+			m.addingDep = true
+			m.catalogWizardAutoSyncTried = false
+			m.catalogWizardSyncing = false
+			m.depStep = depStepChooseSource
+			m.modalErr = ""
+			return m, tea.Batch(m.beginBusy("Loading catalog"), m.loadCatalogCmd())
+		}
+		return m, nil
+	case actEditValues:
+		if m.screen == ScreenInstance && !m.addingDep {
+			return m, m.editInstanceValuesCmd()
+		}
+		return m, nil
+	case actApplyInstance:
+		if m.screen == ScreenInstance && !m.addingDep {
+			return m, tea.Batch(m.beginBusy("Applying"), m.applyInstanceCmd(false))
+		}
+		return m, nil
+	case actRename:
+		m.instanceManageOpen = true
+		m.instanceManageMode = instanceManageRename
+		cur := ""
+		if m.selected != nil {
+			cur = m.selected.Name
+		}
+		m.instanceManageName.SetValue(cur)
+		m.instanceManageName.Focus()
+		return m, nil
+	case actDelete:
+		m.openConfirmDeleteInstance()
+		return m, nil
+	case actAddAHDep:
+		// Add the currently selected ArtifactHub chart+version as a dependency.
+		if m.ahSelected != nil && m.ahSelectedVersion != "" {
+			dep := yamlchart.Dependency{Name: m.ahSelected.Name, Repository: m.ahSelected.RepositoryURL, Version: m.ahSelectedVersion}
+			_ = m.writeSelectedDepSourceMeta(dep, depSourceMeta{Kind: depSourceArtifactHub})
+			return m, m.applyDependencyAndApplyInstanceCmd(dep)
+		}
+		m.modalErr = "select a version (Enter) before adding"
+		return m, nil
+	case actDeleteDep:
+		if m.depDetailOpen {
+			m.openConfirmDeleteDependency(m.depDetailDep)
+		}
+		return m, nil
+	}
 	return m, nil
 }
 
@@ -4582,7 +4727,7 @@ func (m AppModel) currentBodyView() string {
 		if m.activeTab == InstanceTabDeps {
 			if m.chart != nil && len(m.chart.Dependencies) == 0 && m.depsList.FilterState() == list.Unfiltered {
 				empty := styleMuted.Render("No dependencies yet.") + "\n\n" +
-					styleMuted.Render("a: add dependency  •  m: commands")
+					m.depsList.View()
 				return prefix + empty
 			}
 			return prefix + m.depsList.View()
@@ -4600,7 +4745,12 @@ func (m AppModel) currentBodyView() string {
 				if m.chart != nil {
 					depCount = len(m.chart.Dependencies)
 				}
-				valuesCount := len(m.valuesList.Items())
+				valuesCount := 0
+				for _, it := range m.valuesList.Items() {
+					if _, ok := it.(valuesFileItem); ok {
+						valuesCount++
+					}
+				}
 				lines = append(lines, fmt.Sprintf("  Dependencies:  %d", depCount))
 				lines = append(lines, fmt.Sprintf("  Values layers: %d", valuesCount))
 				if m.params.Config != nil && strings.TrimSpace(m.params.Config.Platform.Name) != "" {
@@ -4616,7 +4766,7 @@ func (m AppModel) currentBodyView() string {
 				}
 			}
 			lines = append(lines, "")
-			lines = append(lines, styleMuted.Render("r: rename • d: delete"))
+			lines = append(lines, m.instanceActions.View())
 			return prefix + strings.Join(lines, "\n")
 		}
 		return prefix + m.content.View()
@@ -4737,7 +4887,7 @@ func (m AppModel) contextHelpLine() string {
 		return "Esc cancel"
 	}
 	if m.screen == ScreenDashboard {
-		return "/ filter • enter open • n new • d delete • ? help/about • m commands • q quit"
+		return "/ filter • ↑/↓ select • Enter open/action • n new • d delete • ? help/about • m commands • q quit"
 	}
 	if m.screen == ScreenInstance {
 		if m.addingDep {
@@ -4770,12 +4920,14 @@ func (m AppModel) contextHelpLine() string {
 			case depStepAHVersions:
 				return "↑/↓ select • Enter draft • Esc back"
 			case depStepAHDetail:
-				// Detail tabs: Enter loads README/values in Versions tab.
-				if m.ahDetailTab == 2 {
-					// Filtering is intentionally disabled in the versions list here.
-					return "←/→ tabs • ↑/↓ select • Enter load details • a add • Esc back"
+				switch m.ahDetailTab {
+				case ahDetailTabVersions:
+					return "←/→ tabs • ↑/↓ select • Enter/Space select version • a add • Esc back"
+				case ahDetailTabActions:
+					return "←/→ tabs • ↑/↓ select • Enter run • Esc back"
+				default:
+					return "←/→ tabs • a add • Esc back"
 				}
-				return "←/→ tabs • a add • Esc back"
 			case depStepArbitrary:
 				switch m.arbStep {
 				case arbStepRepo:
@@ -4802,16 +4954,16 @@ func (m AppModel) contextHelpLine() string {
 			if m.depDetailTab >= 0 && m.depDetailTab < len(m.depDetailTabKinds) {
 				activeKind = m.depDetailTabKinds[m.depDetailTab]
 			}
-			versionsTab := len(m.depDetailTabNames) - 1
-			if m.depDetailTab == versionsTab {
+			switch activeKind {
+			case depDetailTabVersions:
 				switch m.depDetailMode {
 				case depEditModeManual:
 					return "←/→ tabs • Enter apply version • Esc close"
 				default:
-					return "←/→ tabs • / filter • Enter apply version • Esc close"
+					return "←/→ tabs • / filter • Enter/Space apply version • Esc close"
 				}
-			}
-			switch activeKind {
+			case depDetailTabActions:
+				return "←/→ tabs • ↑/↓ select • Enter run • Esc close"
 			case depDetailTabDependency:
 				if m.depDetailAliasInput.Focused() {
 					return "Enter apply alias • Esc cancel"
@@ -4830,13 +4982,13 @@ func (m AppModel) contextHelpLine() string {
 			}
 		}
 		if m.activeTab == InstanceTabDeps {
-			return "←/→ tabs • d remove • v version • u upgrade • a add dep • m commands • Esc back • q quit"
+			return "←/→ tabs • ↑/↓ select • Enter open/action • d remove • v version • u upgrade • a add dep • m commands • Esc back • q quit"
 		}
 		if m.activeTab == InstanceTabValues {
-			return "←/→ tabs • Enter preview • e edit values.instance.yaml • p apply • m commands • Esc back • q quit"
+			return "←/→ tabs • ↑/↓ select • Enter preview/action • e edit values.instance.yaml • p apply • m commands • Esc back • q quit"
 		}
 		if m.activeTab == InstanceTabInstance {
-			return "←/→ tabs • r rename • d delete • Esc back • q quit"
+			return "←/→ tabs • ↑/↓ select • Enter action • r rename • d delete • Esc back • q quit"
 		}
 		return "←/→ tabs • a add dep • e edit values • p apply • r regen values • m commands • Esc back • q quit"
 	}
@@ -4957,11 +5109,15 @@ func (a ahResultItem) FilterValue() string {
 	return a.P.Name + " " + a.P.DisplayName + " " + a.P.RepositoryName
 }
 
-type ahVersionItem artifacthub.Version
+type ahVersionItem struct {
+	V      artifacthub.Version
+	Chosen bool
+}
 
-func (v ahVersionItem) Title() string       { return withIcon(iconVersions, v.Version) }
+func (v ahVersionItem) Title() string       { return withIcon(iconVersions, v.V.Version) }
 func (v ahVersionItem) Description() string { return "" }
-func (v ahVersionItem) FilterValue() string { return v.Version }
+func (v ahVersionItem) FilterValue() string { return v.V.Version }
+func (v ahVersionItem) IsChosen() bool      { return v.Chosen }
 
 func (m AppModel) depsToItems(deps []yamlchart.Dependency) []list.Item {
 	items := make([]list.Item, 0, len(deps))
@@ -4977,6 +5133,7 @@ func (m AppModel) depsToItems(deps []yamlchart.Dependency) []list.Item {
 		}
 		items = append(items, depItem{Dep: d, Source: meta, SourceOK: metaOK})
 	}
+	items = append(items, actionItem{ID: actAddDep, Icon: iconAdd, Name: "Add dependency", Desc: "Open add-dependency wizard"})
 	return items
 }
 
@@ -5029,11 +5186,15 @@ func (d depItem) Description() string {
 
 func (d depItem) FilterValue() string { return d.Title() + " " + d.Description() }
 
-type versionItem string
+type versionItem struct {
+	Ver    string
+	Chosen bool
+}
 
-func (v versionItem) Title() string       { return string(v) }
+func (v versionItem) Title() string       { return v.Ver }
 func (v versionItem) Description() string { return "" }
-func (v versionItem) FilterValue() string { return string(v) }
+func (v versionItem) FilterValue() string { return v.Ver }
+func (v versionItem) IsChosen() bool      { return v.Chosen }
 
 type valuesFileItem string
 
@@ -5120,6 +5281,12 @@ func (m *AppModel) refreshValuesList() {
 		}
 	}
 
+	// Append navigable action items.
+	items = append(items,
+		actionItem{ID: actEditValues, Icon: iconRename, Name: "Edit values.instance.yaml", Desc: "Open in $EDITOR"},
+		actionItem{ID: actApplyInstance, Icon: iconRegen, Name: "Apply instance", Desc: "Run helm dependency build"},
+	)
+
 	// Preserve selection when possible.
 	prevSel := ""
 	if it := m.valuesList.SelectedItem(); it != nil {
@@ -5130,7 +5297,13 @@ func (m *AppModel) refreshValuesList() {
 
 	m.valuesList.SetItems(items)
 	// Same redundancy avoidance as deps list (keep status bar for counts when non-empty).
-	m.valuesList.SetShowStatusBar(len(items) > 0)
+	dataCount := 0
+	for _, it := range items {
+		if _, ok := it.(valuesFileItem); ok {
+			dataCount++
+		}
+	}
+	m.valuesList.SetShowStatusBar(dataCount > 0)
 	if prevSel != "" {
 		for i, it := range items {
 			if vf, ok := it.(valuesFileItem); ok && string(vf) == prevSel {
@@ -5323,8 +5496,10 @@ func renderAddDepView(m AppModel) string {
 	case depStepAHDetail:
 		body := renderTabs(m.ahDetailTabNames, m.ahDetailTab) + "\n"
 		switch m.ahDetailTab {
-		case 2:
+		case ahDetailTabVersions:
 			body += m.ahVersions.View()
+		case ahDetailTabActions:
+			body += m.ahActionsList.View()
 		default:
 			body += m.ahPreview.View()
 		}
@@ -5499,7 +5674,7 @@ func (m AppModel) depEditUpdate(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, func() tea.Msg { return errMsg{fmt.Errorf("unexpected version item type")} }
 		}
 		dep := m.depEditDep
-		dep.Version = string(vi)
+		dep.Version = vi.Ver
 		m.modalErr = ""
 		// Validate the chosen version before writing Chart.yaml. This prevents UI
 		// state from being corrupted by versions that appear in `helm search repo`
@@ -5581,12 +5756,22 @@ func (m AppModel) openDepDetailSelected() (tea.Model, tea.Cmd) {
 	return m, tea.Batch(cmds...)
 }
 
+// depDetailTabIndex returns the tab index for a given kind, or -1 if not found.
+func (m AppModel) depDetailTabIndex(kind depDetailTabKind) int {
+	for i, k := range m.depDetailTabKinds {
+		if k == kind {
+			return i
+		}
+	}
+	return -1
+}
+
 func (m AppModel) depDetailUpdate(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	activeKind := depDetailTabValues
 	if m.depDetailTab >= 0 && m.depDetailTab < len(m.depDetailTabKinds) {
 		activeKind = m.depDetailTabKinds[m.depDetailTab]
 	}
-	versionsTab := len(m.depDetailTabNames) - 1
+	versionsTab := m.depDetailTabIndex(depDetailTabVersions)
 
 	// Close.
 	if msg.Type == tea.KeyEsc {
@@ -5889,7 +6074,7 @@ func (m AppModel) depDetailUpdate(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 		var cmd tea.Cmd
 		m.depDetailVersions, cmd = m.depDetailVersions.Update(msg)
-		if msg.Type == tea.KeyEnter {
+		if msg.Type == tea.KeyEnter || msg.String() == " " {
 			if m.depDetailVersions.FilterState() == list.Filtering {
 				return m, cmd
 			}
@@ -5901,7 +6086,7 @@ func (m AppModel) depDetailUpdate(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			if !ok {
 				return m, func() tea.Msg { return errMsg{fmt.Errorf("unexpected version item type")} }
 			}
-			v := strings.TrimSpace(string(vi))
+			v := strings.TrimSpace(vi.Ver)
 			dep := m.depDetailDep
 			dep.Version = v
 			m.modalErr = ""
@@ -5911,7 +6096,19 @@ func (m AppModel) depDetailUpdate(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, cmd
 	}
 
-	// Non-Versions tabs: allow scrolling in the preview viewport.
+	// Actions tab has its own interactive list.
+	if activeKind == depDetailTabActions {
+		var cmd tea.Cmd
+		m.depDetailActions, cmd = m.depDetailActions.Update(msg)
+		if msg.Type == tea.KeyEnter {
+			if act, ok := m.depDetailActions.SelectedItem().(actionItem); ok {
+				return m.dispatchAction(act.ID)
+			}
+		}
+		return m, cmd
+	}
+
+	// Non-Versions/Actions tabs: allow scrolling in the preview viewport.
 	var cmd tea.Cmd
 	m.depDetailPreview, cmd = m.depDetailPreview.Update(msg)
 	return m, cmd
@@ -5997,6 +6194,9 @@ func (m AppModel) renderDepDetailBody() string {
 		return strings.Join(lines, "\n")
 	case depDetailTabVersions:
 		// Versions are rendered by the modal renderer.
+		return ""
+	case depDetailTabActions:
+		// Actions are rendered by the modal renderer.
 		return ""
 	default:
 		return ""
@@ -6865,6 +7065,24 @@ func (m *AppModel) refreshInstanceView() {
 	default:
 		// Deps tab (and any future non-viewport tabs) render via their own widgets.
 		m.content.SetContent("")
+	}
+}
+
+// refreshAHVersionsList rebuilds the ahVersions list items with the Chosen
+// flag reflecting the currently selected version.
+func (m *AppModel) refreshAHVersionsList() {
+	items := make([]list.Item, 0, len(m.ahVersionsData))
+	selectedIdx := 0
+	for i, v := range m.ahVersionsData {
+		chosen := strings.TrimSpace(v.Version) == strings.TrimSpace(m.ahSelectedVersion)
+		items = append(items, ahVersionItem{V: v, Chosen: chosen})
+		if chosen {
+			selectedIdx = i
+		}
+	}
+	m.ahVersions.SetItems(items)
+	if m.ahSelectedVersion != "" {
+		m.ahVersions.Select(selectedIdx)
 	}
 }
 

@@ -357,10 +357,15 @@ func renderDepDetailModal(m AppModel) string {
 	// Tabs
 	tabsLine := renderTabs(m.depDetailTabNames, m.depDetailTab)
 
+	// Resolve current tab kind.
+	activeKind := depDetailTabValues
+	if m.depDetailTab >= 0 && m.depDetailTab < len(m.depDetailTabKinds) {
+		activeKind = m.depDetailTabKinds[m.depDetailTab]
+	}
+
 	var body string
-	versionsTab := len(m.depDetailTabNames) - 1
-	// Versions tab is last.
-	if m.depDetailTab == versionsTab {
+	switch activeKind {
+	case depDetailTabVersions:
 		switch m.depDetailMode {
 		case depEditModeManual:
 			body = "Enter an exact version:\n\n" + m.depDetailVersionInput.View() + "\n\n" + styleMuted.Render("Enter apply • Esc cancel")
@@ -376,11 +381,13 @@ func renderDepDetailModal(m AppModel) string {
 				if m.depDetailVersionsLoading {
 					refreshing = "  " + styleMuted.Render("(refreshing…)")
 				}
-				body = m.depDetailVersions.View() + refreshing + "\n" + styleMuted.Render(withIcon(iconFilter, "/: filter")+" • Enter apply • Esc cancel") +
+				body = m.depDetailVersions.View() + refreshing + "\n" + styleMuted.Render(withIcon(iconFilter, "/: filter")+" • Enter/Space apply • Esc cancel") +
 					"\n" + styleMuted.Render("Hint: this is the in-context version picker (same as `v` from Dependencies).")
 			}
 		}
-	} else {
+	case depDetailTabActions:
+		body = m.depDetailActions.View()
+	default:
 		if m.depDetailLoading {
 			body = styleMuted.Render("Loading…")
 		} else {
