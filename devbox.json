@@ -14,7 +14,7 @@
     "init_hook": [
       "git config core.hooksPath .githooks",
       "mkdir -p .devbox/corepack",
-      "corepack prepare pnpm@10.5.2 --activate",
+      "[ -d \"$COREPACK_HOME/v1/pnpm/10.5.2\" ] || corepack prepare pnpm@10.5.2 --activate",
       "corepack pnpm --version >/dev/null"
     ]
   }

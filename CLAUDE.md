@@ -1,5 +1,11 @@
 Load also AGENTS.md instructions.
 
+## direnv / devbox
+
+The first direnv load after a `devbox.json`/`devbox.lock` change runs the nix
+install silently and can take tens of seconds — it is not stuck. Run
+`devbox install` manually to see progress. Warm loads are instant.
+
 <!-- BEGIN FALCON -->
 ## RepoFalcon Code Knowledge Graph
 

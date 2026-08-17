@@ -22,7 +22,7 @@
       "source": "nixpkg"
     },
     "nodejs_20": {
-      "plugin_version": "0.0.2",
+      "plugin_version": "0.0.4",
       "resolved": "github:NixOS/nixpkgs/d1c15b7d5806069da59e819999d70e1cec0760bf?narHash=sha256-b9uG8yN50DRQ6A7JdZBfzq718ryYrlmGgqkRm9OOwCE%3D#nodejs_20",
       "source": "nixpkg"
     }
