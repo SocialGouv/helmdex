@@ -1,0 +1,220 @@
+name: 🖥️ Desktop Release
+
+# Triggers on the same v* tags as release.yml. The two workflows run in
+# parallel and attach distinct (helmdex-* vs helmdex-desktop-*) artefacts
+# to the same GitHub Release. Adapted from iterion's desktop pipeline.
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  # Tag pushes serialise; manual workflow_dispatch invocations cancel the
+  # previous one (typical iteration flow while debugging packaging).
+  cancel-in-progress: ${{ github.event_name == 'workflow_dispatch' }}
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Single macOS job builds a universal binary (both slices lipo'd
+          # into one .app via Wails `-platform darwin/universal`); Intel
+          # runner pools are scarce and frequently queued.
+          - os: macos-14
+            platform: darwin/universal
+            artifact_name: helmdex-desktop-darwin-universal
+            package: zip
+          - os: windows-latest
+            platform: windows/amd64
+            artifact_name: helmdex-desktop-windows-amd64
+            package: nsis-portable
+          - os: windows-latest
+            platform: windows/arm64
+            artifact_name: helmdex-desktop-windows-arm64
+            package: nsis-portable
+          - os: ubuntu-22.04
+            platform: linux/amd64
+            artifact_name: helmdex-desktop-linux-amd64
+            package: appimage
+          - os: ubuntu-24.04-arm
+            platform: linux/arm64
+            artifact_name: helmdex-desktop-linux-arm64
+            package: appimage
+    runs-on: ${{ matrix.os }}
+    env:
+      GOTOOLCHAIN: auto
+      NODE_OPTIONS: --max-old-space-size=4096
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install Wails CLI
+        shell: bash
+        # Pinned: an unpinned build tool in a release job is a
+        # supply-chain vector. Matches go.mod's wails version.
+        run: go install github.com/wailsapp/wails/v2/cmd/wails@v2.13.0
+
+      - name: Install go-task
+        shell: bash
+        run: |
+          go install github.com/go-task/task/v3/cmd/task@v3.44.1
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+
+      - name: Linux deps
+        if: startsWith(matrix.platform, 'linux/')
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev \
+            libsoup-3.0-dev libfuse2 patchelf desktop-file-utils \
+            librsvg2-common gtk-update-icon-cache wget file
+
+      - name: Enable corepack
+        shell: bash
+        run: |
+          # Node 24+ ships Corepack disabled; explicit enable is a no-op
+          # elsewhere. Pre-activating caches the pinned pnpm so the first
+          # install runs against a warm shim.
+          corepack enable
+          PNPM_VERSION="$(node -p "require('./package.json').packageManager.split('@')[1]")"
+          corepack prepare --activate "pnpm@${PNPM_VERSION}"
+
+      - name: Build web UI
+        shell: bash
+        # Inline of the ui:build Taskfile target: go-task's POSIX
+        # fallback shell on Windows has been flaky with corepack shims,
+        # running the steps directly under Git Bash sidesteps it.
+        run: |
+          corepack pnpm install --frozen-lockfile --prefer-offline
+          corepack pnpm --dir webui exec vite build
+          rm -rf internal/server/static/assets
+          cp -r webui/dist/* internal/server/static/
+
+      - name: Build desktop binary
+        shell: bash
+        env:
+          GOOS_GOARCH: ${{ matrix.platform }}
+        run: |
+          case "$GOOS_GOARCH" in
+            linux/amd64)      task desktop:build:linux:amd64 ;;
+            linux/arm64)      task desktop:build:linux:arm64 ;;
+            darwin/universal) task desktop:build:darwin:universal ;;
+            windows/amd64)    task desktop:build:windows:amd64 ;;
+            windows/arm64)    task desktop:build:windows:arm64 ;;
+            *) echo "Unsupported platform: $GOOS_GOARCH" >&2; exit 1 ;;
+          esac
+
+      - name: Package
+        shell: bash
+        env:
+          ARTIFACT_NAME: ${{ matrix.artifact_name }}
+          PACKAGE: ${{ matrix.package }}
+        run: |
+          set -x
+          case "$PACKAGE" in
+            zip)
+              # macOS: ditto preserves xattrs/symlinks inside .app.
+              cd build/bin
+              APP_BUNDLE=$(ls -d *.app | head -1)
+              ditto -c -k --keepParent "${APP_BUNDLE}" "../../${ARTIFACT_NAME}.zip"
+              cd ../..
+              ;;
+            nsis-portable)
+              # Wails runs from cmd/helmdex-desktop/ (where wails.json
+              # lives); on Windows the git clone replaces the build
+              # symlink with a text file, so artefacts land under
+              # cmd/helmdex-desktop/build/bin/.
+              bindir="cmd/helmdex-desktop/build/bin"
+              ls -la "$bindir" || true
+              exe="$(find "$bindir" -maxdepth 1 -name '*.exe' \
+                          ! -name '*-installer.exe' \
+                          | head -1)"
+              if [ -z "$exe" ]; then
+                echo "ERROR: no portable .exe found under $bindir/" >&2
+                exit 1
+              fi
+              cp "$exe" "${ARTIFACT_NAME}.exe"
+              installer="$(find "$bindir" -maxdepth 1 -name '*-installer.exe' | head -1)"
+              if [ -n "$installer" ]; then
+                cp "$installer" "${ARTIFACT_NAME}-installer.exe"
+              fi
+              ;;
+            appimage)
+              ARCH="${ARTIFACT_NAME##*-}"
+              ./scripts/desktop/build-appimage.sh "$ARCH"
+              ;;
+          esac
+
+      - name: Smoke check Linux AppImage architecture
+        if: matrix.package == 'appimage'
+        shell: bash
+        env:
+          ARTIFACT_NAME: ${{ matrix.artifact_name }}
+          PLATFORM: ${{ matrix.platform }}
+        run: |
+          set -euo pipefail
+          appimage="${ARTIFACT_NAME}.AppImage"
+          test -s "$appimage"
+          file "$appimage"
+          # AppImages are self-extracting ELF launchers; verify the
+          # runtime header matches the requested CPU before uploading.
+          case "$PLATFORM" in
+            linux/amd64) expected="Advanced Micro Devices X86-64" ;;
+            linux/arm64) expected="AArch64" ;;
+            *) echo "Unsupported Linux platform: $PLATFORM" >&2; exit 1 ;;
+          esac
+          readelf -h "$appimage" | grep -q "Machine:.*${expected}"
+
+      - name: Checksums
+        shell: bash
+        env:
+          ARTIFACT_NAME: ${{ matrix.artifact_name }}
+        run: |
+          shopt -s nullglob
+          for f in ${ARTIFACT_NAME}*.zip ${ARTIFACT_NAME}*.exe ${ARTIFACT_NAME}*.AppImage; do
+            if command -v sha256sum >/dev/null; then
+              sha256sum "$f" > "$f.sha256"
+            else
+              shasum -a 256 "$f" > "$f.sha256"
+            fi
+          done
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}
+          if-no-files-found: error
+          path: |
+            ${{ matrix.artifact_name }}*
+
+  publish:
+    needs: build
+    # Attach artefacts to the tag's GitHub Release; workflow_dispatch runs
+    # stop after the build (artefacts stay downloadable from the run).
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Attach to GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: artifacts/*

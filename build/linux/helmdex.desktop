@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Helmdex
+GenericName=Helm Instance Organizer
+Comment=Organizer for GitOps-friendly Helm umbrella chart instances
+Exec=helmdex-desktop
+Icon=helmdex-desktop
+Terminal=false
+Categories=Development;
+StartupWMClass=Helmdex
