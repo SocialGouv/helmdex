@@ -19,3 +19,12 @@ node_modules
 
 /.falcon
 /.claude/*.local.json
+
+# Web UI build output (embedded into the binary at build time)
+/webui/dist/
+/internal/server/static/assets/
+
+# Local tool artifacts
+/.playwright-mcp/
+/.pnpm-store/
+/webui/tsconfig.tsbuildinfo

@@ -109,6 +109,7 @@ tasks:
       - ./go.sum
       - ./cmd/**/*.go
       - ./internal/**/*.go
+      - ./internal/server/static/**/*
       - ./package.json
     generates:
       - '{{.HELMDEX_BIN}}'
@@ -152,6 +153,42 @@ tasks:
     cmds:
       - golangci-lint version
       - golangci-lint run
+
+  # -----
+  # Web UI
+  # -----
+  ui:dev:
+    desc: Web UI dev loop (Go API + Vite dev server with /api proxy)
+    deps: [deps, build]
+    cmds:
+      - |
+        '{{.HELMDEX_BIN}}' ui --port 8117 &
+        API_PID=$!
+        trap "kill $API_PID" EXIT
+        corepack pnpm --dir webui exec vite
+
+  ui:serve:
+    desc: Serve the embedded web UI from the built binary
+    deps: [build]
+    cmds:
+      - "{{.HELMDEX_BIN}} ui --open"
+
+  ui:build:
+    desc: Build the web UI and embed it into internal/server/static
+    deps: [deps]
+    cmds:
+      - corepack pnpm --dir webui exec tsc -b
+      - corepack pnpm --dir webui exec vite build
+      - rm -rf internal/server/static/assets
+      - mkdir -p internal/server/static
+      - cp -r webui/dist/* internal/server/static/
+
+  ui:test:
+    desc: Web UI typecheck + unit tests
+    deps: [deps]
+    cmds:
+      - corepack pnpm --dir webui exec tsc -b
+      - corepack pnpm --dir webui exec vitest run
 
   hooks:
     desc: Install git hooks (using .githooks/)

@@ -1,0 +1,25 @@
+@import "tailwindcss";
+
+@theme {
+  --color-bg: #0f1117;
+  --color-panel: #161a24;
+  --color-panel-2: #1c2130;
+  --color-border: #2a3042;
+  --color-text: #e6e8ee;
+  --color-muted: #8b93a7;
+  --color-accent: #7aa2f7;
+  --color-accent-2: #9ece6a;
+  --color-warn: #e0af68;
+  --color-error: #f7768e;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  @apply bg-bg text-text antialiased;
+  font-family: ui-sans-serif, system-ui, sans-serif;
+}
