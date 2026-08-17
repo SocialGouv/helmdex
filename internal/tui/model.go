@@ -56,7 +56,10 @@ type AppModel struct {
 
 	// create instance
 	creating bool
-	newName  textinput.Model
+	// creatingFromTemplate holds the blueprint name when the create modal
+	// was opened from a template item ("" = blank instance).
+	creatingFromTemplate string
+	newName              textinput.Model
 
 	// instance manage (Instance tab)
 	instanceManageOpen bool
@@ -747,6 +750,7 @@ func (m AppModel) handleEscChain(msg tea.KeyMsg) (AppModel, tea.Cmd, bool) {
 		}
 		if m.creating {
 			m.creating = false
+			m.creatingFromTemplate = ""
 			return m, nil, true
 		}
 		if m.addingDep {
@@ -1634,7 +1638,10 @@ type instanceRenameRequest struct{ newName string }
 
 type instanceDeleteRequest struct{}
 
-type instancesMsg struct{ items []instances.Instance }
+type instancesMsg struct {
+	items     []instances.Instance
+	templates []instances.Instance
+}
 
 type chartMsg struct{ chart yamlchart.Chart }
 
@@ -2661,7 +2668,15 @@ func (m AppModel) reloadInstancesCmd() tea.Cmd {
 		if err != nil {
 			return errMsg{err}
 		}
-		return instancesMsg{items: insts}
+		templatesDir := ""
+		if m.params.Config != nil {
+			templatesDir = m.params.Config.Repo.TemplatesDir
+		}
+		tmpls, err := instances.ListTemplates(m.params.RepoRoot, templatesDir)
+		if err != nil {
+			return errMsg{err}
+		}
+		return instancesMsg{items: insts, templates: tmpls}
 	}
 }
 
@@ -3072,9 +3087,12 @@ func (m AppModel) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case instancesMsg:
 		m.endBusy()
 		m.insts = msg.items
-		items := make([]list.Item, 0, len(msg.items))
+		items := make([]list.Item, 0, len(msg.items)+len(msg.templates))
 		for _, inst := range msg.items {
 			items = append(items, instanceItem{Inst: inst, RepoRoot: m.params.RepoRoot})
+		}
+		for _, tpl := range msg.templates {
+			items = append(items, templateItem{Tpl: tpl})
 		}
 		// Avoid redundant list chrome: the dashboard breadcrumb provides the title,
 		// and the item count is not useful in this view.
@@ -3860,6 +3878,14 @@ func (m AppModel) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.refreshInstanceView()
 					return m, tea.Batch(m.beginBusy("Loading chart"), m.loadChartCmd(inst))
 				}
+				if it, ok := m.instList.SelectedItem().(templateItem); ok {
+					m.creating = true
+					m.creatingFromTemplate = it.Tpl.Name
+					m.newName.SetValue(it.Tpl.Name + "-")
+					m.newName.CursorEnd()
+					m.newName.Focus()
+					return m, nil
+				}
 			}
 		}
 		// When the add-dependency wizard is open, left/right should switch the wizard
@@ -3909,11 +3935,22 @@ func (m AppModel) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.params.Config != nil && m.params.Config.Repo.AppsDir != "" {
 				appsDir = m.params.Config.Repo.AppsDir
 			}
-			inst, err := instances.Create(m.params.RepoRoot, appsDir, name, paths.OptedIn(m.params.RepoRoot))
+			var inst instances.Instance
+			var err error
+			if m.creatingFromTemplate != "" {
+				templatesDir := ""
+				if m.params.Config != nil {
+					templatesDir = m.params.Config.Repo.TemplatesDir
+				}
+				inst, err = instances.CreateFromTemplate(m.params.RepoRoot, appsDir, templatesDir, m.creatingFromTemplate, name)
+			} else {
+				inst, err = instances.Create(m.params.RepoRoot, appsDir, name, paths.OptedIn(m.params.RepoRoot))
+			}
 			if err != nil {
 				return m, func() tea.Msg { return errMsg{err} }
 			}
 			m.creating = false
+			m.creatingFromTemplate = ""
 			m.selected = &inst
 			m.screen = ScreenInstance
 			m.activeTab = 0 // Dependencies is first tab
@@ -4350,6 +4387,7 @@ func (m AppModel) dispatchAction(id actionID) (tea.Model, tea.Cmd) {
 	switch id {
 	case actNewInstance:
 		m.creating = true
+		m.creatingFromTemplate = ""
 		m.newName.SetValue("")
 		m.newName.Focus()
 		return m, nil
@@ -4447,6 +4485,7 @@ func (m AppModel) paletteUpdate(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			case palNewInstance:
 				m.paletteOpen = false
 				m.creating = true
+				m.creatingFromTemplate = ""
 				m.newName.SetValue("")
 				m.newName.Focus()
 				return m, nil
@@ -4683,7 +4722,7 @@ func (m AppModel) currentBodyView() string {
 	switch m.screen {
 	case ScreenDashboard:
 		if m.creating {
-			return styleHeading.Render("New instance") + "\n\n" + m.newName.View() + "\n\n" + styleMuted.Render("Enter create • Esc cancel")
+			return styleHeading.Render(newInstanceModalTitle(m.creatingFromTemplate)) + "\n\n" + m.newName.View() + "\n\n" + styleMuted.Render("Enter create • Esc cancel")
 		}
 		body := m.instList.View()
 		if shouldShowDashboardLogo(m) {
@@ -4987,6 +5026,18 @@ func (i instanceItem) Description() string {
 		return ""
 	}
 	return displayInstancePath(i.RepoRoot, i.Inst.Path)
+}
+
+// templateItem is a blueprint chart dir (repo templates dir). Enter opens
+// the create modal pre-wired to copy it.
+type templateItem struct {
+	Tpl instances.Instance
+}
+
+func (t templateItem) FilterValue() string { return t.Tpl.Name }
+func (t templateItem) Title() string       { return withIcon(iconTemplate, t.Tpl.Name) }
+func (t templateItem) Description() string {
+	return "Template \u00b7 Enter to create an instance from this blueprint"
 }
 
 // instanceListItem augments an instance list row with lightweight derived info.
@@ -7045,3 +7096,10 @@ func (m *AppModel) refreshAHVersionsList() {
 
 // contextBG avoids importing context in many places; v0.2 uses Background for Artifact Hub calls.
 func contextBG() context.Context { return context.Background() }
+
+func newInstanceModalTitle(fromTemplate string) string {
+	if fromTemplate != "" {
+		return "New instance from template " + fromTemplate
+	}
+	return "New instance"
+}

@@ -8,7 +8,6 @@ import (
 
 	"helmdex/internal/instances"
 	"helmdex/internal/paths"
-	"helmdex/internal/presets"
 	"helmdex/internal/values"
 	"helmdex/internal/yamlchart"
 
@@ -189,28 +188,7 @@ func newInstanceApplyCmd(f *rootFlags) *cobra.Command {
 				return err
 			}
 
-			// Relock.
-			if relock {
-				if err := instances.RelockDependencies(cmd.Context(), repoRoot, inst.Path); err != nil {
-					return err
-				}
-			} else {
-				if _, err := instances.RelockIfDepsChanged(cmd.Context(), repoRoot, inst.Path); err != nil {
-					return err
-				}
-			}
-
-			// Import presets (default/platform + any selected sets).
-			c, err := yamlchart.ReadChart(filepath.Join(inst.Path, "Chart.yaml"))
-			if err != nil {
-				return err
-			}
-			_, err = presets.Import(presets.ImportParams{RepoRoot: repoRoot, InstancePath: inst.Path, Config: cfg, Dependencies: c.Dependencies})
-			if err != nil {
-				return err
-			}
-
-			if err := values.GenerateIfManaged(inst.Path); err != nil {
+			if err := instances.Apply(cmd.Context(), repoRoot, cfg, inst, relock); err != nil {
 				return err
 			}
 			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Applied instance %s\n", name)

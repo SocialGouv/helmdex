@@ -18,6 +18,7 @@ const (
 	iconApp       = "🧭"
 	iconDashboard = "🏠"
 	iconInstance  = "📦"
+	iconTemplate  = "📐"
 	iconFolder    = "📁"
 	iconAdd       = "➕"
 	iconBack      = "↩"

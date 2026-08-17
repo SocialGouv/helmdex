@@ -63,6 +63,7 @@ func NewRootCmd() *cobra.Command {
 	cmd.AddCommand(newInstanceCmd(&f))
 	cmd.AddCommand(newArtifactHubCmd())
 	cmd.AddCommand(newTUICmd(&f))
+	cmd.AddCommand(newUICmd(&f))
 
 	cmd.Version = appinfo.FullVersion()
 	cmd.SetOut(os.Stdout)
