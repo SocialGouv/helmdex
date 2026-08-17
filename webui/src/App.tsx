@@ -6,6 +6,7 @@ import Dashboard from "./pages/Dashboard";
 import InstancePage from "./pages/Instance";
 import CatalogPage from "./pages/Catalog";
 import EventsIndicator from "./components/EventsIndicator";
+import RepoSwitcher from "./components/RepoSwitcher";
 
 function NavLink({ href, children }: { href: string; children: React.ReactNode }) {
   const [active] = useRoute(href === "/" ? "/" : `${href}/*?`);
@@ -39,18 +40,21 @@ export default function App() {
             <BookOpen className="h-4 w-4" /> Catalog
           </NavLink>
         </nav>
-        <div className="mt-auto space-y-1 px-2 text-xs text-muted">
-          {repo.data && (
-            <>
-              <div className="truncate" title={repo.data.root}>
-                {repo.data.root}
-              </div>
-              <div>
-                {repo.data.optedIn ? "helmdex repo" : "agnostic repo"} · {repo.data.appsDir}/
-              </div>
-            </>
-          )}
-          <EventsIndicator />
+        <div className="mt-auto space-y-1 text-xs text-muted">
+          <RepoSwitcher />
+          <div className="space-y-1 px-2">
+            {repo.data && (
+              <>
+                <div className="truncate" title={repo.data.root}>
+                  {repo.data.root}
+                </div>
+                <div>
+                  {repo.data.optedIn ? "helmdex repo" : "agnostic repo"} · {repo.data.appsDir}/
+                </div>
+              </>
+            )}
+            <EventsIndicator />
+          </div>
         </div>
       </aside>
       <main className="min-w-0 flex-1 overflow-auto">

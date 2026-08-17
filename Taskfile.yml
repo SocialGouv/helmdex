@@ -190,6 +190,84 @@ tasks:
       - corepack pnpm --dir webui exec tsc -b
       - corepack pnpm --dir webui exec vitest run
 
+  # -----
+  # Desktop (Wails)
+  # -----
+  # The Go code under cmd/helmdex-desktop is gated by `//go:build desktop`
+  # so plain `go build ./...` never needs the Wails/WebKit toolchain.
+
+  desktop:install-tools:
+    desc: Install the Wails CLI needed for desktop builds
+    cmds:
+      - go install github.com/wailsapp/wails/v2/cmd/wails@v2.13.0
+
+  desktop:build:
+    desc: Build Helmdex Desktop for the current platform (unsigned)
+    deps: [ui:build]
+    dir: cmd/helmdex-desktop
+    vars: &desktop-vars
+      VERSION:
+        sh: node -p "require('../../package.json').version"
+      COMMIT:
+        sh: git rev-parse --short HEAD 2>/dev/null || echo ""
+      LDFLAGS: -X helmdex/internal/appinfo.Version=v{{.VERSION}} -X helmdex/internal/appinfo.Commit={{.COMMIT}}
+    cmds:
+      - wails build -tags desktop,webkit2_41 -trimpath -skipbindings -s -ldflags "{{.LDFLAGS}}"
+
+  desktop:build:linux:amd64:
+    desc: Build Helmdex Desktop for Linux amd64
+    deps: [ui:build]
+    dir: cmd/helmdex-desktop
+    vars: *desktop-vars
+    cmds:
+      - |
+        # Devbox puts a nix pkg-config first in PATH; the system one knows
+        # about the distro's gtk/webkit dev packages.
+        if [ -n "$DEVBOX_PROJECT_ROOT" ]; then
+          export PATH="/usr/bin:$PATH"
+        fi
+        export PKG_CONFIG="${PKG_CONFIG:-/usr/bin/pkg-config}"
+        export PKG_CONFIG_PATH="/usr/lib/x86_64-linux-gnu/pkgconfig:/usr/share/pkgconfig"
+        wails build -tags desktop,webkit2_41 -platform linux/amd64 -trimpath -skipbindings -s -devtools -ldflags "{{.LDFLAGS}}" -o helmdex-desktop-linux-amd64
+
+  desktop:build:linux:arm64:
+    desc: Build Helmdex Desktop for Linux arm64
+    deps: [ui:build]
+    dir: cmd/helmdex-desktop
+    vars: *desktop-vars
+    cmds:
+      - |
+        if [ -n "$DEVBOX_PROJECT_ROOT" ]; then
+          export PATH="/usr/bin:$PATH"
+        fi
+        export PKG_CONFIG="${PKG_CONFIG:-/usr/bin/pkg-config}"
+        export PKG_CONFIG_PATH="/usr/lib/aarch64-linux-gnu/pkgconfig:/usr/share/pkgconfig"
+        wails build -tags desktop,webkit2_41 -platform linux/arm64 -trimpath -skipbindings -s -devtools -ldflags "{{.LDFLAGS}}" -o helmdex-desktop-linux-arm64
+
+  desktop:build:darwin:universal:
+    desc: Build Helmdex Desktop for macOS (universal, must run on macOS)
+    deps: [ui:build]
+    dir: cmd/helmdex-desktop
+    vars: *desktop-vars
+    cmds:
+      - wails build -tags desktop -platform darwin/universal -clean -trimpath -skipbindings -s -ldflags "{{.LDFLAGS}}" -o helmdex-desktop-darwin-universal
+
+  desktop:build:windows:amd64:
+    desc: Build Helmdex Desktop for Windows amd64 (must run on Windows)
+    deps: [ui:build]
+    dir: cmd/helmdex-desktop
+    vars: *desktop-vars
+    cmds:
+      - wails build -tags desktop -platform windows/amd64 -trimpath -skipbindings -s -ldflags "{{.LDFLAGS}}" -nsis -o helmdex-desktop-windows-amd64.exe
+
+  desktop:build:windows:arm64:
+    desc: Build Helmdex Desktop for Windows arm64 (must run on Windows)
+    deps: [ui:build]
+    dir: cmd/helmdex-desktop
+    vars: *desktop-vars
+    cmds:
+      - wails build -tags desktop -platform windows/arm64 -trimpath -skipbindings -s -ldflags "{{.LDFLAGS}}" -nsis -o helmdex-desktop-windows-arm64.exe
+
   hooks:
     desc: Install git hooks (using .githooks/)
     cmds:

@@ -21,7 +21,10 @@ type Params struct {
 }
 
 type Server struct {
-	params Params
+	// paramsMu guards params — the desktop app swaps the workspace at
+	// runtime via SetWorkspace.
+	paramsMu sync.RWMutex
+	params   Params
 
 	// mu serializes mutating operations (chart/values writes, applies) —
 	// they are file-level read-modify-write sequences.
@@ -39,6 +42,27 @@ func New(p Params) *Server {
 	}
 	s.routes()
 	return s
+}
+
+// ws returns the current workspace params.
+func (s *Server) ws() Params {
+	s.paramsMu.RLock()
+	defer s.paramsMu.RUnlock()
+	return s.params
+}
+
+// Workspace returns the current workspace params.
+func (s *Server) Workspace() Params {
+	return s.ws()
+}
+
+// SetWorkspace switches the served repo (used by the desktop app's
+// "open repository" flow).
+func (s *Server) SetWorkspace(p Params) {
+	s.paramsMu.Lock()
+	s.params = p
+	s.paramsMu.Unlock()
+	s.events.publish(event{Type: "workspace.changed", Message: p.RepoRoot})
 }
 
 func (s *Server) Handler() http.Handler {

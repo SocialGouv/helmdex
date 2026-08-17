@@ -35,13 +35,13 @@ type repoInfo struct {
 
 func (s *Server) handleRepo(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, repoInfo{
-		Root:         s.params.RepoRoot,
-		OptedIn:      paths.OptedIn(s.params.RepoRoot),
-		AppsDir:      s.params.Config.Repo.AppsDir,
-		TemplatesDir: s.params.Config.Repo.TemplatesDir,
-		ConfigPath:   s.params.Resolved.Path,
-		ConfigSource: string(s.params.Resolved.Source),
-		Platform:     s.params.Config.Platform.Name,
+		Root:         s.ws().RepoRoot,
+		OptedIn:      paths.OptedIn(s.ws().RepoRoot),
+		AppsDir:      s.ws().Config.Repo.AppsDir,
+		TemplatesDir: s.ws().Config.Repo.TemplatesDir,
+		ConfigPath:   s.ws().Resolved.Path,
+		ConfigSource: string(s.ws().Resolved.Source),
+		Platform:     s.ws().Config.Platform.Name,
 	})
 }
 
@@ -88,11 +88,11 @@ func (s *Server) instanceInfo(inst instances.Instance) instanceInfo {
 }
 
 func (s *Server) getInstance(name string) (instances.Instance, error) {
-	return instances.Get(s.params.RepoRoot, s.params.Config.Repo.AppsDir, name)
+	return instances.Get(s.ws().RepoRoot, s.ws().Config.Repo.AppsDir, name)
 }
 
 func (s *Server) handleInstancesList(w http.ResponseWriter, r *http.Request) {
-	list, err := instances.List(s.params.RepoRoot, s.params.Config.Repo.AppsDir)
+	list, err := instances.List(s.ws().RepoRoot, s.ws().Config.Repo.AppsDir)
 	if err != nil {
 		httpError(w, http.StatusInternalServerError, err)
 		return
@@ -121,9 +121,9 @@ func (s *Server) handleInstanceCreate(w http.ResponseWriter, r *http.Request) {
 	var inst instances.Instance
 	var err error
 	if req.FromTemplate != "" {
-		inst, err = instances.CreateFromTemplate(s.params.RepoRoot, s.params.Config.Repo.AppsDir, s.params.Config.Repo.TemplatesDir, req.FromTemplate, req.Name)
+		inst, err = instances.CreateFromTemplate(s.ws().RepoRoot, s.ws().Config.Repo.AppsDir, s.ws().Config.Repo.TemplatesDir, req.FromTemplate, req.Name)
 	} else {
-		inst, err = instances.Create(s.params.RepoRoot, s.params.Config.Repo.AppsDir, req.Name, paths.OptedIn(s.params.RepoRoot))
+		inst, err = instances.Create(s.ws().RepoRoot, s.ws().Config.Repo.AppsDir, req.Name, paths.OptedIn(s.ws().RepoRoot))
 		if err == nil {
 			err = values.GenerateIfManaged(inst.Path)
 		}
@@ -152,7 +152,7 @@ func (s *Server) handleInstanceDelete(w http.ResponseWriter, r *http.Request) {
 		httpError(w, http.StatusNotFound, err)
 		return
 	}
-	if err := instances.Remove(s.params.RepoRoot, s.params.Config.Repo.AppsDir, name); err != nil {
+	if err := instances.Remove(s.ws().RepoRoot, s.ws().Config.Repo.AppsDir, name); err != nil {
 		httpError(w, http.StatusInternalServerError, err)
 		return
 	}
@@ -171,7 +171,7 @@ func (s *Server) handleInstanceRename(w http.ResponseWriter, r *http.Request) {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	inst, err := instances.Rename(s.params.RepoRoot, s.params.Config.Repo.AppsDir, r.PathValue("name"), req.NewName)
+	inst, err := instances.Rename(s.ws().RepoRoot, s.ws().Config.Repo.AppsDir, r.PathValue("name"), req.NewName)
 	if err != nil {
 		httpError(w, http.StatusBadRequest, err)
 		return
@@ -199,7 +199,7 @@ func (s *Server) handleInstanceApply(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.events.publish(event{Type: "apply.start", Instance: inst.Name})
-	if err := instances.Apply(r.Context(), s.params.RepoRoot, s.params.Config, inst, req.Relock); err != nil {
+	if err := instances.Apply(r.Context(), s.ws().RepoRoot, s.ws().Config, inst, req.Relock); err != nil {
 		s.events.publish(event{Type: "apply.error", Instance: inst.Name, Message: err.Error()})
 		httpError(w, http.StatusInternalServerError, err)
 		return
@@ -514,7 +514,7 @@ func (s *Server) handleDepSetVersion(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		if req.Validate && !strings.HasPrefix(c.Dependencies[i].Repository, "oci://") {
-			env := helmutil.EnvForRepoURL(s.params.RepoRoot, c.Dependencies[i].Repository)
+			env := helmutil.EnvForRepoURL(s.ws().RepoRoot, c.Dependencies[i].Repository)
 			repoName := helmutil.RepoNameForURL(c.Dependencies[i].Repository)
 			ref := repoName + "/" + c.Dependencies[i].Name
 			if err := helmutil.RepoAdd(r.Context(), env, repoName, c.Dependencies[i].Repository); err != nil {
@@ -561,7 +561,7 @@ func (s *Server) handleDepVersions(w http.ResponseWriter, r *http.Request) {
 		httpError(w, http.StatusBadRequest, fmt.Errorf("version listing is not supported for OCI repositories"))
 		return
 	}
-	vs, err := helmutil.RepoChartVersions(r.Context(), s.params.RepoRoot, dep.Repository, dep.Name, 24*time.Hour)
+	vs, err := helmutil.RepoChartVersions(r.Context(), s.ws().RepoRoot, dep.Repository, dep.Name, 24*time.Hour)
 	if err != nil {
 		httpError(w, http.StatusBadGateway, err)
 		return
@@ -597,7 +597,7 @@ func (s *Server) handleDepInspect(w http.ResponseWriter, r *http.Request) {
 		httpError(w, http.StatusNotFound, err)
 		return
 	}
-	content, err := instances.LoadDepInspectContent(r.Context(), s.params.RepoRoot, inst.Path, dep, kind)
+	content, err := instances.LoadDepInspectContent(r.Context(), s.ws().RepoRoot, inst.Path, dep, kind)
 	if err != nil {
 		httpError(w, http.StatusBadGateway, err)
 		return
@@ -609,7 +609,7 @@ func (s *Server) handleDepInspect(w http.ResponseWriter, r *http.Request) {
 // --- templates ---
 
 func (s *Server) handleTemplatesList(w http.ResponseWriter, r *http.Request) {
-	list, err := instances.ListTemplates(s.params.RepoRoot, s.params.Config.Repo.TemplatesDir)
+	list, err := instances.ListTemplates(s.ws().RepoRoot, s.ws().Config.Repo.TemplatesDir)
 	if err != nil {
 		httpError(w, http.StatusInternalServerError, err)
 		return
@@ -624,7 +624,7 @@ func (s *Server) handleTemplatesList(w http.ResponseWriter, r *http.Request) {
 // --- catalog / artifact hub ---
 
 func (s *Server) handleCatalogList(w http.ResponseWriter, r *http.Request) {
-	entries, err := catalog.LoadLocalCatalogEntriesWithSource(s.params.RepoRoot)
+	entries, err := catalog.LoadLocalCatalogEntriesWithSource(s.ws().RepoRoot)
 	if err != nil {
 		httpError(w, http.StatusInternalServerError, err)
 		return
@@ -636,7 +636,7 @@ func (s *Server) handleCatalogSync(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.events.publish(event{Type: "catalog.sync.start"})
-	res, err := catalog.NewSyncer(s.params.RepoRoot).Sync(r.Context(), s.params.Config)
+	res, err := catalog.NewSyncer(s.ws().RepoRoot).Sync(r.Context(), s.ws().Config)
 	if err != nil {
 		s.events.publish(event{Type: "catalog.sync.error", Message: err.Error()})
 		httpError(w, http.StatusBadGateway, err)
@@ -647,7 +647,7 @@ func (s *Server) handleCatalogSync(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleArtifactHubSearch(w http.ResponseWriter, r *http.Request) {
-	if !s.params.Config.ArtifactHubEnabled() {
+	if !s.ws().Config.ArtifactHubEnabled() {
 		httpError(w, http.StatusForbidden, fmt.Errorf("artifact hub is disabled in config"))
 		return
 	}
