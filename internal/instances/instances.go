@@ -25,7 +25,13 @@ func instanceDir(repoRoot, appsDir, name string) string {
 	return filepath.Join(repoRoot, appsDir, name)
 }
 
-func Create(repoRoot, appsDir, name string) (Instance, error) {
+// Create creates a new umbrella chart instance.
+//
+// Managed instances get a values.instance.yaml (helmdex layers it and
+// generates values.yaml). Direct instances — the default in helmdex-agnostic
+// repos — get a plain user-owned values.yaml instead, which helmdex will
+// only ever edit in place.
+func Create(repoRoot, appsDir, name string, managed bool) (Instance, error) {
 	if name == "" {
 		return Instance{}, fmt.Errorf("instance name is required")
 	}
@@ -48,10 +54,17 @@ func Create(repoRoot, appsDir, name string) (Instance, error) {
 		return Instance{}, err
 	}
 
-	// User-owned file; helmdex should not overwrite if it already exists.
-	instanceValues := filepath.Join(dir, "values.instance.yaml")
-	if _, err := os.Stat(instanceValues); err != nil {
-		_ = os.WriteFile(instanceValues, []byte("# User overrides for this instance\n{}\n"), 0o644)
+	if managed {
+		// User-owned file; helmdex should not overwrite if it already exists.
+		instanceValues := filepath.Join(dir, "values.instance.yaml")
+		if _, err := os.Stat(instanceValues); err != nil {
+			_ = os.WriteFile(instanceValues, []byte("# User overrides for this instance\n{}\n"), 0o644)
+		}
+	} else {
+		valuesPath := filepath.Join(dir, "values.yaml")
+		if _, err := os.Stat(valuesPath); err != nil {
+			_ = os.WriteFile(valuesPath, []byte("{}\n"), 0o644)
+		}
 	}
 
 	return Instance{Name: name, Path: dir}, nil

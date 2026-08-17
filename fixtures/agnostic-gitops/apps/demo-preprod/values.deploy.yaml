@@ -1,0 +1,3 @@
+# Instance-specific values, passed with -f by the render job.
+demo:
+  host: demo-preprod.example.invalid

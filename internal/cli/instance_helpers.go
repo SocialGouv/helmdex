@@ -18,7 +18,7 @@ func resolveRepoAndConfig(f *rootFlags) (repoRoot string, cfgPath string, cfg co
 	if err != nil {
 		return "", "", config.Config{}, err
 	}
-	return repoRoot, res.Path, res.Config, nil
+	return repoRoot, res.Path, instances.ApplyLayout(repoRoot, res), nil
 }
 
 func resolveInstanceByName(repoRoot string, cfg config.Config, name string) (instances.Instance, error) {

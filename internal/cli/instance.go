@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"helmdex/internal/instances"
+	"helmdex/internal/paths"
 	"helmdex/internal/presets"
 	"helmdex/internal/values"
 	"helmdex/internal/yamlchart"
@@ -21,6 +22,7 @@ func newInstanceCmd(f *rootFlags) *cobra.Command {
 	}
 
 	cmd.AddCommand(newInstanceCreateCmd(f))
+	cmd.AddCommand(newInstanceTemplatesCmd(f))
 	cmd.AddCommand(newInstanceListCmd(f))
 	cmd.AddCommand(newInstanceDepCmd(f))
 	cmd.AddCommand(newInstanceUpdateCmd(f))
@@ -220,9 +222,10 @@ func newInstanceApplyCmd(f *rootFlags) *cobra.Command {
 }
 
 func newInstanceCreateCmd(f *rootFlags) *cobra.Command {
+	var fromTemplate string
 	cmd := &cobra.Command{
 		Use:   "create <name>",
-		Short: "Create a new umbrella chart instance",
+		Short: "Create a new umbrella chart instance (optionally from a repo template)",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			repoRoot, _, cfg, err := resolveRepoAndConfig(f)
@@ -231,7 +234,17 @@ func newInstanceCreateCmd(f *rootFlags) *cobra.Command {
 			}
 
 			name := args[0]
-			inst, err := instances.Create(repoRoot, cfg.Repo.AppsDir, name)
+
+			if fromTemplate != "" {
+				inst, err := instances.CreateFromTemplate(repoRoot, cfg.Repo.AppsDir, cfg.Repo.TemplatesDir, fromTemplate, name)
+				if err != nil {
+					return err
+				}
+				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Created instance %s at %s (from template %s)\n", name, inst.Path, fromTemplate)
+				return nil
+			}
+
+			inst, err := instances.Create(repoRoot, cfg.Repo.AppsDir, name, paths.OptedIn(repoRoot))
 			if err != nil {
 				return err
 			}
@@ -242,6 +255,29 @@ func newInstanceCreateCmd(f *rootFlags) *cobra.Command {
 			}
 
 			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Created instance %s at %s\n", name, inst.Path)
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&fromTemplate, "from-template", "", "Copy a template chart dir (see 'instance templates') instead of a blank instance")
+	return cmd
+}
+
+func newInstanceTemplatesCmd(f *rootFlags) *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "templates",
+		Short: "List instance templates (blueprint chart dirs in the repo templates dir)",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			repoRoot, _, cfg, err := resolveRepoAndConfig(f)
+			if err != nil {
+				return err
+			}
+			list, err := instances.ListTemplates(repoRoot, cfg.Repo.TemplatesDir)
+			if err != nil {
+				return err
+			}
+			for _, t := range list {
+				_, _ = fmt.Fprintln(cmd.OutOrStdout(), t.Name)
+			}
 			return nil
 		},
 	}

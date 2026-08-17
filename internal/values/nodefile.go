@@ -1,8 +1,10 @@
 package values
 
 import (
+	"bytes"
 	"fmt"
 	"os"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -81,20 +83,33 @@ func loadNodeDoc(path string) (*yaml.Node, error) {
 }
 
 func writeNodeDoc(path string, doc *yaml.Node) error {
+	var buf bytes.Buffer
+	enc := yaml.NewEncoder(&buf)
+	enc.SetIndent(2)
+	if err := enc.Encode(doc); err != nil {
+		_ = enc.Close()
+		return err
+	}
+	if err := enc.Close(); err != nil {
+		return err
+	}
+
+	out := buf.Bytes()
+	// yaml.v3 drops blank separator lines and comment alignment on
+	// re-encode; restore the original text of unchanged lines so user-owned
+	// files keep minimal diffs.
+	if orig, err := os.ReadFile(path); err == nil {
+		out = restoreFormatting(orig, out)
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+
 	f, err := os.CreateTemp(pathDir(path), ".helmdex-values-*")
 	if err != nil {
 		return err
 	}
 	tmp := f.Name()
-	enc := yaml.NewEncoder(f)
-	enc.SetIndent(2)
-	if err := enc.Encode(doc); err != nil {
-		_ = enc.Close()
-		_ = f.Close()
-		_ = os.Remove(tmp)
-		return err
-	}
-	if err := enc.Close(); err != nil {
+	if _, err := f.Write(out); err != nil {
 		_ = f.Close()
 		_ = os.Remove(tmp)
 		return err
@@ -108,6 +123,107 @@ func writeNodeDoc(path string, doc *yaml.Node) error {
 		return err
 	}
 	return os.Rename(tmp, path)
+}
+
+// restoreFormatting reconciles a YAML re-encode with the original text:
+// lines that are semantically unchanged (matched by longest-common-
+// subsequence over normalized content) are emitted with their original
+// formatting — blank separator lines and aligned trailing comments — while
+// genuinely edited lines keep the new encoding.
+func restoreFormatting(orig, out []byte) []byte {
+	o := strings.Split(strings.TrimRight(string(orig), "\n"), "\n")
+	n := []string{}
+	// Blank lines in the re-encode are encoder separators; drop them and
+	// trust the original's blanks (restored below) instead, so they don't
+	// double up.
+	for _, l := range strings.Split(strings.TrimRight(string(out), "\n"), "\n") {
+		if strings.TrimSpace(l) == "" {
+			continue
+		}
+		n = append(n, l)
+	}
+
+	// Original lines with blanks removed, remembering how many blanks
+	// precede each kept line.
+	type oline struct {
+		text   string
+		norm   string
+		blanks int
+	}
+	kept := make([]oline, 0, len(o))
+	blanks := 0
+	for _, l := range o {
+		if strings.TrimSpace(l) == "" {
+			blanks++
+			continue
+		}
+		kept = append(kept, oline{text: l, norm: normalizeYAMLLine(l), blanks: blanks})
+		blanks = 0
+	}
+	norm := make([]string, len(n))
+	for j, l := range n {
+		norm[j] = normalizeYAMLLine(l)
+	}
+
+	// LCS table between kept original lines and new lines.
+	// Files are small (values files); O(n*m) is fine.
+	lo, ln := len(kept), len(n)
+	dp := make([][]int, lo+1)
+	for i := range dp {
+		dp[i] = make([]int, ln+1)
+	}
+	for i := lo - 1; i >= 0; i-- {
+		for j := ln - 1; j >= 0; j-- {
+			if kept[i].norm == norm[j] {
+				dp[i][j] = dp[i+1][j+1] + 1
+			} else if dp[i+1][j] >= dp[i][j+1] {
+				dp[i][j] = dp[i+1][j]
+			} else {
+				dp[i][j] = dp[i][j+1]
+			}
+		}
+	}
+
+	var b strings.Builder
+	i, j := 0, 0
+	for j < ln {
+		if i < lo && kept[i].norm == norm[j] && dp[i][j] == dp[i+1][j+1]+1 {
+			for k := 0; k < kept[i].blanks; k++ {
+				b.WriteByte('\n')
+			}
+			// Unchanged line: keep its original formatting.
+			b.WriteString(kept[i].text)
+			b.WriteByte('\n')
+			i++
+			j++
+			continue
+		}
+		if i < lo && dp[i+1][j] >= dp[i][j+1] {
+			i++ // original line deleted by the edit
+			continue
+		}
+		b.WriteString(n[j]) // new/changed line
+		b.WriteByte('\n')
+		j++
+	}
+	return []byte(b.String())
+}
+
+// normalizeYAMLLine produces the matching key for a line: comment-only lines
+// compare by their trimmed text (re-encode re-indents them), other lines by
+// collapsing the whitespace run before a trailing comment (re-encode drops
+// column alignment). Content — including indentation of code — stays
+// significant.
+func normalizeYAMLLine(l string) string {
+	trimmed := strings.TrimSpace(l)
+	if strings.HasPrefix(trimmed, "#") {
+		return trimmed
+	}
+	if i := strings.Index(l, " #"); i >= 0 {
+		code := strings.TrimRight(l[:i], " \t")
+		return code + " " + strings.TrimLeft(l[i:], " \t")
+	}
+	return l
 }
 
 func pathDir(p string) string {
@@ -182,7 +298,10 @@ func setNodeAt(root *yaml.Node, p Path, v any) error {
 				return err
 			}
 			if found >= 0 {
-				// Keep the key node (and its comments); swap the value only.
+				// Keep the key node (and its comments); swap the value only,
+				// carrying over comments attached to the old value node.
+				old := cur.Content[found+1]
+				n.HeadComment, n.LineComment, n.FootComment = old.HeadComment, old.LineComment, old.FootComment
 				cur.Content[found+1] = n
 			} else {
 				cur.Content = append(cur.Content,

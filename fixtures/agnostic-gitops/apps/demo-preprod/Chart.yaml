@@ -1,0 +1,10 @@
+apiVersion: v2
+name: demo-preprod
+description: Static preprod env wrapper (fixture mirroring an atlas-v2 gitops repo).
+type: application
+version: 0.1.0
+dependencies:
+  - name: demo
+    # Pinned OCI pseudo-version bumped by the CD pipeline.
+    version: "0.0.0-sha.d68be124"
+    repository: "oci://registry.example.invalid/org/demo/charts"

@@ -16,7 +16,7 @@ import (
 // state lives under the user cache dir, keyed by the repo's absolute path,
 // so helmdex never adds files to the repo itself.
 func StateDir(repoRoot string) string {
-	if _, err := os.Stat(filepath.Join(repoRoot, "helmdex.yaml")); err == nil {
+	if OptedIn(repoRoot) {
 		return filepath.Join(repoRoot, ".helmdex")
 	}
 	abs, err := filepath.Abs(repoRoot)
@@ -28,6 +28,14 @@ func StateDir(repoRoot string) string {
 	// Basename prefix keeps cache dirs recognizable; the hash disambiguates.
 	name := filepath.Base(abs) + "-" + hex.EncodeToString(h[:8])
 	return filepath.Join(cacheHome(), "repos", name)
+}
+
+// OptedIn reports whether the repo opted into helmdex (helmdex.yaml at its
+// root). Non-opted repos must stay byte-identical: no generated files, no
+// in-repo state.
+func OptedIn(repoRoot string) bool {
+	_, err := os.Stat(filepath.Join(repoRoot, "helmdex.yaml"))
+	return err == nil
 }
 
 // State joins parts under StateDir(repoRoot).

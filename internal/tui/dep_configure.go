@@ -3,7 +3,6 @@ package tui
 import (
 	"fmt"
 	"os"
-	"path/filepath"
 	"regexp"
 	"sort"
 	"strconv"
@@ -20,7 +19,7 @@ func readDepOverrideFromInstance(instancePath, depID string) any {
 	if strings.TrimSpace(instancePath) == "" || strings.TrimSpace(depID) == "" {
 		return nil
 	}
-	p := filepath.Join(instancePath, "values.instance.yaml")
+	p := values.EditFilePath(instancePath)
 	b, err := os.ReadFile(p)
 	if err != nil || len(b) == 0 {
 		return nil
@@ -835,23 +834,10 @@ func (m *depConfigureModel) PersistDraft() error {
 		return fmt.Errorf("no instance/dependency selected")
 	}
 
-	path := filepath.Join(m.instancePath, "values.instance.yaml")
-	var root any
-	b, _ := osReadFileBestEffort(path)
-	if len(b) > 0 {
-		_ = yaml.Unmarshal(b, &root)
-	}
-	obj, ok := root.(map[string]any)
-	if !ok || obj == nil {
-		obj = map[string]any{}
-	}
-	obj[m.depID] = m.value
-
-	out, err := yaml.Marshal(obj)
-	if err != nil {
-		return err
-	}
-	if err := writeFileAtomic(path, out); err != nil {
+	// Node-level edit: only this dep's key is rewritten, comments elsewhere
+	// survive (the file is user-owned in direct mode).
+	path := values.EditFilePath(m.instancePath)
+	if err := values.SetInFile(path, values.Path{}.Child(m.depID), m.value); err != nil {
 		return err
 	}
 	if err := values.GenerateIfManaged(m.instancePath); err != nil {
@@ -1467,20 +1453,4 @@ func validateAgainstSchema(s *schemaform.Schema, v any, path cfgPath) map[string
 		}
 	}
 	return errs
-}
-
-// ----- tiny I/O helpers (local to tui) -----
-
-func osReadFileBestEffort(path string) ([]byte, error) {
-	// keep local to avoid importing os in multiple files
-	return os.ReadFile(path)
-}
-
-func writeFileAtomic(path string, content []byte) error {
-	// Simplified atomic write.
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, content, 0o644); err != nil {
-		return err
-	}
-	return os.Rename(tmp, path)
 }

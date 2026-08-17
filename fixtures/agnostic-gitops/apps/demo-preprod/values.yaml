@@ -1,0 +1,8 @@
+# Wrapper defaults (hand-written, user-owned — helmdex must never regenerate this).
+demo:
+  replicaCount: 1 # keep small in preprod
+  image:
+    repository: registry.example.invalid/org/demo
+# NetworkPolicies toggle.
+networkPolicy:
+  enabled: true

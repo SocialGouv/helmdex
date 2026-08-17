@@ -35,7 +35,7 @@ func TestIsAnyFilterActiveIncludesValuesList(t *testing.T) {
 	m.screen = ScreenInstance
 	m.activeTab = InstanceTabValues
 	// Ensure the list has items + size so bubbles/list can enter filtering mode.
-	m.valuesList.SetItems([]list.Item{valuesFileItem("values.instance.yaml")})
+	m.valuesList.SetItems([]list.Item{valuesFileItem{Name: "values.instance.yaml"}})
 	m.valuesList.SetSize(40, 10)
 	if m.isAnyFilterActive() {
 		t.Fatalf("expected no filters active")

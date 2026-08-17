@@ -2,6 +2,7 @@ package cli
 
 import (
 	"helmdex/internal/config"
+	"helmdex/internal/instances"
 	"helmdex/internal/repo"
 	"helmdex/internal/tui"
 
@@ -22,11 +23,12 @@ func newTUICmd(f *rootFlags) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			cfg := instances.ApplyLayout(repoRoot, res)
 
 			return tui.Run(cmd.Context(), tui.Params{
 				RepoRoot:     repoRoot,
 				ConfigPath:   res.Path,
-				Config:       &res.Config,
+				Config:       &cfg,
 				ConfigSource: res.Source,
 				StartScreen:  tui.ScreenDashboard,
 			})

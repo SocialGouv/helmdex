@@ -12,7 +12,7 @@ func TestValuesFilteringCapturesKeysAndPreventsGlobalShortcuts(t *testing.T) {
 	m.screen = ScreenInstance
 	m.activeTab = InstanceTabValues
 	// Ensure the list can enter filtering mode.
-	m.valuesList.SetItems([]list.Item{valuesFileItem("values.instance.yaml")})
+	m.valuesList.SetItems([]list.Item{valuesFileItem{Name: "values.instance.yaml"}})
 	m.valuesList.SetSize(40, 10)
 
 	// Start filtering.

@@ -28,7 +28,6 @@ import (
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"gopkg.in/yaml.v3"
 )
 
 type AppModel struct {
@@ -3772,14 +3771,19 @@ func (m AppModel) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if key.Matches(msg, m.keys.EditValues) {
 			if m.screen == ScreenInstance && !m.addingDep {
-				// Values tab: only allow editing values.instance.yaml.
+				// Values tab: only allow editing the instance's edit file
+				// (values.instance.yaml, or values.yaml in direct mode).
 				if m.activeTab == InstanceTabValues {
+					editFile := "values.instance.yaml"
+					if m.selected != nil {
+						editFile = values.EditFileName(m.selected.Path)
+					}
 					if it := m.valuesList.SelectedItem(); it != nil {
-						if vf, ok := it.(valuesFileItem); ok && string(vf) == "values.instance.yaml" {
+						if vf, ok := it.(valuesFileItem); ok && vf.Name == editFile {
 							return m, m.editInstanceValuesCmd()
 						}
 					}
-					m.setStatusErr("Select values.instance.yaml in the list to edit")
+					m.setStatusErr("Select " + editFile + " in the list to edit")
 					return m, nil
 				}
 				return m, m.editInstanceValuesCmd()
@@ -3905,7 +3909,7 @@ func (m AppModel) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.params.Config != nil && m.params.Config.Repo.AppsDir != "" {
 				appsDir = m.params.Config.Repo.AppsDir
 			}
-			inst, err := instances.Create(m.params.RepoRoot, appsDir, name)
+			inst, err := instances.Create(m.params.RepoRoot, appsDir, name, paths.OptedIn(m.params.RepoRoot))
 			if err != nil {
 				return m, func() tea.Msg { return errMsg{err} }
 			}
@@ -4312,7 +4316,7 @@ func (m AppModel) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 					it := m.valuesList.SelectedItem()
 					if vf, ok := it.(valuesFileItem); ok {
 						m.valuesPreviewOpen = true
-						m.valuesPreviewPath = string(vf)
+						m.valuesPreviewPath = vf.Name
 						m.valuesPreview.SetContent(styleMuted.Render("Loading…"))
 						return m, tea.Batch(cmd, m.loadValuesPreviewCmd(m.valuesPreviewPath))
 					}
@@ -4959,7 +4963,7 @@ func (m AppModel) contextHelpLine() string {
 			return "←/→ tabs • ↑/↓ select • Enter open/action • d remove • v version • u upgrade • a add dep • m commands • Esc back • q quit"
 		}
 		if m.activeTab == InstanceTabValues {
-			return "←/→ tabs • ↑/↓ select • Enter preview/action • e edit values.instance.yaml • p apply • m commands • Esc back • q quit"
+			return "←/→ tabs • ↑/↓ select • Enter preview/action • e edit overrides • p apply • m commands • Esc back • q quit"
 		}
 		if m.activeTab == InstanceTabInstance {
 			return "←/→ tabs • ↑/↓ select • Enter action • r: rename • d: delete • Esc back • q quit"
@@ -5168,10 +5172,21 @@ func (v versionItem) Description() string { return "" }
 func (v versionItem) FilterValue() string { return v.Ver }
 func (v versionItem) IsChosen() bool      { return v.Chosen }
 
-type valuesFileItem string
+type valuesFileItem struct {
+	Name string
+	// Direct marks a user-owned file of a direct-mode instance (no layers,
+	// no generated output; helmdex edits in place).
+	Direct bool
+}
 
 func (v valuesFileItem) Title() string {
-	name := string(v)
+	name := v.Name
+	if v.Direct {
+		if name == "values.yaml" {
+			return withIcon(iconRename, name)
+		}
+		return name
+	}
 	switch name {
 	case "values.instance.yaml":
 		return withIcon(iconRename, name)
@@ -5183,7 +5198,13 @@ func (v valuesFileItem) Title() string {
 }
 
 func (v valuesFileItem) Description() string {
-	name := string(v)
+	name := v.Name
+	if v.Direct {
+		if name == "values.yaml" {
+			return "User-owned \u00b7 edited in place (direct mode)"
+		}
+		return "User-owned \u00b7 extra values file"
+	}
 	switch name {
 	case "values.default.yaml":
 		return "Layer 1 · Baseline defaults"
@@ -5215,7 +5236,7 @@ func (v valuesFileItem) Description() string {
 		return ""
 	}
 }
-func (v valuesFileItem) FilterValue() string { return string(v) }
+func (v valuesFileItem) FilterValue() string { return v.Name }
 
 func (m *AppModel) refreshValuesList() {
 	if m.selected == nil {
@@ -5233,29 +5254,41 @@ func (m *AppModel) refreshValuesList() {
 	//  3) values.set.*.yaml (0..n, lexicographic)
 	//  4) values.instance.yaml (required by generator; user-owned)
 	//  5) values.yaml (generated)
-	base := []string{"values.default.yaml", "values.platform.yaml"}
 	items := []list.Item{}
-	for _, rel := range base {
-		p := filepath.Join(inst.Path, rel)
-		if _, err := os.Stat(p); err == nil {
-			items = append(items, valuesFileItem(rel))
+	if values.IsManaged(inst.Path) {
+		base := []string{"values.default.yaml", "values.platform.yaml"}
+		for _, rel := range base {
+			p := filepath.Join(inst.Path, rel)
+			if _, err := os.Stat(p); err == nil {
+				items = append(items, valuesFileItem{Name: rel})
+			}
 		}
-	}
-	setFiles, _ := filepath.Glob(filepath.Join(inst.Path, "values.set.*.yaml"))
-	sort.Strings(setFiles)
-	for _, p := range setFiles {
-		items = append(items, valuesFileItem(filepath.Base(p)))
-	}
-	for _, rel := range []string{"values.instance.yaml", "values.yaml"} {
-		p := filepath.Join(inst.Path, rel)
-		if _, err := os.Stat(p); err == nil {
-			items = append(items, valuesFileItem(rel))
+		setFiles, _ := filepath.Glob(filepath.Join(inst.Path, "values.set.*.yaml"))
+		sort.Strings(setFiles)
+		for _, p := range setFiles {
+			items = append(items, valuesFileItem{Name: filepath.Base(p)})
+		}
+		for _, rel := range []string{"values.instance.yaml", "values.yaml"} {
+			p := filepath.Join(inst.Path, rel)
+			if _, err := os.Stat(p); err == nil {
+				items = append(items, valuesFileItem{Name: rel})
+			}
+		}
+	} else {
+		// Direct mode: every values file is user-owned; values.yaml first.
+		if _, err := os.Stat(filepath.Join(inst.Path, "values.yaml")); err == nil {
+			items = append(items, valuesFileItem{Name: "values.yaml", Direct: true})
+		}
+		extra, _ := filepath.Glob(filepath.Join(inst.Path, "values.*.yaml"))
+		sort.Strings(extra)
+		for _, p := range extra {
+			items = append(items, valuesFileItem{Name: filepath.Base(p), Direct: true})
 		}
 	}
 
 	// Append navigable action items.
 	items = append(items,
-		actionItem{ID: actEditValues, Icon: iconRename, Name: "Edit values.instance.yaml", Desc: "Open in $EDITOR"},
+		actionItem{ID: actEditValues, Icon: iconRename, Name: "Edit " + values.EditFileName(inst.Path), Desc: "Open in $EDITOR"},
 		actionItem{ID: actApplyInstance, Icon: iconRegen, Name: "Apply instance", Desc: "Run helm dependency build"},
 	)
 
@@ -5263,7 +5296,7 @@ func (m *AppModel) refreshValuesList() {
 	prevSel := ""
 	if it := m.valuesList.SelectedItem(); it != nil {
 		if vf, ok := it.(valuesFileItem); ok {
-			prevSel = string(vf)
+			prevSel = vf.Name
 		}
 	}
 
@@ -5278,7 +5311,7 @@ func (m *AppModel) refreshValuesList() {
 	m.valuesList.SetShowStatusBar(dataCount > 0)
 	if prevSel != "" {
 		for i, it := range items {
-			if vf, ok := it.(valuesFileItem); ok && string(vf) == prevSel {
+			if vf, ok := it.(valuesFileItem); ok && vf.Name == prevSel {
 				m.valuesList.Select(i)
 				break
 			}
@@ -6677,42 +6710,25 @@ func migrateDepOverrideKey(instancePath string, oldID, newID string) error {
 	if instancePath == "" || oldID == "" || newID == "" || oldID == newID {
 		return nil
 	}
-	path := filepath.Join(instancePath, "values.instance.yaml")
-	b, err := os.ReadFile(path)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil
-		}
-		return err
-	}
-	if len(b) == 0 {
-		return nil
-	}
-	var root any
-	if err := yaml.Unmarshal(b, &root); err != nil {
-		return err
-	}
-	obj, ok := root.(map[string]any)
-	if !ok {
-		return nil
-	}
-	val, ok := obj[oldID]
-	if !ok {
-		return nil
-	}
-	if _, exists := obj[newID]; exists {
-		return fmt.Errorf("values.instance.yaml already contains key %q", newID)
-	}
-	delete(obj, oldID)
-	obj[newID] = val
-	out, err := yaml.Marshal(obj)
+	// Node-level edits keep comments/ordering of untouched keys intact —
+	// required for user-owned files (direct mode), nice for managed ones.
+	path := values.EditFilePath(instancePath)
+	val, ok, err := values.GetInFile(path, values.Path{}.Child(oldID))
 	if err != nil {
 		return err
 	}
-	if len(out) == 0 || out[len(out)-1] != '\n' {
-		out = append(out, '\n')
+	if !ok {
+		return nil
 	}
-	return os.WriteFile(path, out, 0o644)
+	if _, exists, err := values.GetInFile(path, values.Path{}.Child(newID)); err != nil {
+		return err
+	} else if exists {
+		return fmt.Errorf("%s already contains key %q", filepath.Base(path), newID)
+	}
+	if err := values.SetInFile(path, values.Path{}.Child(newID), val); err != nil {
+		return err
+	}
+	return values.SetInFile(path, values.Path{}.Child(oldID), nil)
 }
 
 func deleteDepOverrideKey(instancePath, depID string) error {
@@ -6720,37 +6736,11 @@ func deleteDepOverrideKey(instancePath, depID string) error {
 	if instancePath == "" || depID == "" {
 		return nil
 	}
-	path := filepath.Join(instancePath, "values.instance.yaml")
-	b, err := os.ReadFile(path)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil
-		}
+	path := values.EditFilePath(instancePath)
+	if _, ok, err := values.GetInFile(path, values.Path{}.Child(depID)); err != nil || !ok {
 		return err
 	}
-	if len(b) == 0 {
-		return nil
-	}
-	var root any
-	if err := yaml.Unmarshal(b, &root); err != nil {
-		return err
-	}
-	obj, ok := root.(map[string]any)
-	if !ok {
-		return nil
-	}
-	if _, ok := obj[depID]; !ok {
-		return nil
-	}
-	delete(obj, depID)
-	out, err := yaml.Marshal(obj)
-	if err != nil {
-		return err
-	}
-	if len(out) == 0 || out[len(out)-1] != '\n' {
-		out = append(out, '\n')
-	}
-	return os.WriteFile(path, out, 0o644)
+	return values.SetInFile(path, values.Path{}.Child(depID), nil)
 }
 
 func migrateDepSetMarkers(instancePath string, oldID, newID yamlchart.DepID) error {
@@ -6920,7 +6910,7 @@ func (m AppModel) editInstanceValuesCmd() tea.Cmd {
 		if editor == "" {
 			editor = "vi"
 		}
-		path := filepath.Join(m.selected.Path, "values.instance.yaml")
+		path := values.EditFilePath(m.selected.Path)
 		name, args := editorCommand(editor, path)
 		cmd := exec.Command(name, args...)
 		cmd.Stdin = os.Stdin

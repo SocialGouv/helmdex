@@ -10,7 +10,7 @@ import (
 
 func TestCreate_CreatesFiles(t *testing.T) {
 	repoRoot := t.TempDir()
-	inst, err := Create(repoRoot, "apps", "myapp")
+	inst, err := Create(repoRoot, "apps", "myapp", true)
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
@@ -29,24 +29,24 @@ func TestCreate_CreatesFiles(t *testing.T) {
 
 func TestCreate_RejectsBadName(t *testing.T) {
 	repoRoot := t.TempDir()
-	if _, err := Create(repoRoot, "apps", "a/b"); err == nil {
+	if _, err := Create(repoRoot, "apps", "a/b", true); err == nil {
 		t.Fatalf("expected error")
 	}
 }
 
 func TestCreate_NotIdempotent(t *testing.T) {
 	repoRoot := t.TempDir()
-	if _, err := Create(repoRoot, "apps", "myapp"); err != nil {
+	if _, err := Create(repoRoot, "apps", "myapp", true); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
-	if _, err := Create(repoRoot, "apps", "myapp"); err == nil {
+	if _, err := Create(repoRoot, "apps", "myapp", true); err == nil {
 		t.Fatalf("expected error on second create")
 	}
 }
 
 func TestRename_RenamesDirAndUpdatesChartName(t *testing.T) {
 	repoRoot := t.TempDir()
-	inst, err := Create(repoRoot, "apps", "old")
+	inst, err := Create(repoRoot, "apps", "old", true)
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}

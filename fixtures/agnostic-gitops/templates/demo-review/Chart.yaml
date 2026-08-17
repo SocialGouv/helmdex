@@ -1,0 +1,9 @@
+apiVersion: v2
+name: demo-review
+description: Review env blueprint (copied into apps/ per review branch).
+type: application
+version: 0.1.0
+dependencies:
+  - name: demo
+    version: "0.0.0-sha.d68be124"
+    repository: "oci://registry.example.invalid/org/demo/charts"

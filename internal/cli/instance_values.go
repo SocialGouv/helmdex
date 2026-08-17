@@ -46,9 +46,36 @@ func loadValueFromFlags(valueYAML, valueJSON string) (any, error) {
 		if err := dec.Decode(&v); err != nil {
 			return nil, fmt.Errorf("parse --value-json: %w", err)
 		}
-		return v, nil
+		return normalizeJSONNumbers(v), nil
 	}
 	return nil, fmt.Errorf("one of --value-yaml or --value-json is required")
+}
+
+// normalizeJSONNumbers converts json.Number values to int64/float64 so YAML
+// encoders emit them as numbers, not quoted strings.
+func normalizeJSONNumbers(v any) any {
+	switch t := v.(type) {
+	case json.Number:
+		if i, err := t.Int64(); err == nil {
+			return i
+		}
+		if f, err := t.Float64(); err == nil {
+			return f
+		}
+		return t.String()
+	case map[string]any:
+		for k, e := range t {
+			t[k] = normalizeJSONNumbers(e)
+		}
+		return t
+	case []any:
+		for i, e := range t {
+			t[i] = normalizeJSONNumbers(e)
+		}
+		return t
+	default:
+		return v
+	}
 }
 
 func readFromStdin() ([]byte, error) {

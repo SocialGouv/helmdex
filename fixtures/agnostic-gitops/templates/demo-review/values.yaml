@@ -1,0 +1,3 @@
+# Review blueprint defaults.
+demo:
+  replicaCount: 1

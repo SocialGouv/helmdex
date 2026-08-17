@@ -22,6 +22,15 @@ type Path = yamlPath
 // ParsePath parses a path in the TUI syntax (e.g. "$", "$.a.b[0].c").
 func ParsePath(k string) (Path, error) { return parseYAMLPath(k) }
 
+// Child returns the path extended with a map-key element. Unlike ParsePath it
+// needs no escaping, so it is safe for arbitrary keys (e.g. dep IDs with dots).
+func (p Path) Child(key string) Path {
+	out := make(yamlPath, len(p)+1)
+	copy(out, p)
+	out[len(p)] = yamlPathPart{key: key}
+	return out
+}
+
 // GetAt returns the value at path, if present.
 func GetAt(root any, p Path) (any, bool) { return getAt(root, yamlPath(p)) }
 

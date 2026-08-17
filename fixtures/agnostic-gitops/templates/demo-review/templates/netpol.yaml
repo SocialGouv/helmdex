@@ -1,0 +1,10 @@
+# Local wrapper template (raw manifest).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-intra-ns
+spec:
+  podSelector: {}
+  ingress:
+    - from:
+        - podSelector: {}
