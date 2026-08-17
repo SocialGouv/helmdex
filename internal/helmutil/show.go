@@ -13,6 +13,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"helmdex/internal/paths"
 )
 
 type Env struct {
@@ -36,14 +38,14 @@ type Env struct {
 }
 
 func EnvForRepo(repoRoot string) Env {
-	base := filepath.Join(repoRoot, ".helmdex", "helm")
+	base := paths.State(repoRoot, "helm")
 	return envForBase(repoRoot, base)
 }
 
 // EnvForRepoURL scopes helm state per repository URL so `helm repo update` only
 // touches the repo(s) for the current session/URL.
 func EnvForRepoURL(repoRoot, repoURL string) Env {
-	base := filepath.Join(repoRoot, ".helmdex", "helm", RepoNameForURL(repoURL))
+	base := paths.State(repoRoot, "helm", RepoNameForURL(repoURL))
 	return envForBase(repoRoot, base)
 }
 
@@ -58,7 +60,7 @@ func EnvForInstancePath(repoRoot, instancePath string) Env {
 	}
 	h := sha1.Sum([]byte(filepath.Clean(rel)))
 	name := "helmdex-" + hex.EncodeToString(h[:8])
-	base := filepath.Join(repoRoot, ".helmdex", "helm", "instances", name)
+	base := paths.State(repoRoot, "helm", "instances", name)
 	return envForBase(repoRoot, base)
 }
 
@@ -70,7 +72,7 @@ func envForBase(repoRoot, base string) Env {
 		DataHome:       filepath.Join(base, "data"),
 		Home:           filepath.Join(base, "home"),
 		DockerConfig:   filepath.Join(base, "docker"),
-		RegistryConfig: filepath.Join(repoRoot, ".helmdex", "helm", "registry", "config.json"),
+		RegistryConfig: paths.State(repoRoot, "helm", "registry", "config.json"),
 	}
 }
 

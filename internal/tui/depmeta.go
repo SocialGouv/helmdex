@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"helmdex/internal/catalog"
+	"helmdex/internal/paths"
 	"helmdex/internal/yamlchart"
 
 	"gopkg.in/yaml.v3"
@@ -29,12 +30,12 @@ type depSourceMeta struct {
 }
 
 func depMetaPath(repoRoot, instanceName string, depID yamlchart.DepID) string {
-	// Stored at repo-level: .helmdex/depmeta/<instanceName>/<depID>.yaml
-	return filepath.Join(repoRoot, ".helmdex", "depmeta", instanceName, fmt.Sprintf("%s.yaml", depID))
+	// Stored at repo-level state: depmeta/<instanceName>/<depID>.yaml
+	return paths.State(repoRoot, "depmeta", instanceName, fmt.Sprintf("%s.yaml", depID))
 }
 
 func depMetaInstanceDir(repoRoot, instanceName string) string {
-	return filepath.Join(repoRoot, ".helmdex", "depmeta", instanceName)
+	return paths.State(repoRoot, "depmeta", instanceName)
 }
 
 func renameDepMetaInstanceDir(repoRoot, oldInstanceName, newInstanceName string) error {

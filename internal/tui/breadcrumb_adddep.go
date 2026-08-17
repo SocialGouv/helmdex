@@ -6,11 +6,11 @@ import "strings"
 // for window titles (no ANSI, no icons).
 //
 // Rules (agreed):
-// - Always start with: Add dep
-// - Prefer normalized source-kind crumbs when we have a selected chart/entry:
+//   - Always start with: Add dep
+//   - Prefer normalized source-kind crumbs when we have a selected chart/entry:
 //     Add dep › Catalog › <catalogSourceName> › <entryID>
 //     Add dep › Artifact Hub › <chartName> › <version>
-// - Keep step-label crumbs only for:
+//   - Keep step-label crumbs only for:
 //     Choose source / Artifact Hub search / Artifact Hub results / Artifact Hub versions
 func addDepCrumbsPlain(m AppModel) []string {
 	crumbs := []string{"Add dep"}

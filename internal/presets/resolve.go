@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"helmdex/internal/config"
+	"helmdex/internal/paths"
 	"helmdex/internal/yamlchart"
 
 	semver "github.com/Masterminds/semver/v3"
@@ -45,7 +46,7 @@ func Resolve(repoRoot string, cfg config.Config, deps []yamlchart.Dependency) (R
 		if chartsPath == "" {
 			chartsPath = "charts"
 		}
-		cacheRoot := filepath.Join(repoRoot, ".helmdex", "cache", src.Name, chartsPath)
+		cacheRoot := paths.State(repoRoot, "cache", src.Name, chartsPath)
 
 		for _, d := range deps {
 			id := yamlchart.DependencyID(d)

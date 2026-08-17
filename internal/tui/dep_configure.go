@@ -854,7 +854,7 @@ func (m *depConfigureModel) PersistDraft() error {
 	if err := writeFileAtomic(path, out); err != nil {
 		return err
 	}
-	if err := values.GenerateMergedValues(m.instancePath); err != nil {
+	if err := values.GenerateIfManaged(m.instancePath); err != nil {
 		return err
 	}
 	m.status = "saved"

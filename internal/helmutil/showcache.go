@@ -5,6 +5,8 @@ import (
 	"encoding/hex"
 	"os"
 	"path/filepath"
+
+	"helmdex/internal/paths"
 )
 
 type ShowKind string
@@ -16,7 +18,7 @@ const (
 )
 
 func showCacheDir(repoRoot string) string {
-	return filepath.Join(repoRoot, ".helmdex", "cache", "helmshow")
+	return paths.State(repoRoot, "cache", "helmshow")
 }
 
 func showKey(repoURL, chart, version string) string {

@@ -7,6 +7,8 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+
+	"helmdex/internal/paths"
 )
 
 // Versions cache stores the result of `helm search repo <repo>/<chart> --versions`.
@@ -20,7 +22,7 @@ type versionsCacheFile struct {
 }
 
 func versionsCacheDir(repoRoot string) string {
-	return filepath.Join(repoRoot, ".helmdex", "cache", "helmversions")
+	return paths.State(repoRoot, "cache", "helmversions")
 }
 
 func VersionsCacheKey(repoURL, chart string) string {

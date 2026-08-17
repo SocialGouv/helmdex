@@ -12,6 +12,7 @@ import (
 
 	"helmdex/internal/config"
 	"helmdex/internal/gitutil"
+	"helmdex/internal/paths"
 
 	"gopkg.in/yaml.v3"
 )
@@ -41,11 +42,11 @@ func (s *Syncer) Sync(ctx context.Context, cfg config.Config) ([]SyncResult, err
 func (s *Syncer) SyncFiltered(ctx context.Context, cfg config.Config, include func(config.Source) bool) ([]SyncResult, error) {
 	var out []SyncResult
 
-	cacheRoot := filepath.Join(s.repoRoot, ".helmdex", "cache")
+	cacheRoot := paths.State(s.repoRoot, "cache")
 	if err := os.MkdirAll(cacheRoot, 0o755); err != nil {
 		return nil, err
 	}
-	catRoot := filepath.Join(s.repoRoot, ".helmdex", "catalog")
+	catRoot := paths.State(s.repoRoot, "catalog")
 	if err := os.MkdirAll(catRoot, 0o755); err != nil {
 		return nil, err
 	}
@@ -130,7 +131,7 @@ func copyDirToCache(srcDir, destDir string) (resolved string, err error) {
 	}
 
 	h := sha256.New()
-	paths := []string{}
+	rels := []string{}
 	err = filepath.WalkDir(srcDir, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -147,15 +148,15 @@ func copyDirToCache(srcDir, destDir string) (resolved string, err error) {
 		if d.IsDir() && rel == ".git" {
 			return filepath.SkipDir
 		}
-		paths = append(paths, rel)
+		rels = append(rels, rel)
 		return nil
 	})
 	if err != nil {
 		return "", err
 	}
-	sort.Strings(paths)
+	sort.Strings(rels)
 
-	for _, rel := range paths {
+	for _, rel := range rels {
 		srcPath := filepath.Join(srcDir, rel)
 		dstPath := filepath.Join(destDir, rel)
 		st, err := os.Stat(srcPath)

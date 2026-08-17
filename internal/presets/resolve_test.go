@@ -11,6 +11,10 @@ import (
 
 func TestResolve_PicksExactThenConstraint(t *testing.T) {
 	repoRoot := t.TempDir()
+	// Mark the repo as helmdex-opted so state resolves to <repoRoot>/.helmdex.
+	if err := os.WriteFile(filepath.Join(repoRoot, "helmdex.yaml"), []byte("apiVersion: helmdex.io/v1alpha1\nkind: HelmdexConfig\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	cfg := config.Config{
 		APIVersion: config.APIVersion,
 		Kind:       config.Kind,

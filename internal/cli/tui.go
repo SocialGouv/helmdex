@@ -1,8 +1,6 @@
 package cli
 
 import (
-	"path/filepath"
-
 	"helmdex/internal/config"
 	"helmdex/internal/repo"
 	"helmdex/internal/tui"
@@ -20,22 +18,17 @@ func newTUICmd(f *rootFlags) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			cfgPath := f.Config
-			if cfgPath == "" {
-				cfgPath = filepath.Join(repoRoot, "helmdex.yaml")
-			}
-
-			var cfg *config.Config
-			loaded, err := config.LoadFile(cfgPath)
-			if err == nil {
-				cfg = &loaded
+			res, err := config.Resolve(repoRoot, f.Config)
+			if err != nil {
+				return err
 			}
 
 			return tui.Run(cmd.Context(), tui.Params{
-				RepoRoot:    repoRoot,
-				ConfigPath:  cfgPath,
-				Config:      cfg,
-				StartScreen: tui.ScreenDashboard,
+				RepoRoot:     repoRoot,
+				ConfigPath:   res.Path,
+				Config:       &res.Config,
+				ConfigSource: res.Source,
+				StartScreen:  tui.ScreenDashboard,
 			})
 		},
 	}

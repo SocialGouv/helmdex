@@ -2,7 +2,6 @@ package cli
 
 import (
 	"os"
-	"path/filepath"
 
 	"helmdex/internal/appinfo"
 	"helmdex/internal/config"
@@ -38,21 +37,16 @@ func NewRootCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			cfgPath := f.Config
-			if cfgPath == "" {
-				cfgPath = filepath.Join(repoRoot, "helmdex.yaml")
-			}
-
-			var cfg *config.Config
-			loaded, err := config.LoadFile(cfgPath)
-			if err == nil {
-				cfg = &loaded
+			res, err := config.Resolve(repoRoot, f.Config)
+			if err != nil {
+				return err
 			}
 
 			return tui.Run(cmd.Context(), tui.Params{
-				RepoRoot:   repoRoot,
-				ConfigPath: cfgPath,
-				Config:     cfg,
+				RepoRoot:     repoRoot,
+				ConfigPath:   res.Path,
+				Config:       &res.Config,
+				ConfigSource: res.Source,
 			})
 		},
 	}

@@ -6,8 +6,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"helmdex/internal/config"
 	"gopkg.in/yaml.v3"
+	"helmdex/internal/config"
 )
 
 func TestE2E_DepDetachAndSyncPresets_Hermetic(t *testing.T) {
@@ -106,4 +106,3 @@ func TestE2E_DepDetachAndSyncPresets_Hermetic(t *testing.T) {
 		t.Fatalf("expected values.yaml to exist after sync-presets: %v", err)
 	}
 }
-

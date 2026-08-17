@@ -198,7 +198,7 @@ func newInstanceDepSyncPresetsCmd(f *rootFlags) *cobra.Command {
 			if _, err := presets.Import(presets.ImportParams{RepoRoot: repoRoot, InstancePath: inst.Path, Config: cfg, Dependencies: chart.Dependencies}); err != nil {
 				return err
 			}
-			if err := values.GenerateMergedValues(inst.Path); err != nil {
+			if err := values.GenerateIfManaged(inst.Path); err != nil {
 				return err
 			}
 
@@ -208,4 +208,3 @@ func newInstanceDepSyncPresetsCmd(f *rootFlags) *cobra.Command {
 	}
 	return cmd
 }
-

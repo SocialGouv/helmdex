@@ -6,12 +6,8 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
 	"strings"
 
-	"helmdex/internal/config"
-	"helmdex/internal/instances"
-	"helmdex/internal/repo"
 	"helmdex/internal/values"
 
 	"github.com/spf13/cobra"
@@ -29,18 +25,6 @@ func newInstanceValuesCmd(f *rootFlags) *cobra.Command {
 	cmd.AddCommand(newInstanceValuesReplaceCmd(f))
 	cmd.AddCommand(newInstanceValuesRegenCmd(f))
 	return cmd
-}
-
-func resolveInstance(repoRoot, cfgPath, instanceName string) (instances.Instance, config.Config, error) {
-	cfg, err := config.LoadFile(cfgPath)
-	if err != nil {
-		return instances.Instance{}, config.Config{}, err
-	}
-	inst, err := instances.Get(repoRoot, cfg.Repo.AppsDir, instanceName)
-	if err != nil {
-		return instances.Instance{}, config.Config{}, err
-	}
-	return inst, cfg, nil
 }
 
 func loadValueFromFlags(valueYAML, valueJSON string) (any, error) {
@@ -77,18 +61,14 @@ func newInstanceValuesGetCmd(f *rootFlags) *cobra.Command {
 	var format string
 	cmd := &cobra.Command{
 		Use:   "get <instance>",
-		Short: "Get a value from values.instance.yaml",
+		Short: "Get a value from the instance overrides file (values.instance.yaml, or values.yaml in direct mode)",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			repoRoot, err := repo.ResolveRoot(f.RepoRoot)
+			repoRoot, _, cfg, err := resolveRepoAndConfig(f)
 			if err != nil {
 				return err
 			}
-			cfgPath := f.Config
-			if cfgPath == "" {
-				cfgPath = filepath.Join(repoRoot, "helmdex.yaml")
-			}
-			inst, _, err := resolveInstance(repoRoot, cfgPath, args[0])
+			inst, err := resolveInstanceByName(repoRoot, cfg, args[0])
 			if err != nil {
 				return err
 			}
@@ -132,18 +112,14 @@ func newInstanceValuesSetCmd(f *rootFlags) *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "set <instance>",
-		Short: "Set a value in values.instance.yaml",
+		Short: "Set a value in the instance overrides file (values.instance.yaml, or values.yaml in direct mode)",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			repoRoot, err := repo.ResolveRoot(f.RepoRoot)
+			repoRoot, _, cfg, err := resolveRepoAndConfig(f)
 			if err != nil {
 				return err
 			}
-			cfgPath := f.Config
-			if cfgPath == "" {
-				cfgPath = filepath.Join(repoRoot, "helmdex.yaml")
-			}
-			inst, _, err := resolveInstance(repoRoot, cfgPath, args[0])
+			inst, err := resolveInstanceByName(repoRoot, cfg, args[0])
 			if err != nil {
 				return err
 			}
@@ -151,24 +127,17 @@ func newInstanceValuesSetCmd(f *rootFlags) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			root, err := values.ReadInstanceValues(inst.Path)
-			if err != nil {
-				return err
-			}
 			p, err := values.ParsePath(path)
 			if err != nil {
 				return err
 			}
-			newRootAny := values.SetAt(root, p, v)
-			newRoot, _ := newRootAny.(map[string]any)
-			if newRoot == nil {
-				newRoot = map[string]any{}
-			}
-			if err := values.WriteInstanceValues(inst.Path, newRoot); err != nil {
+			// Node-level edit preserves comments/ordering of untouched keys —
+			// essential when editing user-owned files (direct mode).
+			if err := values.SetInFile(values.EditFilePath(inst.Path), p, v); err != nil {
 				return err
 			}
 			if regen {
-				if err := values.GenerateMergedValues(inst.Path); err != nil {
+				if err := values.GenerateIfManaged(inst.Path); err != nil {
 					return err
 				}
 			}
@@ -188,22 +157,14 @@ func newInstanceValuesUnsetCmd(f *rootFlags) *cobra.Command {
 	var regen bool
 	cmd := &cobra.Command{
 		Use:   "unset <instance>",
-		Short: "Unset (delete) a value in values.instance.yaml",
+		Short: "Unset (delete) a value in the instance overrides file",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			repoRoot, err := repo.ResolveRoot(f.RepoRoot)
+			repoRoot, _, cfg, err := resolveRepoAndConfig(f)
 			if err != nil {
 				return err
 			}
-			cfgPath := f.Config
-			if cfgPath == "" {
-				cfgPath = filepath.Join(repoRoot, "helmdex.yaml")
-			}
-			inst, _, err := resolveInstance(repoRoot, cfgPath, args[0])
-			if err != nil {
-				return err
-			}
-			root, err := values.ReadInstanceValues(inst.Path)
+			inst, err := resolveInstanceByName(repoRoot, cfg, args[0])
 			if err != nil {
 				return err
 			}
@@ -211,16 +172,11 @@ func newInstanceValuesUnsetCmd(f *rootFlags) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			newRootAny := values.SetAt(root, p, nil)
-			newRoot, _ := newRootAny.(map[string]any)
-			if newRoot == nil {
-				newRoot = map[string]any{}
-			}
-			if err := values.WriteInstanceValues(inst.Path, newRoot); err != nil {
+			if err := values.SetInFile(values.EditFilePath(inst.Path), p, nil); err != nil {
 				return err
 			}
 			if regen {
-				if err := values.GenerateMergedValues(inst.Path); err != nil {
+				if err := values.GenerateIfManaged(inst.Path); err != nil {
 					return err
 				}
 			}
@@ -239,18 +195,14 @@ func newInstanceValuesReplaceCmd(f *rootFlags) *cobra.Command {
 	var regen bool
 	cmd := &cobra.Command{
 		Use:   "replace <instance>",
-		Short: "Replace values.instance.yaml with provided YAML (from --file or --stdin)",
+		Short: "Replace the instance overrides file with provided YAML (from --file or --stdin)",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			repoRoot, err := repo.ResolveRoot(f.RepoRoot)
+			repoRoot, _, cfg, err := resolveRepoAndConfig(f)
 			if err != nil {
 				return err
 			}
-			cfgPath := f.Config
-			if cfgPath == "" {
-				cfgPath = filepath.Join(repoRoot, "helmdex.yaml")
-			}
-			inst, _, err := resolveInstance(repoRoot, cfgPath, args[0])
+			inst, err := resolveInstanceByName(repoRoot, cfg, args[0])
 			if err != nil {
 				return err
 			}
@@ -274,13 +226,13 @@ func newInstanceValuesReplaceCmd(f *rootFlags) *cobra.Command {
 			}
 			obj, ok := root.(map[string]any)
 			if !ok {
-				return fmt.Errorf("values.instance.yaml root must be a YAML mapping")
+				return fmt.Errorf("values root must be a YAML mapping")
 			}
 			if err := values.WriteInstanceValues(inst.Path, obj); err != nil {
 				return err
 			}
 			if regen {
-				if err := values.GenerateMergedValues(inst.Path); err != nil {
+				if err := values.GenerateIfManaged(inst.Path); err != nil {
 					return err
 				}
 			}
@@ -299,19 +251,15 @@ func newInstanceValuesRegenCmd(f *rootFlags) *cobra.Command {
 		Short: "Regenerate merged values.yaml for an instance",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			repoRoot, err := repo.ResolveRoot(f.RepoRoot)
+			repoRoot, _, cfg, err := resolveRepoAndConfig(f)
 			if err != nil {
 				return err
 			}
-			cfgPath := f.Config
-			if cfgPath == "" {
-				cfgPath = filepath.Join(repoRoot, "helmdex.yaml")
-			}
-			inst, _, err := resolveInstance(repoRoot, cfgPath, args[0])
+			inst, err := resolveInstanceByName(repoRoot, cfg, args[0])
 			if err != nil {
 				return err
 			}
-			return values.GenerateMergedValues(inst.Path)
+			return values.GenerateIfManaged(inst.Path)
 		},
 	}
 	return cmd

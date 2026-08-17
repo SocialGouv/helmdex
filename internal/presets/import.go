@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"helmdex/internal/config"
+	"helmdex/internal/values"
 	"helmdex/internal/yamlchart"
 
 	"gopkg.in/yaml.v3"
@@ -32,6 +33,13 @@ type ImportParams struct {
 //
 // This function never modifies user-owned values.instance.yaml.
 func Import(p ImportParams) (Resolution, error) {
+	// Presets materialize as helmdex-managed layer files; direct-mode
+	// instances (no values.instance.yaml, typically in helmdex-agnostic
+	// repos) own all their values files, so importing would pollute them.
+	if !values.IsManaged(p.InstancePath) {
+		return Resolution{ByID: map[yamlchart.DepID]ResolvedDependency{}}, nil
+	}
+
 	res, err := Resolve(p.RepoRoot, p.Config, p.Dependencies)
 	if err != nil {
 		return Resolution{}, err

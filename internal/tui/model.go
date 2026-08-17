@@ -15,6 +15,7 @@ import (
 	"helmdex/internal/config"
 	"helmdex/internal/helmutil"
 	"helmdex/internal/instances"
+	"helmdex/internal/paths"
 	"helmdex/internal/presets"
 	"helmdex/internal/semverutil"
 	"helmdex/internal/values"
@@ -1574,7 +1575,7 @@ func (m *AppModel) presetCoverageForCatalogDep(source depSourceMeta, sourceOK bo
 		return m.depCatalogCoverage, true, ""
 	}
 
-	chartRoot := filepath.Join(m.params.RepoRoot, ".helmdex", "cache", catSrc, chartsPath, chartName)
+	chartRoot := paths.State(m.params.RepoRoot, "cache", catSrc, chartsPath, chartName)
 	cov, ok, err := presets.ReadPresetCoverage(chartRoot)
 	if err != nil {
 		// Treat as no coverage; surface actionable error.
@@ -1926,7 +1927,7 @@ func (m AppModel) applyCatalogDependencyWithSetsCmdCtx(ctx context.Context, appl
 					// continue
 				}
 			}
-			if err := values.GenerateMergedValues(m.selected.Path); err != nil {
+			if err := values.GenerateIfManaged(m.selected.Path); err != nil {
 				rollback()
 				return applyDoneMsg{applyID: applyID, chart: nil, err: err}
 			}
@@ -1943,7 +1944,7 @@ func (m AppModel) applyCatalogDependencyWithSetsCmdCtx(ctx context.Context, appl
 				return applyDoneMsg{applyID: applyID, chart: nil, err: err}
 			}
 		}
-		if err := values.GenerateMergedValues(m.selected.Path); err != nil {
+		if err := values.GenerateIfManaged(m.selected.Path); err != nil {
 			rollback()
 			return applyDoneMsg{applyID: applyID, chart: nil, err: err}
 		}
@@ -2060,7 +2061,7 @@ func (m AppModel) applyDepDetailSetsCmd() tea.Cmd {
 		if _, err := presets.Import(presets.ImportParams{RepoRoot: m.params.RepoRoot, InstancePath: m.selected.Path, Config: *m.params.Config, Dependencies: c.Dependencies}); err != nil {
 			return errMsg{err}
 		}
-		if err := values.GenerateMergedValues(m.selected.Path); err != nil {
+		if err := values.GenerateIfManaged(m.selected.Path); err != nil {
 			return errMsg{err}
 		}
 		return appliedMsg{}
@@ -2108,7 +2109,7 @@ func (m AppModel) syncSelectedDepPresetsCmd(dep yamlchart.Dependency) tea.Cmd {
 		if _, err := presets.Import(presets.ImportParams{RepoRoot: m.params.RepoRoot, InstancePath: m.selected.Path, Config: *m.params.Config, Dependencies: c.Dependencies}); err != nil {
 			return depPresetsSyncDoneMsg{dep: dep, err: err}
 		}
-		if err := values.GenerateMergedValues(m.selected.Path); err != nil {
+		if err := values.GenerateIfManaged(m.selected.Path); err != nil {
 			return depPresetsSyncDoneMsg{dep: dep, err: err}
 		}
 		return depPresetsSyncDoneMsg{dep: dep, err: nil}
@@ -2769,14 +2770,20 @@ func (m AppModel) saveSourcesCmd(name, gitURL, gitRef, platform string) tea.Cmd 
 		if err := cfg.Validate(); err != nil {
 			return sourcesSavedMsg{err: err}
 		}
-		if err := config.WriteFile(m.params.ConfigPath, cfg); err != nil {
+		// Save back to wherever the config was resolved from (repo helmdex.yaml,
+		// user config for agnostic repos, …).
+		if _, err := config.Save(config.Resolved{Path: m.params.ConfigPath, Source: m.params.ConfigSource}, cfg); err != nil {
 			return sourcesSavedMsg{err: err}
 		}
-		loaded, err := config.LoadFile(m.params.ConfigPath)
+		explicit := ""
+		if m.params.ConfigSource == config.SourceFlag {
+			explicit = m.params.ConfigPath
+		}
+		res, err := config.Resolve(m.params.RepoRoot, explicit)
 		if err != nil {
 			return sourcesSavedMsg{err: err}
 		}
-		return sourcesSavedMsg{cfg: &loaded, err: nil}
+		return sourcesSavedMsg{cfg: &res.Config, err: nil}
 	}
 }
 
@@ -6635,7 +6642,7 @@ func (m AppModel) applyDependencyAndApplyInstanceCmd(dep yamlchart.Dependency) t
 				return errMsg{err}
 			}
 		}
-		if err := values.GenerateMergedValues(m.selected.Path); err != nil {
+		if err := values.GenerateIfManaged(m.selected.Path); err != nil {
 			return errMsg{err}
 		}
 		return depAppliedAndAppliedMsg{chart: c}
@@ -6834,7 +6841,7 @@ func (m AppModel) applyDepAliasFromDetailCmd(alias string) tea.Cmd {
 				return errMsg{err}
 			}
 		}
-		if err := values.GenerateMergedValues(m.selected.Path); err != nil {
+		if err := values.GenerateIfManaged(m.selected.Path); err != nil {
 			return errMsg{err}
 		}
 
@@ -6880,7 +6887,7 @@ func (m AppModel) deleteDepFromDetailCmd() tea.Cmd {
 				return errMsg{err}
 			}
 		}
-		if err := values.GenerateMergedValues(m.selected.Path); err != nil {
+		if err := values.GenerateIfManaged(m.selected.Path); err != nil {
 			return errMsg{err}
 		}
 		return depAppliedMsg{chart: c}
@@ -6892,7 +6899,7 @@ func (m AppModel) regenMergedValuesCmd() tea.Cmd {
 		if m.selected == nil {
 			return errMsg{fmt.Errorf("no instance selected")}
 		}
-		if err := values.GenerateMergedValues(m.selected.Path); err != nil {
+		if err := values.GenerateIfManaged(m.selected.Path); err != nil {
 			return errMsg{err}
 		}
 		return regenDoneMsg{}
@@ -6983,7 +6990,7 @@ func (m AppModel) applyInstanceCmd(forceRelock bool) tea.Cmd {
 		if e2eStubHelm() {
 			// Deterministic E2E stub: bypass helm relock pipeline.
 			// Still run merged values generation so the UI behaves realistically.
-			if err := values.GenerateMergedValues(m.selected.Path); err != nil {
+			if err := values.GenerateIfManaged(m.selected.Path); err != nil {
 				return errMsg{err}
 			}
 			return appliedMsg{}
@@ -7008,7 +7015,7 @@ func (m AppModel) applyInstanceCmd(forceRelock bool) tea.Cmd {
 				return errMsg{err}
 			}
 		}
-		if err := values.GenerateMergedValues(m.selected.Path); err != nil {
+		if err := values.GenerateIfManaged(m.selected.Path); err != nil {
 			return errMsg{err}
 		}
 		return appliedMsg{}

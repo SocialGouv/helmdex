@@ -11,9 +11,18 @@ import (
 
 func TestImport_CopiesDefaultPlatformAndSelectedSet(t *testing.T) {
 	repoRoot := t.TempDir()
+	// Mark the repo as helmdex-opted so state resolves to <repoRoot>/.helmdex.
+	if err := os.WriteFile(filepath.Join(repoRoot, "helmdex.yaml"), []byte("apiVersion: helmdex.io/v1alpha1\nkind: HelmdexConfig\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	instancePath := filepath.Join(repoRoot, "apps", "inst")
 	if err := os.MkdirAll(instancePath, 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
+	}
+
+	// Managed instance: presets only import into managed (layered) instances.
+	if err := os.WriteFile(filepath.Join(instancePath, "values.instance.yaml"), []byte("{}\n"), 0o644); err != nil {
+		t.Fatalf("write instance values: %v", err)
 	}
 
 	// Selected set is defined by presence of local file.

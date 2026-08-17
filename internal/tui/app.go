@@ -23,6 +23,9 @@ type Params struct {
 	RepoRoot   string
 	ConfigPath string
 	Config     *config.Config
+	// ConfigSource records where Config was resolved from (repo helmdex.yaml,
+	// user config, …) so saves go back to the right file.
+	ConfigSource config.ConfigSource
 
 	StartScreen ScreenID
 }

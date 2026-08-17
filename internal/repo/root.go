@@ -41,7 +41,21 @@ func ResolveRoot(explicitRoot string) (string, error) {
 		dir = parent
 	}
 
-	// Fallback to cwd if no config exists yet (useful for `init`).
+	// No helmdex.yaml: agnostic repo. Anchor on the nearest git root so
+	// instance discovery sees the whole repo, not just the cwd.
+	dir = cwdAbs
+	for {
+		if _, err := os.Stat(filepath.Join(dir, ".git")); err == nil {
+			return dir, nil
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			break
+		}
+		dir = parent
+	}
+
+	// Fallback to cwd if neither exists yet (useful for `init`).
 	return cwdAbs, nil
 }
 

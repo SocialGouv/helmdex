@@ -7,6 +7,8 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+
+	"helmdex/internal/paths"
 )
 
 // Charts cache stores the result of `helm search repo <repo> -o json` normalized
@@ -21,7 +23,7 @@ type chartsCacheFile struct {
 }
 
 func chartsCacheDir(repoRoot string) string {
-	return filepath.Join(repoRoot, ".helmdex", "cache", "helmcharts")
+	return paths.State(repoRoot, "cache", "helmcharts")
 }
 
 func ChartsCacheKey(repoURL string) string {
@@ -77,4 +79,3 @@ func ChartsCacheStale(fetchedAt time.Time, ttl time.Duration, now time.Time) boo
 func ClearChartsCache(repoRoot string) error {
 	return os.RemoveAll(chartsCacheDir(repoRoot))
 }
-

@@ -10,6 +10,27 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// IsManaged reports whether an instance uses helmdex-managed layered values.
+//
+// Managed instances have a user-owned `values.instance.yaml`; helmdex layers
+// it with defaults/platform/sets and generates `values.yaml`. Instances
+// without it are "direct" (typically in helmdex-agnostic repos): every values
+// file — including `values.yaml` — is user-owned and helmdex never generates
+// or overwrites any of them.
+func IsManaged(instanceDir string) bool {
+	_, err := os.Stat(filepath.Join(instanceDir, "values.instance.yaml"))
+	return err == nil
+}
+
+// GenerateIfManaged regenerates the merged `values.yaml` for managed
+// instances and is a no-op for direct ones (their values files are user-owned).
+func GenerateIfManaged(instanceDir string) error {
+	if !IsManaged(instanceDir) {
+		return nil
+	}
+	return GenerateMergedValues(instanceDir)
+}
+
 // GenerateMergedValues generates `values.yaml` in the instance directory.
 // It deep-merges (in order):
 // - values.default.yaml (if exists)

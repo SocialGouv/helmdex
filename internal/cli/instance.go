@@ -6,10 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"helmdex/internal/config"
 	"helmdex/internal/instances"
 	"helmdex/internal/presets"
-	"helmdex/internal/repo"
 	"helmdex/internal/values"
 	"helmdex/internal/yamlchart"
 
@@ -64,15 +62,7 @@ func newInstanceDepAddCmd(f *rootFlags) *cobra.Command {
 		Short: "Add or update a dependency in Chart.yaml",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			repoRoot, err := repo.ResolveRoot(f.RepoRoot)
-			if err != nil {
-				return err
-			}
-			cfgPath := f.Config
-			if cfgPath == "" {
-				cfgPath = filepath.Join(repoRoot, "helmdex.yaml")
-			}
-			cfg, err := config.LoadFile(cfgPath)
+			repoRoot, _, cfg, err := resolveRepoAndConfig(f)
 			if err != nil {
 				return err
 			}
@@ -125,15 +115,7 @@ func newInstanceDepRmCmd(f *rootFlags) *cobra.Command {
 		Short: "Remove a dependency from Chart.yaml by its id (alias or name)",
 		Args:  cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			repoRoot, err := repo.ResolveRoot(f.RepoRoot)
-			if err != nil {
-				return err
-			}
-			cfgPath := f.Config
-			if cfgPath == "" {
-				cfgPath = filepath.Join(repoRoot, "helmdex.yaml")
-			}
-			cfg, err := config.LoadFile(cfgPath)
+			repoRoot, _, cfg, err := resolveRepoAndConfig(f)
 			if err != nil {
 				return err
 			}
@@ -166,15 +148,7 @@ func newInstanceDepListCmd(f *rootFlags) *cobra.Command {
 		Short: "List dependencies from Chart.yaml",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			repoRoot, err := repo.ResolveRoot(f.RepoRoot)
-			if err != nil {
-				return err
-			}
-			cfgPath := f.Config
-			if cfgPath == "" {
-				cfgPath = filepath.Join(repoRoot, "helmdex.yaml")
-			}
-			cfg, err := config.LoadFile(cfgPath)
+			repoRoot, _, cfg, err := resolveRepoAndConfig(f)
 			if err != nil {
 				return err
 			}
@@ -202,15 +176,7 @@ func newInstanceApplyCmd(f *rootFlags) *cobra.Command {
 		Short: "Apply instance changes (optional relock, import presets, regenerate values.yaml)",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			repoRoot, err := repo.ResolveRoot(f.RepoRoot)
-			if err != nil {
-				return err
-			}
-			cfgPath := f.Config
-			if cfgPath == "" {
-				cfgPath = filepath.Join(repoRoot, "helmdex.yaml")
-			}
-			cfg, err := config.LoadFile(cfgPath)
+			repoRoot, _, cfg, err := resolveRepoAndConfig(f)
 			if err != nil {
 				return err
 			}
@@ -242,7 +208,7 @@ func newInstanceApplyCmd(f *rootFlags) *cobra.Command {
 				return err
 			}
 
-			if err := values.GenerateMergedValues(inst.Path); err != nil {
+			if err := values.GenerateIfManaged(inst.Path); err != nil {
 				return err
 			}
 			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Applied instance %s\n", name)
@@ -259,15 +225,7 @@ func newInstanceCreateCmd(f *rootFlags) *cobra.Command {
 		Short: "Create a new umbrella chart instance",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			repoRoot, err := repo.ResolveRoot(f.RepoRoot)
-			if err != nil {
-				return err
-			}
-			cfgPath := f.Config
-			if cfgPath == "" {
-				cfgPath = filepath.Join(repoRoot, "helmdex.yaml")
-			}
-			cfg, err := config.LoadFile(cfgPath)
+			repoRoot, _, cfg, err := resolveRepoAndConfig(f)
 			if err != nil {
 				return err
 			}
@@ -279,7 +237,7 @@ func newInstanceCreateCmd(f *rootFlags) *cobra.Command {
 			}
 
 			// Generate values.yaml from available layers (at least values.instance.yaml).
-			if err := values.GenerateMergedValues(inst.Path); err != nil {
+			if err := values.GenerateIfManaged(inst.Path); err != nil {
 				return err
 			}
 
@@ -295,15 +253,7 @@ func newInstanceListCmd(f *rootFlags) *cobra.Command {
 		Use:   "list",
 		Short: "List instances",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			repoRoot, err := repo.ResolveRoot(f.RepoRoot)
-			if err != nil {
-				return err
-			}
-			cfgPath := f.Config
-			if cfgPath == "" {
-				cfgPath = filepath.Join(repoRoot, "helmdex.yaml")
-			}
-			cfg, err := config.LoadFile(cfgPath)
+			repoRoot, _, cfg, err := resolveRepoAndConfig(f)
 			if err != nil {
 				return err
 			}
@@ -329,15 +279,7 @@ func newInstanceUpdateCmd(f *rootFlags) *cobra.Command {
 		Short: "Update an instance (regen generated values and optionally relock deps)",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			repoRoot, err := repo.ResolveRoot(f.RepoRoot)
-			if err != nil {
-				return err
-			}
-			cfgPath := f.Config
-			if cfgPath == "" {
-				cfgPath = filepath.Join(repoRoot, "helmdex.yaml")
-			}
-			cfg, err := config.LoadFile(cfgPath)
+			repoRoot, _, cfg, err := resolveRepoAndConfig(f)
 			if err != nil {
 				return err
 			}
@@ -360,7 +302,7 @@ func newInstanceUpdateCmd(f *rootFlags) *cobra.Command {
 				}
 			}
 
-			if err := values.GenerateMergedValues(inst.Path); err != nil {
+			if err := values.GenerateIfManaged(inst.Path); err != nil {
 				return err
 			}
 
@@ -384,15 +326,7 @@ func newInstanceRmCmd(f *rootFlags) *cobra.Command {
 			if !yes {
 				return fmt.Errorf("refusing to delete without --yes (v0.1 safety)")
 			}
-			repoRoot, err := repo.ResolveRoot(f.RepoRoot)
-			if err != nil {
-				return err
-			}
-			cfgPath := f.Config
-			if cfgPath == "" {
-				cfgPath = filepath.Join(repoRoot, "helmdex.yaml")
-			}
-			cfg, err := config.LoadFile(cfgPath)
+			repoRoot, _, cfg, err := resolveRepoAndConfig(f)
 			if err != nil {
 				return err
 			}

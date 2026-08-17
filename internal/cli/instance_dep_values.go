@@ -109,10 +109,6 @@ func newInstanceDepValuesSetCmd(f *rootFlags) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			root, err := values.ReadInstanceValues(inst.Path)
-			if err != nil {
-				return err
-			}
 			full, err := depValuesFullPath(args[1], path)
 			if err != nil {
 				return err
@@ -121,16 +117,11 @@ func newInstanceDepValuesSetCmd(f *rootFlags) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			newRootAny := values.SetAt(root, p, v)
-			newRoot, _ := newRootAny.(map[string]any)
-			if newRoot == nil {
-				newRoot = map[string]any{}
-			}
-			if err := values.WriteInstanceValues(inst.Path, newRoot); err != nil {
+			if err := values.SetInFile(values.EditFilePath(inst.Path), p, v); err != nil {
 				return err
 			}
 			if regen {
-				return values.GenerateMergedValues(inst.Path)
+				return values.GenerateIfManaged(inst.Path)
 			}
 			return nil
 		},
@@ -159,10 +150,6 @@ func newInstanceDepValuesUnsetCmd(f *rootFlags) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			root, err := values.ReadInstanceValues(inst.Path)
-			if err != nil {
-				return err
-			}
 			full, err := depValuesFullPath(args[1], path)
 			if err != nil {
 				return err
@@ -171,16 +158,11 @@ func newInstanceDepValuesUnsetCmd(f *rootFlags) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			newRootAny := values.SetAt(root, p, nil)
-			newRoot, _ := newRootAny.(map[string]any)
-			if newRoot == nil {
-				newRoot = map[string]any{}
-			}
-			if err := values.WriteInstanceValues(inst.Path, newRoot); err != nil {
+			if err := values.SetInFile(values.EditFilePath(inst.Path), p, nil); err != nil {
 				return err
 			}
 			if regen {
-				return values.GenerateMergedValues(inst.Path)
+				return values.GenerateIfManaged(inst.Path)
 			}
 			return nil
 		},

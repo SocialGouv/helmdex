@@ -8,6 +8,8 @@ import (
 	"strings"
 
 	"gopkg.in/yaml.v3"
+
+	"helmdex/internal/paths"
 )
 
 // EntryWithSource represents a catalog entry along with the configured source
@@ -22,7 +24,7 @@ type EntryWithSource struct {
 // LoadLocalCatalogEntries loads all `*.yaml` catalog files from `.helmdex/catalog/`.
 // This reads the cache produced by [`catalog sync`](internal/catalog/sync.go:1).
 func LoadLocalCatalogEntries(repoRoot string) ([]Entry, error) {
-	catDir := filepath.Join(repoRoot, ".helmdex", "catalog")
+	catDir := paths.State(repoRoot, "catalog")
 	files, err := filepath.Glob(filepath.Join(catDir, "*.yaml"))
 	if err != nil {
 		return nil, err
@@ -61,7 +63,7 @@ func LoadLocalCatalogEntries(repoRoot string) ([]Entry, error) {
 // LoadLocalCatalogEntriesWithSource loads catalog entries like LoadLocalCatalogEntries,
 // but keeps the origin source name for each entry.
 func LoadLocalCatalogEntriesWithSource(repoRoot string) ([]EntryWithSource, error) {
-	catDir := filepath.Join(repoRoot, ".helmdex", "catalog")
+	catDir := paths.State(repoRoot, "catalog")
 	files, err := filepath.Glob(filepath.Join(catDir, "*.yaml"))
 	if err != nil {
 		return nil, err

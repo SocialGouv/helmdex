@@ -26,6 +26,10 @@ type Config struct {
 
 type RepoConfig struct {
 	AppsDir string `yaml:"appsDir"`
+	// TemplatesDir holds instance blueprints (chart dirs) that can be copied
+	// into AppsDir via create-from-template. Empty enables auto-detection of
+	// a top-level `templates/` dir containing chart dirs.
+	TemplatesDir string `yaml:"templatesDir,omitempty"`
 }
 
 type PlatformConfig struct {

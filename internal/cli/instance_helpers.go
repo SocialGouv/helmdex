@@ -14,15 +14,11 @@ func resolveRepoAndConfig(f *rootFlags) (repoRoot string, cfgPath string, cfg co
 	if err != nil {
 		return "", "", config.Config{}, err
 	}
-	cfgPath = f.Config
-	if cfgPath == "" {
-		cfgPath = filepath.Join(repoRoot, "helmdex.yaml")
-	}
-	cfg, err = config.LoadFile(cfgPath)
+	res, err := config.Resolve(repoRoot, f.Config)
 	if err != nil {
 		return "", "", config.Config{}, err
 	}
-	return repoRoot, cfgPath, cfg, nil
+	return repoRoot, res.Path, res.Config, nil
 }
 
 func resolveInstanceByName(repoRoot string, cfg config.Config, name string) (instances.Instance, error) {
