@@ -13,6 +13,7 @@ import (
 
 	"helmdex/internal/artifacthub"
 	"helmdex/internal/catalog"
+	"helmdex/internal/depmeta"
 	"helmdex/internal/helmutil"
 	"helmdex/internal/instances"
 	"helmdex/internal/paths"
@@ -53,6 +54,10 @@ type depInfo struct {
 	Alias      string `json:"alias,omitempty"`
 	Version    string `json:"version"`
 	Repository string `json:"repository"`
+	// Source metadata (catalog / artifacthub / arbitrary), when recorded.
+	SourceKind    string `json:"sourceKind,omitempty"`
+	CatalogID     string `json:"catalogID,omitempty"`
+	CatalogSource string `json:"catalogSource,omitempty"`
 }
 
 type instanceInfo struct {
@@ -76,13 +81,19 @@ func (s *Server) instanceInfo(inst instances.Instance) instanceInfo {
 		return info
 	}
 	for _, d := range c.Dependencies {
-		info.Deps = append(info.Deps, depInfo{
+		di := depInfo{
 			ID:         string(yamlchart.DependencyID(d)),
 			Name:       d.Name,
 			Alias:      d.Alias,
 			Version:    d.Version,
 			Repository: d.Repository,
-		})
+		}
+		if m, ok := depmeta.Read(s.ws().RepoRoot, inst.Name, yamlchart.DependencyID(d)); ok {
+			di.SourceKind = string(m.Kind)
+			di.CatalogID = m.CatalogID
+			di.CatalogSource = m.CatalogSource
+		}
+		info.Deps = append(info.Deps, di)
 	}
 	return info
 }
@@ -420,6 +431,11 @@ type depAddRequest struct {
 	Repository string `json:"repository"`
 	Version    string `json:"version"`
 	Alias      string `json:"alias,omitempty"`
+	// Source attribution recorded in depmeta ("catalog" | "artifacthub" |
+	// "arbitrary"; empty defaults to arbitrary).
+	SourceKind    string `json:"sourceKind,omitempty"`
+	CatalogID     string `json:"catalogID,omitempty"`
+	CatalogSource string `json:"catalogSource,omitempty"`
 }
 
 func (s *Server) handleDepAdd(w http.ResponseWriter, r *http.Request) {
@@ -450,7 +466,42 @@ func (s *Server) handleDepAdd(w http.ResponseWriter, r *http.Request) {
 		httpError(w, http.StatusInternalServerError, err)
 		return
 	}
+	kind := depmeta.Kind(req.SourceKind)
+	switch kind {
+	case depmeta.KindCatalog, depmeta.KindArtifactHub:
+	default:
+		kind = depmeta.KindArbitrary
+	}
+	if err := depmeta.Write(s.ws().RepoRoot, inst.Name, yamlchart.DependencyID(dep), depmeta.Meta{
+		Kind:          kind,
+		CatalogID:     req.CatalogID,
+		CatalogSource: req.CatalogSource,
+	}); err != nil {
+		httpError(w, http.StatusInternalServerError, err)
+		return
+	}
 	writeJSON(w, http.StatusCreated, s.instanceInfo(inst))
+}
+
+func (s *Server) handleDepDetach(w http.ResponseWriter, r *http.Request) {
+	inst, err := s.getInstance(r.PathValue("name"))
+	if err != nil {
+		httpError(w, http.StatusNotFound, err)
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	id := yamlchart.DepID(r.PathValue("depID"))
+	m, ok := depmeta.Read(s.ws().RepoRoot, inst.Name, id)
+	if !ok || m.Kind != depmeta.KindCatalog {
+		httpError(w, http.StatusBadRequest, fmt.Errorf("dependency %q is not catalog-attached", id))
+		return
+	}
+	if err := depmeta.Write(s.ws().RepoRoot, inst.Name, id, depmeta.Meta{Kind: depmeta.KindArbitrary}); err != nil {
+		httpError(w, http.StatusInternalServerError, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, s.instanceInfo(inst))
 }
 
 func (s *Server) handleDepRemove(w http.ResponseWriter, r *http.Request) {
@@ -596,6 +647,11 @@ func (s *Server) handleDepInspect(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		httpError(w, http.StatusNotFound, err)
 		return
+	}
+	// Optional version override — lets the UI diff artifacts between the
+	// current and a candidate version.
+	if v := r.URL.Query().Get("version"); v != "" {
+		dep.Version = v
 	}
 	content, err := instances.LoadDepInspectContent(r.Context(), s.ws().RepoRoot, inst.Path, dep, kind)
 	if err != nil {

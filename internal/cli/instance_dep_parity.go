@@ -8,65 +8,30 @@ import (
 
 	"helmdex/internal/catalog"
 	"helmdex/internal/config"
+	"helmdex/internal/depmeta"
 	"helmdex/internal/presets"
 	"helmdex/internal/values"
 	"helmdex/internal/yamlchart"
 
 	"github.com/spf13/cobra"
-	"gopkg.in/yaml.v3"
 )
 
-// NOTE: The TUI persists per-dependency source metadata under `.helmdex/depmeta/...`.
-// We duplicate the tiny read/write logic here to avoid importing the TUI package.
-
-type depSourceKind string
+// Per-dependency source metadata lives in internal/depmeta (shared with
+// the TUI and server).
 
 const (
-	depSourceCatalog   depSourceKind = "catalog"
-	depSourceArbitrary depSourceKind = "arbitrary"
+	depSourceCatalog   = depmeta.KindCatalog
+	depSourceArbitrary = depmeta.KindArbitrary
 )
 
-type depSourceMeta struct {
-	Kind          depSourceKind `yaml:"kind"`
-	CatalogID     string        `yaml:"catalogID,omitempty"`
-	CatalogSource string        `yaml:"catalogSource,omitempty"`
-}
-
-func depMetaPath(repoRoot, instanceName string, depID yamlchart.DepID) string {
-	return filepath.Join(repoRoot, ".helmdex", "depmeta", instanceName, fmt.Sprintf("%s.yaml", depID))
-}
+type depSourceMeta = depmeta.Meta
 
 func readDepSourceMeta(repoRoot, instanceName string, depID yamlchart.DepID) (depSourceMeta, bool) {
-	if strings.TrimSpace(repoRoot) == "" || strings.TrimSpace(instanceName) == "" || strings.TrimSpace(string(depID)) == "" {
-		return depSourceMeta{}, false
-	}
-	b, err := os.ReadFile(depMetaPath(repoRoot, instanceName, depID))
-	if err != nil {
-		return depSourceMeta{}, false
-	}
-	var m depSourceMeta
-	if err := yaml.Unmarshal(b, &m); err != nil {
-		return depSourceMeta{}, false
-	}
-	if strings.TrimSpace(string(m.Kind)) == "" {
-		return depSourceMeta{}, false
-	}
-	return m, true
+	return depmeta.Read(repoRoot, instanceName, depID)
 }
 
 func writeDepSourceMeta(repoRoot, instanceName string, depID yamlchart.DepID, meta depSourceMeta) error {
-	if strings.TrimSpace(repoRoot) == "" || strings.TrimSpace(instanceName) == "" || strings.TrimSpace(string(depID)) == "" {
-		return fmt.Errorf("missing repoRoot/instanceName/depID")
-	}
-	p := depMetaPath(repoRoot, instanceName, depID)
-	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
-		return err
-	}
-	b, err := yaml.Marshal(meta)
-	if err != nil {
-		return err
-	}
-	return os.WriteFile(p, b, 0o644)
+	return depmeta.Write(repoRoot, instanceName, depID, meta)
 }
 
 func removeOrphanDepSetMarkers(instancePath string, depID yamlchart.DepID, allowedSets map[string]struct{}) error {

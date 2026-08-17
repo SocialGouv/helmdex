@@ -3,9 +3,9 @@ package cli
 import (
 	"fmt"
 	"os"
-	"path/filepath"
 
 	"helmdex/internal/helmutil"
+	"helmdex/internal/paths"
 	"helmdex/internal/repo"
 
 	"github.com/spf13/cobra"
@@ -38,7 +38,7 @@ func newCacheClearCmd(f *rootFlags) *cobra.Command {
 			}
 			if clearHelm {
 				// Wipe isolated helm env(s) too.
-				p := filepath.Join(repoRoot, ".helmdex", "helm")
+				p := paths.State(repoRoot, "helm")
 				if err := removeAll(p); err != nil {
 					return err
 				}

@@ -92,9 +92,14 @@ func (s *Server) routes() {
 	m.HandleFunc("GET /api/instances/{name}/deps", s.handleDepsList)
 	m.HandleFunc("POST /api/instances/{name}/deps", s.handleDepAdd)
 	m.HandleFunc("DELETE /api/instances/{name}/deps/{depID}", s.handleDepRemove)
+	m.HandleFunc("POST /api/instances/{name}/deps/{depID}/detach", s.handleDepDetach)
 	m.HandleFunc("POST /api/instances/{name}/deps/{depID}/version", s.handleDepSetVersion)
 	m.HandleFunc("GET /api/instances/{name}/deps/{depID}/versions", s.handleDepVersions)
 	m.HandleFunc("GET /api/instances/{name}/deps/{depID}/inspect", s.handleDepInspect)
+
+	m.HandleFunc("GET /api/instances/{name}/sets", s.handleSetsList)
+	m.HandleFunc("POST /api/instances/{name}/sets", s.handleSetEnable)
+	m.HandleFunc("DELETE /api/instances/{name}/sets", s.handleSetDisable)
 
 	m.HandleFunc("GET /api/templates", s.handleTemplatesList)
 

@@ -1,5 +1,6 @@
 import type {
   AHPackage,
+  SetsInfo,
   CatalogEntryWithSource,
   DepVersions,
   FileInfo,
@@ -83,11 +84,27 @@ export const api = {
   valuesRegen: (name: string) =>
     request<void>(`/api/instances/${encodeURIComponent(name)}/values/regen`, { method: "POST" }),
 
-  addDep: (name: string, dep: { name: string; repository: string; version: string; alias?: string }) =>
+  addDep: (
+    name: string,
+    dep: {
+      name: string;
+      repository: string;
+      version: string;
+      alias?: string;
+      sourceKind?: string;
+      catalogID?: string;
+      catalogSource?: string;
+    },
+  ) =>
     request<InstanceInfo>(`/api/instances/${encodeURIComponent(name)}/deps`, {
       method: "POST",
       body: JSON.stringify(dep),
     }),
+  detachDep: (name: string, depID: string) =>
+    request<InstanceInfo>(
+      `/api/instances/${encodeURIComponent(name)}/deps/${encodeURIComponent(depID)}/detach`,
+      { method: "POST" },
+    ),
   removeDep: (name: string, depID: string) =>
     request<void>(`/api/instances/${encodeURIComponent(name)}/deps/${encodeURIComponent(depID)}`, {
       method: "DELETE",
@@ -101,10 +118,23 @@ export const api = {
     request<DepVersions>(
       `/api/instances/${encodeURIComponent(name)}/deps/${encodeURIComponent(depID)}/versions`,
     ),
-  depInspect: (name: string, depID: string, kind: InspectKind) =>
+  depInspect: (name: string, depID: string, kind: InspectKind, version?: string) =>
     request<string>(
-      `/api/instances/${encodeURIComponent(name)}/deps/${encodeURIComponent(depID)}/inspect?kind=${kind}`,
+      `/api/instances/${encodeURIComponent(name)}/deps/${encodeURIComponent(depID)}/inspect?kind=${kind}` +
+        (version ? `&version=${encodeURIComponent(version)}` : ""),
     ),
+
+  sets: (name: string) => request<SetsInfo>(`/api/instances/${encodeURIComponent(name)}/sets`),
+  enableSet: (name: string, set: string, depID?: string) =>
+    request<void>(`/api/instances/${encodeURIComponent(name)}/sets`, {
+      method: "POST",
+      body: JSON.stringify({ set, depID: depID || undefined }),
+    }),
+  disableSet: (name: string, set: string, depID?: string) =>
+    request<void>(`/api/instances/${encodeURIComponent(name)}/sets`, {
+      method: "DELETE",
+      body: JSON.stringify({ set, depID: depID || undefined }),
+    }),
 
   templates: () => request<TemplateInfo[]>("/api/templates"),
 

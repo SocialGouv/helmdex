@@ -7,8 +7,9 @@ import { api } from "../api/client";
 import DepsTab from "../components/DepsTab";
 import ValuesTab from "../components/ValuesTab";
 import FilesTab from "../components/FilesTab";
+import SetsTab from "../components/SetsTab";
 
-const TABS = ["deps", "values", "files"] as const;
+const TABS = ["deps", "values", "sets", "files"] as const;
 type Tab = (typeof TABS)[number];
 
 export default function InstancePage() {
@@ -130,6 +131,9 @@ export default function InstancePage() {
         </Tabs.Content>
         <Tabs.Content value="values" className="min-h-0 flex-1">
           {inst.data && <ValuesTab inst={inst.data} />}
+        </Tabs.Content>
+        <Tabs.Content value="sets" className="min-h-0 flex-1">
+          {inst.data && <SetsTab inst={inst.data} />}
         </Tabs.Content>
         <Tabs.Content value="files" className="min-h-0 flex-1">
           {inst.data && <FilesTab inst={inst.data} />}

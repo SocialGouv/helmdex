@@ -1,10 +1,11 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import * as Dialog from "@radix-ui/react-dialog";
-import { Eye, Plus, Tag, Trash2 } from "lucide-react";
+import { Eye, GitCompareArrows, Plus, Tag, Trash2, Unlink } from "lucide-react";
 import { api } from "../api/client";
 import type { DepInfo, InspectKind, InstanceInfo } from "../api/types";
 import AddDepWizard from "./AddDepWizard";
+import DepDiffDialog from "./DepDiffDialog";
 
 function InspectDialog({
   inst,
@@ -150,14 +151,46 @@ function VersionDialog({
   );
 }
 
+function SourceBadge({ dep }: { dep: DepInfo }) {
+  if (!dep.sourceKind) return null;
+  const label =
+    dep.sourceKind === "catalog"
+      ? `CAT${dep.catalogSource ? ` ${dep.catalogSource}` : ""}`
+      : dep.sourceKind === "artifacthub"
+        ? "AH"
+        : "ARB";
+  const title =
+    dep.sourceKind === "catalog"
+      ? `Catalog ${dep.catalogSource ?? ""} (${dep.catalogID ?? ""})`
+      : dep.sourceKind === "artifacthub"
+        ? "Artifact Hub"
+        : "Arbitrary";
+  return (
+    <span
+      title={title}
+      className={`rounded px-1.5 py-0.5 text-[10px] uppercase tracking-wide ${
+        dep.sourceKind === "catalog" ? "bg-panel-2 text-accent-2" : "bg-panel-2 text-muted"
+      }`}
+    >
+      {label}
+    </span>
+  );
+}
+
 export default function DepsTab({ inst }: { inst: InstanceInfo }) {
   const qc = useQueryClient();
   const [adding, setAdding] = useState(false);
   const [inspecting, setInspecting] = useState<DepInfo | null>(null);
   const [versioning, setVersioning] = useState<DepInfo | null>(null);
+  const [diffing, setDiffing] = useState<DepInfo | null>(null);
 
   const remove = useMutation({
     mutationFn: (depID: string) => api.removeDep(inst.name, depID),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: ["instance", inst.name] }),
+  });
+
+  const detach = useMutation({
+    mutationFn: (depID: string) => api.detachDep(inst.name, depID),
     onSuccess: () => void qc.invalidateQueries({ queryKey: ["instance", inst.name] }),
   });
 
@@ -176,6 +209,7 @@ export default function DepsTab({ inst }: { inst: InstanceInfo }) {
       </div>
 
       {remove.isError && <div className="mb-2 text-sm text-error">{(remove.error as Error).message}</div>}
+      {detach.isError && <div className="mb-2 text-sm text-error">{(detach.error as Error).message}</div>}
 
       <div className="overflow-hidden rounded-lg border border-border">
         <table className="w-full text-sm">
@@ -191,7 +225,12 @@ export default function DepsTab({ inst }: { inst: InstanceInfo }) {
           <tbody>
             {inst.deps.map((d) => (
               <tr key={d.id} className="border-t border-border hover:bg-panel">
-                <td className="px-3 py-2 font-medium">{d.id}</td>
+                <td className="px-3 py-2 font-medium">
+                  <span className="flex items-center gap-2">
+                    {d.id}
+                    <SourceBadge dep={d} />
+                  </span>
+                </td>
                 <td className="px-3 py-2">{d.name}</td>
                 <td className="px-3 py-2 font-mono text-xs">{d.version}</td>
                 <td className="max-w-md truncate px-3 py-2 text-muted" title={d.repository}>
@@ -213,6 +252,26 @@ export default function DepsTab({ inst }: { inst: InstanceInfo }) {
                     >
                       <Tag className="h-4 w-4" />
                     </button>
+                    <button
+                      onClick={() => setDiffing(d)}
+                      className="rounded p-1 text-muted hover:bg-panel-2 hover:text-text"
+                      title="Diff default values/schema against another version"
+                    >
+                      <GitCompareArrows className="h-4 w-4" />
+                    </button>
+                    {d.sourceKind === "catalog" && (
+                      <button
+                        onClick={() => {
+                          if (window.confirm(`Detach ${d.id} from the catalog? It becomes an arbitrary dependency.`)) {
+                            detach.mutate(d.id);
+                          }
+                        }}
+                        className="rounded p-1 text-muted hover:bg-panel-2 hover:text-warn"
+                        title="Detach from catalog"
+                      >
+                        <Unlink className="h-4 w-4" />
+                      </button>
+                    )}
                     <button
                       onClick={() => {
                         if (window.confirm(`Remove dependency ${d.id} from Chart.yaml?`)) {
@@ -242,6 +301,7 @@ export default function DepsTab({ inst }: { inst: InstanceInfo }) {
       {adding && <AddDepWizard inst={inst} onClose={() => setAdding(false)} />}
       {inspecting && <InspectDialog inst={inst} dep={inspecting} onClose={() => setInspecting(null)} />}
       {versioning && <VersionDialog inst={inst} dep={versioning} onClose={() => setVersioning(null)} />}
+      {diffing && <DepDiffDialog inst={inst} dep={diffing} onClose={() => setDiffing(null)} />}
     </div>
   );
 }

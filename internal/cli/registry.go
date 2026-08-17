@@ -1,9 +1,8 @@
 package cli
 
 import (
-	"path/filepath"
-
 	"helmdex/internal/helmutil"
+	"helmdex/internal/paths"
 	"helmdex/internal/repo"
 
 	"github.com/spf13/cobra"
@@ -35,7 +34,7 @@ func newRegistryLoginCmd(f *rootFlags) *cobra.Command {
 			// Repo-root shared registry config.
 			env := helmutil.EnvForRepo(repoRoot)
 			// Ensure registry config is repo-root scoped.
-			env.RegistryConfig = filepath.Join(repoRoot, ".helmdex", "helm", "registry", "config.json")
+			env.RegistryConfig = paths.State(repoRoot, "helm", "registry", "config.json")
 
 			reg := args[0]
 			return helmutil.RegistryLogin(cmd.Context(), env, reg, helmutil.RegistryLoginOptions{

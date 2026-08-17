@@ -7,35 +7,29 @@ import (
 	"strings"
 
 	"helmdex/internal/catalog"
-	"helmdex/internal/paths"
+	"helmdex/internal/depmeta"
 	"helmdex/internal/yamlchart"
 
 	"gopkg.in/yaml.v3"
 )
 
-type depSourceKind string
+// Source metadata storage lives in internal/depmeta (shared with CLI and
+// server); this file keeps the TUI-side helpers around it.
 
 const (
-	depSourceCatalog     depSourceKind = "catalog"
-	depSourceArtifactHub depSourceKind = "artifacthub"
-	depSourceArbitrary   depSourceKind = "arbitrary"
+	depSourceCatalog     = depmeta.KindCatalog
+	depSourceArtifactHub = depmeta.KindArtifactHub
+	depSourceArbitrary   = depmeta.KindArbitrary
 )
 
-type depSourceMeta struct {
-	Kind      depSourceKind `yaml:"kind"`
-	CatalogID string        `yaml:"catalogID,omitempty"`
-	// CatalogSource is the configured source name that produced the catalog entry.
-	// It corresponds to the `.helmdex/catalog/<source>.yaml` filename.
-	CatalogSource string `yaml:"catalogSource,omitempty"`
-}
+type depSourceMeta = depmeta.Meta
 
 func depMetaPath(repoRoot, instanceName string, depID yamlchart.DepID) string {
-	// Stored at repo-level state: depmeta/<instanceName>/<depID>.yaml
-	return paths.State(repoRoot, "depmeta", instanceName, fmt.Sprintf("%s.yaml", depID))
+	return depmeta.Path(repoRoot, instanceName, depID)
 }
 
 func depMetaInstanceDir(repoRoot, instanceName string) string {
-	return paths.State(repoRoot, "depmeta", instanceName)
+	return depmeta.InstanceDir(repoRoot, instanceName)
 }
 
 func renameDepMetaInstanceDir(repoRoot, oldInstanceName, newInstanceName string) error {

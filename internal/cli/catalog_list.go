@@ -2,10 +2,10 @@ package cli
 
 import (
 	"fmt"
-	"path/filepath"
 	"strings"
 
 	"helmdex/internal/catalog"
+	"helmdex/internal/paths"
 	"helmdex/internal/repo"
 
 	"github.com/spf13/cobra"
@@ -76,7 +76,7 @@ func newCatalogGetCmd(f *rootFlags) *cobra.Command {
 					}
 				}
 			}
-			catDir := filepath.Join(repoRoot, ".helmdex", "catalog")
+			catDir := paths.State(repoRoot, "catalog")
 			return fmt.Errorf("catalog entry %q not found (cache dir: %s; run 'helmdex catalog sync')", id, catDir)
 		},
 	}

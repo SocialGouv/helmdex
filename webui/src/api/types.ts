@@ -14,6 +14,9 @@ export interface DepInfo {
   alias?: string;
   version: string;
   repository: string;
+  sourceKind?: "catalog" | "artifacthub" | "arbitrary";
+  catalogID?: string;
+  catalogSource?: string;
 }
 
 export interface InstanceInfo {
@@ -80,3 +83,9 @@ export interface ServerEvent {
 }
 
 export type InspectKind = "readme" | "values" | "schema";
+
+export interface SetsInfo {
+  managed: boolean;
+  sets: string[];
+  depSets: Record<string, string[]>;
+}

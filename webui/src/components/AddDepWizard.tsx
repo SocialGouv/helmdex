@@ -11,9 +11,12 @@ interface Draft {
   repository: string;
   version: string;
   alias: string;
+  sourceKind: "catalog" | "artifacthub" | "arbitrary";
+  catalogID?: string;
+  catalogSource?: string;
 }
 
-const emptyDraft: Draft = { name: "", repository: "", version: "", alias: "" };
+const emptyDraft: Draft = { name: "", repository: "", version: "", alias: "", sourceKind: "arbitrary" };
 
 export default function AddDepWizard({ inst, onClose }: { inst: InstanceInfo; onClose: () => void }) {
   const qc = useQueryClient();
@@ -35,6 +38,9 @@ export default function AddDepWizard({ inst, onClose }: { inst: InstanceInfo; on
         repository: draft.repository.trim(),
         version: draft.version.trim(),
         alias: draft.alias.trim() || undefined,
+        sourceKind: draft.sourceKind,
+        catalogID: draft.catalogID,
+        catalogSource: draft.catalogSource,
       }),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ["instance", inst.name] });
@@ -48,11 +54,20 @@ export default function AddDepWizard({ inst, onClose }: { inst: InstanceInfo; on
       repository: e.Entry.Chart.Repo,
       version: e.Entry.Version,
       alias: "",
+      sourceKind: "catalog",
+      catalogID: e.Entry.ID,
+      catalogSource: e.SourceName,
     });
   };
 
   const pickAH = (p: AHPackage) => {
-    setDraft({ name: p.Name, repository: p.RepositoryURL, version: p.LatestVersion, alias: "" });
+    setDraft({
+      name: p.Name,
+      repository: p.RepositoryURL,
+      version: p.LatestVersion,
+      alias: "",
+      sourceKind: "artifacthub",
+    });
   };
 
   const canSubmit = draft.name.trim() && draft.repository.trim() && draft.version.trim();
@@ -170,7 +185,15 @@ export default function AddDepWizard({ inst, onClose }: { inst: InstanceInfo; on
             <div className="grid grid-cols-2 gap-2">
               <input
                 value={draft.repository}
-                onChange={(e) => setDraft({ ...draft, repository: e.target.value })}
+                onChange={(e) =>
+                  setDraft({
+                    ...draft,
+                    repository: e.target.value,
+                    sourceKind: "arbitrary",
+                    catalogID: undefined,
+                    catalogSource: undefined,
+                  })
+                }
                 placeholder="repository (https://… or oci://…)"
                 className="col-span-2 rounded-md border border-border bg-panel-2 px-3 py-1.5 text-sm outline-none focus:border-accent"
               />
