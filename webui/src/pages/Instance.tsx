@@ -1,7 +1,6 @@
 import { useState } from "react";
 import { Link, useLocation, useParams } from "wouter";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import * as Tabs from "@radix-ui/react-tabs";
 import { ArrowLeft, Hammer, Pencil } from "lucide-react";
 import { api } from "../api/client";
 import DepsTab from "../components/DepsTab";
@@ -110,35 +109,31 @@ export default function InstancePage() {
       {rename.isError && <div className="mb-2 text-sm text-error">{(rename.error as Error).message}</div>}
       {inst.isError && <div className="text-error">{(inst.error as Error).message}</div>}
 
-      <Tabs.Root
-        value={tab}
-        onValueChange={(v) => navigate(`/instances/${encodeURIComponent(name)}/${v}`, { replace: true })}
-        className="flex min-h-0 flex-1 flex-col"
-      >
-        <Tabs.List className="mb-4 flex gap-1 border-b border-border">
+      {/* Plain button tab bar: Radix Tabs' focus-driven activation does not
+          fire reliably under WebKitGTK (desktop build). */}
+      <div className="flex min-h-0 flex-1 flex-col">
+        <div role="tablist" className="mb-4 flex gap-1 border-b border-border">
           {TABS.map((t) => (
-            <Tabs.Trigger
+            <button
               key={t}
-              value={t}
-              className="border-b-2 border-transparent px-3 py-2 text-sm capitalize text-muted data-[state=active]:border-accent data-[state=active]:text-text"
+              role="tab"
+              aria-selected={tab === t}
+              onClick={() => navigate(`/instances/${encodeURIComponent(name)}/${t}`, { replace: true })}
+              className={`border-b-2 px-3 py-2 text-sm capitalize ${
+                tab === t ? "border-accent text-text" : "border-transparent text-muted hover:text-text"
+              }`}
             >
               {t === "deps" ? "Dependencies" : t}
-            </Tabs.Trigger>
+            </button>
           ))}
-        </Tabs.List>
-        <Tabs.Content value="deps" className="min-h-0 flex-1">
-          {inst.data && <DepsTab inst={inst.data} />}
-        </Tabs.Content>
-        <Tabs.Content value="values" className="min-h-0 flex-1">
-          {inst.data && <ValuesTab inst={inst.data} />}
-        </Tabs.Content>
-        <Tabs.Content value="sets" className="min-h-0 flex-1">
-          {inst.data && <SetsTab inst={inst.data} />}
-        </Tabs.Content>
-        <Tabs.Content value="files" className="min-h-0 flex-1">
-          {inst.data && <FilesTab inst={inst.data} />}
-        </Tabs.Content>
-      </Tabs.Root>
+        </div>
+        <div className="min-h-0 flex-1">
+          {inst.data && tab === "deps" && <DepsTab inst={inst.data} />}
+          {inst.data && tab === "values" && <ValuesTab inst={inst.data} />}
+          {inst.data && tab === "sets" && <SetsTab inst={inst.data} />}
+          {inst.data && tab === "files" && <FilesTab inst={inst.data} />}
+        </div>
+      </div>
     </div>
   );
 }

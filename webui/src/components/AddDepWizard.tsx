@@ -1,7 +1,6 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import * as Dialog from "@radix-ui/react-dialog";
-import * as Tabs from "@radix-ui/react-tabs";
 import { Search } from "lucide-react";
 import { api } from "../api/client";
 import type { AHPackage, CatalogEntryWithSource, InstanceInfo } from "../api/types";
@@ -18,8 +17,11 @@ interface Draft {
 
 const emptyDraft: Draft = { name: "", repository: "", version: "", alias: "", sourceKind: "arbitrary" };
 
+type SourceTab = "catalog" | "artifacthub" | "arbitrary";
+
 export default function AddDepWizard({ inst, onClose }: { inst: InstanceInfo; onClose: () => void }) {
   const qc = useQueryClient();
+  const [sourceTab, setSourceTab] = useState<SourceTab>("catalog");
   const [draft, setDraft] = useState<Draft>(emptyDraft);
   const [ahQuery, setAhQuery] = useState("");
   const [ahSearch, setAhSearch] = useState("");
@@ -79,24 +81,31 @@ export default function AddDepWizard({ inst, onClose }: { inst: InstanceInfo; on
         <Dialog.Content className="fixed left-1/2 top-1/2 flex h-[75vh] w-[44rem] -translate-x-1/2 -translate-y-1/2 flex-col rounded-lg border border-border bg-panel p-5 shadow-xl">
           <Dialog.Title className="mb-3 font-medium">Add dependency to {inst.name}</Dialog.Title>
 
-          <Tabs.Root defaultValue="catalog" className="flex min-h-0 flex-1 flex-col">
-            <Tabs.List className="mb-3 flex gap-1 border-b border-border">
-              {[
-                ["catalog", "Catalog"],
-                ["artifacthub", "Artifact Hub"],
-                ["arbitrary", "Arbitrary / OCI"],
-              ].map(([v, label]) => (
-                <Tabs.Trigger
+          <div className="flex min-h-0 flex-1 flex-col">
+            <div role="tablist" className="mb-3 flex gap-1 border-b border-border">
+              {(
+                [
+                  ["catalog", "Catalog"],
+                  ["artifacthub", "Artifact Hub"],
+                  ["arbitrary", "Arbitrary / OCI"],
+                ] as [SourceTab, string][]
+              ).map(([v, label]) => (
+                <button
                   key={v}
-                  value={v}
-                  className="border-b-2 border-transparent px-3 py-2 text-sm text-muted data-[state=active]:border-accent data-[state=active]:text-text"
+                  role="tab"
+                  aria-selected={sourceTab === v}
+                  onClick={() => setSourceTab(v)}
+                  className={`border-b-2 px-3 py-2 text-sm ${
+                    sourceTab === v ? "border-accent text-text" : "border-transparent text-muted hover:text-text"
+                  }`}
                 >
                   {label}
-                </Tabs.Trigger>
+                </button>
               ))}
-            </Tabs.List>
+            </div>
 
-            <Tabs.Content value="catalog" className="min-h-0 flex-1 overflow-auto">
+            {sourceTab === "catalog" && (
+              <div className="min-h-0 flex-1 overflow-auto">
               {catalog.isLoading && <div className="text-muted">Loading catalog…</div>}
               {catalog.isError && <div className="text-error">{(catalog.error as Error).message}</div>}
               {catalog.data?.length === 0 && (
@@ -123,9 +132,11 @@ export default function AddDepWizard({ inst, onClose }: { inst: InstanceInfo; on
                   {e.Entry.Description && <div className="text-xs text-muted">{e.Entry.Description}</div>}
                 </button>
               ))}
-            </Tabs.Content>
+              </div>
+            )}
 
-            <Tabs.Content value="artifacthub" className="flex min-h-0 flex-1 flex-col">
+            {sourceTab === "artifacthub" && (
+              <div className="flex min-h-0 flex-1 flex-col">
               <form
                 className="mb-2 flex gap-2"
                 onSubmit={(e) => {
@@ -166,14 +177,17 @@ export default function AddDepWizard({ inst, onClose }: { inst: InstanceInfo; on
                   </button>
                 ))}
               </div>
-            </Tabs.Content>
-
-            <Tabs.Content value="arbitrary" className="min-h-0 flex-1 overflow-auto">
-              <div className="text-sm text-muted">
-                Enter the repository URL (https://… or oci://…), chart name and exact version below.
               </div>
-            </Tabs.Content>
-          </Tabs.Root>
+            )}
+
+            {sourceTab === "arbitrary" && (
+              <div className="min-h-0 flex-1 overflow-auto">
+                <div className="text-sm text-muted">
+                  Enter the repository URL (https://… or oci://…), chart name and exact version below.
+                </div>
+              </div>
+            )}
+          </div>
 
           <form
             className="mt-3 space-y-2 border-t border-border pt-3"
