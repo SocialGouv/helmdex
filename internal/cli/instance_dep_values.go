@@ -21,21 +21,26 @@ func newInstanceDepValuesCmd(f *rootFlags) *cobra.Command {
 	return cmd
 }
 
-func depValuesFullPath(depID string, rel string) (string, error) {
+// depValuesPath builds the values path for a per-dependency override:
+// $.<depID><rel>. The depID is added as a LITERAL map key via Path.Child —
+// never spliced into a string and re-parsed — so a dependency whose id/alias
+// contains '.' or '[' targets the correct top-level key instead of being
+// mis-split into a nested path (which would silently write to, and clobber,
+// the wrong location). Only the caller-supplied rel goes through ParsePath.
+func depValuesPath(depID string, rel string) (values.Path, error) {
 	depID = strings.TrimSpace(depID)
 	if depID == "" {
-		return "", fmt.Errorf("depID is required")
+		return nil, fmt.Errorf("depID is required")
 	}
 	rel = strings.TrimSpace(rel)
 	if rel == "" {
 		rel = "$"
 	}
-	if !strings.HasPrefix(rel, "$") {
-		return "", fmt.Errorf("path must start with '$' (got %q)", rel)
+	sub, err := values.ParsePath(rel)
+	if err != nil {
+		return nil, err
 	}
-	// Join: $.<depID> + suffix ("" or ".x" or "[0]...")
-	suffix := strings.TrimPrefix(rel, "$")
-	return "$." + depID + suffix, nil
+	return append(values.Path{}.Child(depID), sub...), nil
 }
 
 func newInstanceDepValuesGetCmd(f *rootFlags) *cobra.Command {
@@ -58,17 +63,13 @@ func newInstanceDepValuesGetCmd(f *rootFlags) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			full, err := depValuesFullPath(args[1], path)
-			if err != nil {
-				return err
-			}
-			p, err := values.ParsePath(full)
+			p, err := depValuesPath(args[1], path)
 			if err != nil {
 				return err
 			}
 			v, ok := values.GetAt(root, p)
 			if !ok {
-				return fmt.Errorf("path not found: %s", full)
+				return fmt.Errorf("path not found: dep %q %s", args[1], path)
 			}
 			ff := parseFormat(format, formatJSON)
 			if ff == formatTable {
@@ -109,11 +110,7 @@ func newInstanceDepValuesSetCmd(f *rootFlags) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			full, err := depValuesFullPath(args[1], path)
-			if err != nil {
-				return err
-			}
-			p, err := values.ParsePath(full)
+			p, err := depValuesPath(args[1], path)
 			if err != nil {
 				return err
 			}
@@ -150,11 +147,7 @@ func newInstanceDepValuesUnsetCmd(f *rootFlags) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			full, err := depValuesFullPath(args[1], path)
-			if err != nil {
-				return err
-			}
-			p, err := values.ParsePath(full)
+			p, err := depValuesPath(args[1], path)
 			if err != nil {
 				return err
 			}

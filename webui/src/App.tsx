@@ -51,6 +51,11 @@ export default function App() {
                 <div>
                   {repo.data.optedIn ? "helmdex repo" : "agnostic repo"} · {repo.data.appsDir}/
                 </div>
+                {repo.data.configError && (
+                  <div className="text-error" title={repo.data.configError}>
+                    config error — see tooltip
+                  </div>
+                )}
               </>
             )}
             <EventsIndicator />

@@ -52,9 +52,15 @@ func (a *App) onStartup(ctx context.Context) {
 func workspaceParams(root string) server.Params {
 	res, err := config.Resolve(root, "")
 	if err != nil {
-		// Surface the bad config through the API rather than crashing the
-		// GUI at boot: fall back to defaults, the UI shows the repo state.
-		res = config.Resolved{Config: config.DefaultConfig(), Source: config.SourceDefault}
+		// Don't crash the GUI on a malformed config; fall back to defaults
+		// but keep the error so the API can surface it (otherwise a broken
+		// config is indistinguishable from no config).
+		return server.Params{
+			RepoRoot:    root,
+			Config:      instances.ApplyLayout(root, config.Resolved{Config: config.DefaultConfig(), Source: config.SourceDefault}),
+			Resolved:    config.Resolved{Config: config.DefaultConfig(), Source: config.SourceDefault},
+			ConfigError: err.Error(),
+		}
 	}
 	return server.Params{
 		RepoRoot: root,

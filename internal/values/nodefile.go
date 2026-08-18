@@ -3,7 +3,10 @@ package values
 import (
 	"bytes"
 	"fmt"
+	"io"
 	"os"
+	"path/filepath"
+	"reflect"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -64,9 +67,21 @@ func loadNodeDoc(path string) (*yaml.Node, error) {
 	}
 	var doc yaml.Node
 	if len(b) > 0 {
-		if err := yaml.Unmarshal(b, &doc); err != nil {
+		// Reject multi-document streams: a single-Node unmarshal keeps only
+		// the first doc, so re-encoding would silently drop the rest. Fail
+		// loudly rather than corrupt the file.
+		dec := yaml.NewDecoder(bytes.NewReader(b))
+		var probe yaml.Node
+		if err := dec.Decode(&probe); err != nil {
 			return nil, fmt.Errorf("parse %s: %w", path, err)
 		}
+		var extra yaml.Node
+		if err := dec.Decode(&extra); err == nil {
+			return nil, fmt.Errorf("%s contains multiple YAML documents; helmdex does not edit multi-document files in place", path)
+		} else if err != io.EOF {
+			return nil, fmt.Errorf("parse %s: %w", path, err)
+		}
+		doc = probe
 	}
 	if doc.Kind != yaml.DocumentNode || len(doc.Content) == 0 {
 		doc = yaml.Node{
@@ -94,17 +109,48 @@ func writeNodeDoc(path string, doc *yaml.Node) error {
 		return err
 	}
 
+	// buf is the source of truth for content. restoreFormatting only ever
+	// improves the *diff* (blank lines, comment alignment) of an unchanged
+	// line — it must never change what the file parses to.
 	out := buf.Bytes()
-	// yaml.v3 drops blank separator lines and comment alignment on
-	// re-encode; restore the original text of unchanged lines so user-owned
-	// files keep minimal diffs.
 	if orig, err := os.ReadFile(path); err == nil {
-		out = restoreFormatting(orig, out)
+		// The encoder emits LF; if the file was CRLF, work in LF internally
+		// (so line matching is consistent) and convert the whole result back
+		// to CRLF at the end. Otherwise unchanged CRLF lines wouldn't match
+		// the LF re-encode and the diff would explode.
+		crlf := bytes.Contains(orig, []byte("\r\n"))
+		origLF := bytes.ReplaceAll(orig, []byte("\r\n"), []byte("\n"))
+		reconciled := restoreFormatting(origLF, out)
+		// Safety net: the line-level reconstruction can, on adversarial
+		// inputs (block scalars whose content lines look like comments,
+		// whitespace runs inside literal blocks), produce a file that no
+		// longer parses to the same value — or does not parse at all. Verify
+		// and fall back to the raw encoder output rather than corrupt the
+		// file. Correct-but-uglier beats broken-but-pretty.
+		if yamlSemanticEqual(out, reconciled) {
+			out = reconciled
+		}
+		if crlf {
+			out = bytes.ReplaceAll(out, []byte("\n"), []byte("\r\n"))
+		}
 	} else if !os.IsNotExist(err) {
 		return err
 	}
 
-	f, err := os.CreateTemp(pathDir(path), ".helmdex-values-*")
+	// Resolve symlinks so we edit the file the link points at (a common
+	// shared-values gitops pattern) instead of replacing the link with a
+	// regular file. Preserve the target's existing mode rather than forcing
+	// 0644, so a 0600 file stays 0600.
+	target := path
+	mode := os.FileMode(0o644)
+	if resolved, err := filepath.EvalSymlinks(path); err == nil {
+		target = resolved
+	}
+	if st, err := os.Stat(target); err == nil {
+		mode = st.Mode().Perm()
+	}
+
+	f, err := os.CreateTemp(pathDir(target), ".helmdex-values-*")
 	if err != nil {
 		return err
 	}
@@ -118,11 +164,11 @@ func writeNodeDoc(path string, doc *yaml.Node) error {
 		_ = os.Remove(tmp)
 		return err
 	}
-	if err := os.Chmod(tmp, 0o644); err != nil {
+	if err := os.Chmod(tmp, mode); err != nil {
 		_ = os.Remove(tmp)
 		return err
 	}
-	return os.Rename(tmp, path)
+	return os.Rename(tmp, target)
 }
 
 // restoreFormatting reconciles a YAML re-encode with the original text:
@@ -209,21 +255,51 @@ func restoreFormatting(orig, out []byte) []byte {
 	return []byte(b.String())
 }
 
-// normalizeYAMLLine produces the matching key for a line: comment-only lines
-// compare by their trimmed text (re-encode re-indents them), other lines by
-// collapsing the whitespace run before a trailing comment (re-encode drops
-// column alignment). Content — including indentation of code — stays
-// significant.
+// normalizeYAMLLine produces the matching key for a line. Leading
+// indentation is dropped: yaml.v3 re-indents sequence items (and their
+// continuations) relative to a hand-written "compact" list style, and
+// trailing-comment column alignment is collapsed on re-encode. Matched
+// lines are re-emitted with their ORIGINAL text (so original indentation
+// and alignment survive), and yamlSemanticEqual rejects any reconstruction
+// whose parsed value differs — so ignoring indentation here can only ever
+// improve the diff, never change the file's meaning.
 func normalizeYAMLLine(l string) string {
-	trimmed := strings.TrimSpace(l)
-	if strings.HasPrefix(trimmed, "#") {
-		return trimmed
+	s := strings.TrimLeft(l, " \t")
+	if strings.HasPrefix(s, "#") {
+		return s
 	}
-	if i := strings.Index(l, " #"); i >= 0 {
-		code := strings.TrimRight(l[:i], " \t")
-		return code + " " + strings.TrimLeft(l[i:], " \t")
+	if i := strings.Index(s, " #"); i >= 0 {
+		code := strings.TrimRight(s[:i], " \t")
+		return code + " " + strings.TrimLeft(s[i:], " \t")
 	}
-	return l
+	return s
+}
+
+// yamlSemanticEqual reports whether two YAML byte streams decode to the same
+// value(s). Comments, blank lines and indentation style don't affect the
+// result — only content does. A parse failure on either side ⇒ not equal.
+func yamlSemanticEqual(a, b []byte) bool {
+	decode := func(data []byte) ([]any, bool) {
+		dec := yaml.NewDecoder(bytes.NewReader(data))
+		var docs []any
+		for {
+			var v any
+			err := dec.Decode(&v)
+			if err == io.EOF {
+				return docs, true
+			}
+			if err != nil {
+				return nil, false
+			}
+			docs = append(docs, v)
+		}
+	}
+	da, oka := decode(a)
+	db, okb := decode(b)
+	if !oka || !okb {
+		return false
+	}
+	return reflect.DeepEqual(da, db)
 }
 
 func pathDir(p string) string {

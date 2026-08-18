@@ -118,7 +118,16 @@ func Save(res Resolved, cfg Config) (string, error) {
 		default:
 			return "", err
 		}
-		uc.Config = cfg
+		// Update only the global fields callers legitimately edit. The repo
+		// section and per-repo overrides are preserved from disk: cfg's
+		// Repo may carry a per-repo override applied during Resolve, and
+		// writing it back would silently promote it to the global default
+		// for every other repo.
+		uc.APIVersion = cfg.APIVersion
+		uc.Kind = cfg.Kind
+		uc.Platform = cfg.Platform
+		uc.Sources = cfg.Sources
+		uc.ArtifactHub = cfg.ArtifactHub
 		if err := uc.ValidateForWrite(); err != nil {
 			return "", err
 		}

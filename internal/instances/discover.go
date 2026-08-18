@@ -122,11 +122,12 @@ func CreateFromTemplate(repoRoot, appsDir, templatesDir, templateName, newName s
 		return Instance{}, fmt.Errorf("this repo has no templates dir")
 	}
 	newName = strings.TrimSpace(newName)
-	if newName == "" {
-		return Instance{}, fmt.Errorf("instance name is required")
+	if err := ValidateName(newName); err != nil {
+		return Instance{}, err
 	}
-	if strings.Contains(newName, string(os.PathSeparator)) {
-		return Instance{}, fmt.Errorf("invalid instance name %q", newName)
+	// templateName indexes into templatesDir and comes from the API too.
+	if err := ValidateName(templateName); err != nil {
+		return Instance{}, fmt.Errorf("invalid template name %q", templateName)
 	}
 
 	srcDir := filepath.Join(repoRoot, templatesDir, templateName)
@@ -147,10 +148,12 @@ func CreateFromTemplate(repoRoot, appsDir, templatesDir, templateName, newName s
 	chartPath := filepath.Join(dstDir, "Chart.yaml")
 	c, err := yamlchart.ReadChart(chartPath)
 	if err != nil {
+		_ = os.RemoveAll(dstDir)
 		return Instance{}, err
 	}
 	c.Name = newName
 	if err := yamlchart.WriteChart(chartPath, c); err != nil {
+		_ = os.RemoveAll(dstDir)
 		return Instance{}, err
 	}
 

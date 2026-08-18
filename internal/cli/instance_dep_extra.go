@@ -12,6 +12,7 @@ import (
 	"helmdex/internal/catalog"
 	"helmdex/internal/helmutil"
 	"helmdex/internal/semverutil"
+	"helmdex/internal/values"
 	"helmdex/internal/yamlchart"
 
 	"github.com/spf13/cobra"
@@ -77,6 +78,11 @@ func newInstanceDepAddFromCatalogCmd(f *rootFlags) *cobra.Command {
 				wantSets = append(wantSets, e.DefaultSets...)
 			}
 			wantSets = append(wantSets, sets...)
+			// Sets are managed-mode only; never drop marker files into a
+			// direct-mode (agnostic) repo.
+			if len(wantSets) > 0 && !values.IsManaged(inst.Path) {
+				return fmt.Errorf("catalog sets require a managed instance (values.instance.yaml); %q is direct-mode (use --no-default-sets)", args[0])
+			}
 			seen := map[string]struct{}{}
 			depID := yamlchart.DependencyID(dep)
 			for _, setName := range wantSets {
@@ -92,7 +98,9 @@ func newInstanceDepAddFromCatalogCmd(f *rootFlags) *cobra.Command {
 				if _, err := os.Stat(p); err == nil {
 					continue
 				}
-				_ = os.WriteFile(p, []byte("{}\n"), 0o644)
+				if err := os.WriteFile(p, []byte("{}\n"), 0o644); err != nil {
+					return err
+				}
 			}
 			if apply {
 				// mirror instance apply pipeline

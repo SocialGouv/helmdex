@@ -5,6 +5,7 @@ export interface RepoInfo {
   templatesDir: string;
   configPath: string;
   configSource: string;
+  configError?: string;
   platform: string;
 }
 

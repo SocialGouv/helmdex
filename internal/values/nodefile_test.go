@@ -5,7 +5,11 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"gopkg.in/yaml.v3"
 )
+
+func yamlUnmarshal(b []byte, v any) error { return yaml.Unmarshal(b, v) }
 
 const gitopsStyleValues = `# Wrapper defaults (hand-written).
 
@@ -111,5 +115,112 @@ func TestSetInFile_AppendsNewKey(t *testing.T) {
 	b, _ := os.ReadFile(p)
 	if !strings.Contains(string(b), "# Wrapper defaults (hand-written).\n\n# Postgres cluster.") {
 		t.Fatalf("blank line between comment blocks lost:\n%s", string(b))
+	}
+}
+
+// --- adversarial regressions (found by review, must stay fixed) ---
+
+func TestSetInFile_BlockScalarCommentNoCorruption(t *testing.T) {
+	// A block-scalar value whose content lines look like comments must not
+	// be de-indented into invalid YAML by the formatting reconstruction.
+	p := writeTemp(t, "zz: 1\n# run\naa: 2\n")
+	if err := SetInFile(p, mustPath(t, "$.zz"), "# run\nx\n"); err != nil {
+		t.Fatal(err)
+	}
+	b, _ := os.ReadFile(p)
+	var got map[string]any
+	if err := yamlUnmarshal(b, &got); err != nil {
+		t.Fatalf("result does not parse: %v\n%s", err, string(b))
+	}
+	if got["zz"] != "# run\nx\n" {
+		t.Fatalf("zz = %q, want %q", got["zz"], "# run\nx\n")
+	}
+	if got["aa"] != 2 {
+		t.Fatalf("aa lost/changed: %v", got["aa"])
+	}
+}
+
+func TestSetInFile_BlockScalarInlineHashNotDiscarded(t *testing.T) {
+	// The requested value must actually be written even when it contains a
+	// literal ` #` inside a block scalar.
+	p := writeTemp(t, "a: |\n  echo hi   # x\nb: 1\n")
+	if err := SetInFile(p, mustPath(t, "$.a"), "echo hi # x\n"); err != nil {
+		t.Fatal(err)
+	}
+	v, ok, err := GetInFile(p, mustPath(t, "$.a"))
+	if err != nil || !ok {
+		t.Fatalf("get: %v ok=%v", err, ok)
+	}
+	if v != "echo hi # x\n" {
+		t.Fatalf("value discarded: got %q", v)
+	}
+}
+
+func TestSetInFile_MultiDocRejected(t *testing.T) {
+	p := writeTemp(t, "demo:\n  n: 1\n---\nkeep: me\n")
+	err := SetInFile(p, mustPath(t, "$.demo.n"), 2)
+	if err == nil {
+		t.Fatal("expected an error on a multi-document file, got nil")
+	}
+	// The original file must be untouched.
+	b, _ := os.ReadFile(p)
+	if !strings.Contains(string(b), "keep: me") {
+		t.Fatalf("multi-doc file was mutated:\n%s", string(b))
+	}
+}
+
+func TestSetInFile_SequenceNotReindented(t *testing.T) {
+	// Compact list style ("- " at parent indent) must survive an edit to an
+	// unrelated scalar — a 1-value change stays a 1-line diff.
+	orig := "top:\n  items:\n  - name: A\n    value: \"1\"\n  - name: B\nscalar: 1\n"
+	p := writeTemp(t, orig)
+	if err := SetInFile(p, mustPath(t, "$.scalar"), 2); err != nil {
+		t.Fatal(err)
+	}
+	b, _ := os.ReadFile(p)
+	want := strings.Replace(orig, "scalar: 1", "scalar: 2", 1)
+	if string(b) != want {
+		t.Fatalf("sequence reindented.\n--- got ---\n%s\n--- want ---\n%s", string(b), want)
+	}
+}
+
+func TestSetInFile_CRLFPreserved(t *testing.T) {
+	p := writeTemp(t, "a: 1\r\nb: 2\r\n# c\r\nc: 3\r\n")
+	if err := SetInFile(p, mustPath(t, "$.a"), 9); err != nil {
+		t.Fatal(err)
+	}
+	b, _ := os.ReadFile(p)
+	if strings.Contains(strings.ReplaceAll(string(b), "\r\n", ""), "\n") {
+		t.Fatalf("mixed line endings after edit:\n%q", string(b))
+	}
+}
+
+func TestSetInFile_PreservesSymlinkAndMode(t *testing.T) {
+	dir := t.TempDir()
+	realFile := filepath.Join(dir, "shared.yaml")
+	if err := os.WriteFile(realFile, []byte("a: 1\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(dir, "values.yaml")
+	if err := os.Symlink("shared.yaml", link); err != nil {
+		t.Fatal(err)
+	}
+	if err := SetInFile(link, mustPath(t, "$.a"), 2); err != nil {
+		t.Fatal(err)
+	}
+	fi, err := os.Lstat(link)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fi.Mode()&os.ModeSymlink == 0 {
+		t.Fatal("symlink was replaced by a regular file")
+	}
+	st, _ := os.Stat(realFile)
+	if st.Mode().Perm() != 0o600 {
+		t.Fatalf("mode changed to %o, want 600", st.Mode().Perm())
+	}
+	v, _, _ := GetInFile(realFile, mustPath(t, "$.a"))
+	if v != 2 {
+		t.Fatalf("edit did not reach the symlink target: %v", v)
 	}
 }

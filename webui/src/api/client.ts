@@ -116,6 +116,15 @@ export const api = {
       `/api/instances/${encodeURIComponent(name)}/deps/${encodeURIComponent(depID)}/version`,
       { method: "POST", body: JSON.stringify({ version, validate }) },
     ),
+  depValuesGet: (name: string, depID: string) =>
+    request<{ file: string; depID: string; found: boolean; value: unknown }>(
+      `/api/instances/${encodeURIComponent(name)}/deps/${encodeURIComponent(depID)}/values`,
+    ),
+  depValuesSet: (name: string, depID: string, value: unknown, regen = true) =>
+    request<void>(`/api/instances/${encodeURIComponent(name)}/deps/${encodeURIComponent(depID)}/values`, {
+      method: "PUT",
+      body: JSON.stringify({ value, regen }),
+    }),
   depVersions: (name: string, depID: string) =>
     request<DepVersions>(
       `/api/instances/${encodeURIComponent(name)}/deps/${encodeURIComponent(depID)}/versions`,

@@ -31,18 +31,21 @@ type repoInfo struct {
 	TemplatesDir string `json:"templatesDir"`
 	ConfigPath   string `json:"configPath"`
 	ConfigSource string `json:"configSource"`
+	ConfigError  string `json:"configError,omitempty"`
 	Platform     string `json:"platform"`
 }
 
 func (s *Server) handleRepo(w http.ResponseWriter, r *http.Request) {
+	ws := s.ws()
 	writeJSON(w, http.StatusOK, repoInfo{
-		Root:         s.ws().RepoRoot,
-		OptedIn:      paths.OptedIn(s.ws().RepoRoot),
-		AppsDir:      s.ws().Config.Repo.AppsDir,
-		TemplatesDir: s.ws().Config.Repo.TemplatesDir,
-		ConfigPath:   s.ws().Resolved.Path,
-		ConfigSource: string(s.ws().Resolved.Source),
-		Platform:     s.ws().Config.Platform.Name,
+		Root:         ws.RepoRoot,
+		OptedIn:      paths.OptedIn(ws.RepoRoot),
+		AppsDir:      ws.Config.Repo.AppsDir,
+		TemplatesDir: ws.Config.Repo.TemplatesDir,
+		ConfigPath:   ws.Resolved.Path,
+		ConfigSource: string(ws.Resolved.Source),
+		ConfigError:  ws.ConfigError,
+		Platform:     ws.Config.Platform.Name,
 	})
 }
 
@@ -590,6 +593,62 @@ func (s *Server) handleDepSetVersion(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, s.instanceInfo(inst))
+}
+
+// Per-dependency overrides live under $.<depID> of the instance edit file.
+// The depID is used as a literal map key via Path.Child — never routed
+// through ParsePath, which would mis-split a dotted/bracketed dep id.
+
+func (s *Server) handleDepValuesGet(w http.ResponseWriter, r *http.Request) {
+	inst, err := s.getInstance(r.PathValue("name"))
+	if err != nil {
+		httpError(w, http.StatusNotFound, err)
+		return
+	}
+	depID := r.PathValue("depID")
+	v, ok, err := values.GetInFile(values.EditFilePath(inst.Path), values.Path{}.Child(depID))
+	if err != nil {
+		httpError(w, http.StatusInternalServerError, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"file":  values.EditFileName(inst.Path),
+		"depID": depID,
+		"found": ok,
+		"value": v,
+	})
+}
+
+type depValuesSetRequest struct {
+	Value any   `json:"value"`
+	Regen *bool `json:"regen,omitempty"`
+}
+
+func (s *Server) handleDepValuesSet(w http.ResponseWriter, r *http.Request) {
+	inst, err := s.getInstance(r.PathValue("name"))
+	if err != nil {
+		httpError(w, http.StatusNotFound, err)
+		return
+	}
+	var req depValuesSetRequest
+	if err := decodeJSON(r, &req); err != nil {
+		httpError(w, http.StatusBadRequest, err)
+		return
+	}
+	depID := r.PathValue("depID")
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := values.SetInFile(values.EditFilePath(inst.Path), values.Path{}.Child(depID), req.Value); err != nil {
+		httpError(w, http.StatusInternalServerError, err)
+		return
+	}
+	if req.Regen == nil || *req.Regen {
+		if err := values.GenerateIfManaged(inst.Path); err != nil {
+			httpError(w, http.StatusInternalServerError, err)
+			return
+		}
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (s *Server) handleDepVersions(w http.ResponseWriter, r *http.Request) {

@@ -30,3 +30,4 @@ node_modules
 /webui/tsconfig.tsbuildinfo
 /build/bin/
 /cmd/helmdex-desktop/frontend/
+/helmdex-desktop

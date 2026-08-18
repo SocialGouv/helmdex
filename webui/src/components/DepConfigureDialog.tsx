@@ -27,7 +27,7 @@ export default function DepConfigureDialog({
   });
   const current = useQuery({
     queryKey: ["depvalues", inst.name, dep.id],
-    queryFn: () => api.valuesGet(inst.name, `$.${dep.id}`),
+    queryFn: () => api.depValuesGet(inst.name, dep.id),
   });
 
   const [draft, setDraft] = useState<unknown>(undefined);
@@ -40,7 +40,7 @@ export default function DepConfigureDialog({
   }, [current.data, loaded]);
 
   const save = useMutation({
-    mutationFn: () => api.valuesSet(inst.name, `$.${dep.id}`, draft ?? {}),
+    mutationFn: () => api.depValuesSet(inst.name, dep.id, draft ?? {}),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ["depvalues", inst.name, dep.id] });
       void qc.invalidateQueries({ queryKey: ["file", inst.name] });

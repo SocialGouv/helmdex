@@ -83,7 +83,12 @@ func newInstanceDepAddCmd(f *rootFlags) *cobra.Command {
 			if err := yamlchart.WriteChart(chartPath, c); err != nil {
 				return err
 			}
-			// Materialize selected set files (selection is by presence of values.set.*.yaml).
+			// Materialize selected set files (selection is by presence of
+			// values.set.*.yaml). Sets are a managed-mode concept; refuse to
+			// drop helmdex marker files into a direct-mode (agnostic) repo.
+			if len(sets) > 0 && !values.IsManaged(inst.Path) {
+				return fmt.Errorf("--set requires a managed instance (values.instance.yaml); %q is direct-mode", args[0])
+			}
 			for _, setName := range sets {
 				setName = strings.TrimSpace(setName)
 				if setName == "" {
@@ -93,7 +98,9 @@ func newInstanceDepAddCmd(f *rootFlags) *cobra.Command {
 				if _, err := os.Stat(p); err == nil {
 					continue
 				}
-				_ = os.WriteFile(p, []byte("{}\n"), 0o644)
+				if err := os.WriteFile(p, []byte("{}\n"), 0o644); err != nil {
+					return err
+				}
 			}
 			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Upserted dependency %s in %s\n", yamlchart.DependencyID(dep), args[0])
 			return nil

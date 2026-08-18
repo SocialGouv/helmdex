@@ -18,6 +18,9 @@ type Params struct {
 	RepoRoot string
 	Config   config.Config
 	Resolved config.Resolved
+	// ConfigError, when non-empty, is the error from resolving the repo's
+	// config — surfaced so the UI can distinguish a broken config from none.
+	ConfigError string
 }
 
 type Server struct {
@@ -94,6 +97,8 @@ func (s *Server) routes() {
 	m.HandleFunc("DELETE /api/instances/{name}/deps/{depID}", s.handleDepRemove)
 	m.HandleFunc("POST /api/instances/{name}/deps/{depID}/detach", s.handleDepDetach)
 	m.HandleFunc("POST /api/instances/{name}/deps/{depID}/version", s.handleDepSetVersion)
+	m.HandleFunc("GET /api/instances/{name}/deps/{depID}/values", s.handleDepValuesGet)
+	m.HandleFunc("PUT /api/instances/{name}/deps/{depID}/values", s.handleDepValuesSet)
 	m.HandleFunc("GET /api/instances/{name}/deps/{depID}/versions", s.handleDepVersions)
 	m.HandleFunc("GET /api/instances/{name}/deps/{depID}/inspect", s.handleDepInspect)
 

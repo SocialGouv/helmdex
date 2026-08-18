@@ -25,6 +25,21 @@ func instanceDir(repoRoot, appsDir, name string) string {
 	return filepath.Join(repoRoot, appsDir, name)
 }
 
+// ValidateName rejects instance/template names that could escape the apps dir.
+// A name is a single path segment: no separators, no ".."/"." traversal.
+// This is the convergence point guarding every filesystem operation keyed by
+// a user-supplied name (the HTTP API decodes %2F in path segments, so an
+// unvalidated name is an arbitrary-path primitive).
+func ValidateName(name string) error {
+	if strings.TrimSpace(name) == "" {
+		return fmt.Errorf("instance name is required")
+	}
+	if name == "." || name == ".." || strings.ContainsAny(name, `/\`) || strings.Contains(name, "..") {
+		return fmt.Errorf("invalid instance name %q", name)
+	}
+	return nil
+}
+
 // Create creates a new umbrella chart instance.
 //
 // Managed instances get a values.instance.yaml (helmdex layers it and
@@ -32,11 +47,8 @@ func instanceDir(repoRoot, appsDir, name string) string {
 // repos — get a plain user-owned values.yaml instead, which helmdex will
 // only ever edit in place.
 func Create(repoRoot, appsDir, name string, managed bool) (Instance, error) {
-	if name == "" {
-		return Instance{}, fmt.Errorf("instance name is required")
-	}
-	if strings.Contains(name, string(os.PathSeparator)) {
-		return Instance{}, fmt.Errorf("invalid instance name %q", name)
+	if err := ValidateName(name); err != nil {
+		return Instance{}, err
 	}
 
 	dir := instanceDir(repoRoot, appsDir, name)
@@ -71,6 +83,9 @@ func Create(repoRoot, appsDir, name string, managed bool) (Instance, error) {
 }
 
 func Get(repoRoot, appsDir, name string) (Instance, error) {
+	if err := ValidateName(name); err != nil {
+		return Instance{}, err
+	}
 	dir := instanceDir(repoRoot, appsDir, name)
 	if _, err := os.Stat(filepath.Join(dir, "Chart.yaml")); err != nil {
 		return Instance{}, fmt.Errorf("instance %q not found at %s", name, dir)
@@ -102,6 +117,9 @@ func List(repoRoot, appsDir string) ([]Instance, error) {
 }
 
 func Remove(repoRoot, appsDir, name string) error {
+	if err := ValidateName(name); err != nil {
+		return err
+	}
 	dir := instanceDir(repoRoot, appsDir, name)
 	return os.RemoveAll(dir)
 }
@@ -113,11 +131,11 @@ func Remove(repoRoot, appsDir, name string) error {
 func Rename(repoRoot, appsDir, oldName, newName string) (Instance, error) {
 	oldName = strings.TrimSpace(oldName)
 	newName = strings.TrimSpace(newName)
-	if oldName == "" || newName == "" {
-		return Instance{}, fmt.Errorf("instance name is required")
+	if err := ValidateName(oldName); err != nil {
+		return Instance{}, err
 	}
-	if strings.Contains(newName, string(os.PathSeparator)) {
-		return Instance{}, fmt.Errorf("invalid instance name %q", newName)
+	if err := ValidateName(newName); err != nil {
+		return Instance{}, err
 	}
 	if oldName == newName {
 		inst, err := Get(repoRoot, appsDir, oldName)
