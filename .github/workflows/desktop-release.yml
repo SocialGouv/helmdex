@@ -40,7 +40,17 @@ jobs:
             platform: windows/arm64
             artifact_name: helmdex-desktop-windows-arm64
             package: nsis-portable
-          - os: ubuntu-22.04
+          # Linux desktop builds pin the WebKitGTK generation they are
+          # compiled and bundled against. Built on 22.04, the AppImage
+          # rendered nothing but its background colour on 24.04-era distros
+          # (Mint 22, Ubuntu 24.04) — the window opened, the API answered,
+          # the web view stayed blank. 24.04 matches what those users run,
+          # and both arches now build on the same generation.
+          #
+          # The trade-off is the usual AppImage one: linking against a newer
+          # glibc drops support for distros older than 24.04. The CLI binary
+          # (release.yml) is static and unaffected.
+          - os: ubuntu-24.04
             platform: linux/amd64
             artifact_name: helmdex-desktop-linux-amd64
             package: appimage
