@@ -89,3 +89,17 @@ export interface SetsInfo {
   sets: string[];
   depSets: Record<string, string[]>;
 }
+
+export interface ConfigSource {
+  Name: string;
+  Git: { URL: string; Ref?: string; Commit?: string };
+  Presets: { Enabled: boolean; ChartsPath?: string };
+  Catalog: { Enabled: boolean; Path?: string };
+}
+
+export interface SourcesInfo {
+  platform: string;
+  sources: ConfigSource[];
+  savePath: string;
+  saveSource: string;
+}

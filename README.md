@@ -10,12 +10,15 @@
 
 ## helmdex in 30 seconds
 
-`helmdex` is a **TUI-first organizer** for GitOps-friendly Helm **umbrella chart** instances.
+`helmdex` is an organizer for GitOps-friendly Helm **umbrella chart** instances — as a **TUI**, a **web UI** (`helmdex ui`), and a **desktop app**.
 
 - Create and manage multiple instances (one per app / env)
 - Add / upgrade dependencies, from a curated catalog or Artifact Hub
 - Manage layered values (defaults → platform → sets → instance)
 - Generate a merged `values.yaml` designed to be committed and reviewed
+- Or work on **helmdex-agnostic repos**: point helmdex at any gitops repo of
+  umbrella charts — it adapts to the repo (no helmdex files added, values
+  edited in place with minimal diffs)
 
 **What it is not:** `helmdex` does **not** render templates and does **not** deploy (no `helm template`, no `helm install`).
 
@@ -31,6 +34,9 @@
 - 🧯 **Escape hatches**: detach a dependency from a catalog entry to unblock urgent changes.
 - 📌 **Reproducible dependency operations**: helmdex ships a pinned Helm binary and verifies downloads.
 - 🔒 **Repo-local isolation**: Helm repos/caches and OCI auth are stored under `.helmdex/` (no pollution of user `~/.config/helm` or `~/.docker`).
+- 🕊️ **Agnostic-repo mode**: repos without `helmdex.yaml` stay byte-identical — state lives in the user cache, config in `~/.config/helmdex/config.yaml`, and every values file is user-owned and edited **in place** (comments, blank lines and alignment preserved; a 1-value change is a 1-line diff).
+- 📐 **Templates / blueprints**: a repo `templates/` dir of chart blueprints (e.g. review-env gabarits) is detected; create instances from them in one step (`instance create --from-template`).
+- 🖥️ **Web UI & desktop app**: `helmdex ui` serves a local SPA (same engine as the TUI); the Wails-based desktop app wraps it with a native repo picker — fully offline.
 
 <details>
 <summary>How helmdex fits a GitOps PR workflow</summary>
@@ -132,6 +138,21 @@ export HELMDEX_NO_BUNDLED_HELM=1
 Running `helmdex` with no arguments opens the interactive dashboard when stdin is a TTY. Outside a TTY (pipe, CI) it prints help instead.
 
 ---
+
+## Web UI & desktop
+
+```bash
+helmdex ui --open          # serve the web UI for the current repo (localhost)
+task ui:dev                # dev loop: Go API + Vite with hot reload
+task desktop:build:linux:amd64   # build the desktop app (Wails)
+```
+
+The web UI and desktop app share the same SPA and local API: dashboard
+(instances + templates), dependency management (catalog / Artifact Hub /
+arbitrary+OCI, version picker, side-by-side values/schema diffs between
+versions, detach), mode-aware values editing (Monaco), sets, and a file
+browser. Desktop releases (macOS universal, Windows, Linux AppImage) are
+published by CI on every tag.
 
 ## TUI at a glance
 

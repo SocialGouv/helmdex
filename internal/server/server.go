@@ -103,6 +103,9 @@ func (s *Server) routes() {
 
 	m.HandleFunc("GET /api/templates", s.handleTemplatesList)
 
+	m.HandleFunc("GET /api/config/sources", s.handleConfigSourcesGet)
+	m.HandleFunc("PUT /api/config/sources", s.handleConfigSourcesPut)
+
 	m.HandleFunc("GET /api/catalog", s.handleCatalogList)
 	m.HandleFunc("POST /api/catalog/sync", s.handleCatalogSync)
 	m.HandleFunc("GET /api/artifacthub/search", s.handleArtifactHubSearch)

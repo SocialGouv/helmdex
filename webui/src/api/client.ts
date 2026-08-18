@@ -1,6 +1,8 @@
 import type {
   AHPackage,
+  ConfigSource,
   SetsInfo,
+  SourcesInfo,
   CatalogEntryWithSource,
   DepVersions,
   FileInfo,
@@ -137,6 +139,13 @@ export const api = {
     }),
 
   templates: () => request<TemplateInfo[]>("/api/templates"),
+
+  sources: () => request<SourcesInfo>("/api/config/sources"),
+  saveSources: (platform: string, sources: ConfigSource[]) =>
+    request<SourcesInfo>("/api/config/sources", {
+      method: "PUT",
+      body: JSON.stringify({ platform, sources }),
+    }),
 
   catalog: () => request<CatalogEntryWithSource[]>("/api/catalog"),
   catalogSync: () => request<unknown>("/api/catalog/sync", { method: "POST" }),

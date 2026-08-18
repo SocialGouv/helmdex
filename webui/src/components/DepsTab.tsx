@@ -1,11 +1,14 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import * as Dialog from "@radix-ui/react-dialog";
-import { Eye, GitCompareArrows, Plus, Tag, Trash2, Unlink } from "lucide-react";
+import { Eye, GitCompareArrows, Plus, SlidersHorizontal, Tag, Trash2, Unlink } from "lucide-react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import { api } from "../api/client";
 import type { DepInfo, InspectKind, InstanceInfo } from "../api/types";
 import AddDepWizard from "./AddDepWizard";
 import DepDiffDialog from "./DepDiffDialog";
+import DepConfigureDialog from "./DepConfigureDialog";
 
 function InspectDialog({
   inst,
@@ -46,11 +49,16 @@ function InspectDialog({
           <div className="min-h-0 flex-1 overflow-auto rounded-md bg-panel-2 p-4">
             {content.isLoading && <div className="text-muted">Loading (may pull the chart)…</div>}
             {content.isError && <div className="text-error">{(content.error as Error).message}</div>}
-            {content.data !== undefined && (
-              <pre className="whitespace-pre-wrap break-words font-mono text-xs leading-relaxed">
-                {content.data}
-              </pre>
-            )}
+            {content.data !== undefined &&
+              (kind === "readme" ? (
+                <div className="prose-invert max-w-none text-sm leading-relaxed [&_a]:text-accent [&_code]:rounded [&_code]:bg-panel [&_code]:px-1 [&_h1]:mb-2 [&_h1]:text-lg [&_h1]:font-semibold [&_h2]:mb-2 [&_h2]:mt-4 [&_h2]:font-semibold [&_li]:ml-4 [&_li]:list-disc [&_p]:my-2 [&_pre]:my-2 [&_pre]:overflow-auto [&_pre]:rounded [&_pre]:bg-panel [&_pre]:p-2 [&_table]:my-2 [&_td]:border [&_td]:border-border [&_td]:px-2 [&_td]:py-1 [&_th]:border [&_th]:border-border [&_th]:px-2 [&_th]:py-1">
+                  <ReactMarkdown remarkPlugins={[remarkGfm]}>{content.data}</ReactMarkdown>
+                </div>
+              ) : (
+                <pre className="whitespace-pre-wrap break-words font-mono text-xs leading-relaxed">
+                  {content.data}
+                </pre>
+              ))}
           </div>
         </Dialog.Content>
       </Dialog.Portal>
@@ -183,6 +191,7 @@ export default function DepsTab({ inst }: { inst: InstanceInfo }) {
   const [inspecting, setInspecting] = useState<DepInfo | null>(null);
   const [versioning, setVersioning] = useState<DepInfo | null>(null);
   const [diffing, setDiffing] = useState<DepInfo | null>(null);
+  const [configuring, setConfiguring] = useState<DepInfo | null>(null);
 
   const remove = useMutation({
     mutationFn: (depID: string) => api.removeDep(inst.name, depID),
@@ -253,6 +262,13 @@ export default function DepsTab({ inst }: { inst: InstanceInfo }) {
                       <Tag className="h-4 w-4" />
                     </button>
                     <button
+                      onClick={() => setConfiguring(d)}
+                      className="rounded p-1 text-muted hover:bg-panel-2 hover:text-text"
+                      title="Configure overrides (values.schema.json form)"
+                    >
+                      <SlidersHorizontal className="h-4 w-4" />
+                    </button>
+                    <button
                       onClick={() => setDiffing(d)}
                       className="rounded p-1 text-muted hover:bg-panel-2 hover:text-text"
                       title="Diff default values/schema against another version"
@@ -302,6 +318,7 @@ export default function DepsTab({ inst }: { inst: InstanceInfo }) {
       {inspecting && <InspectDialog inst={inst} dep={inspecting} onClose={() => setInspecting(null)} />}
       {versioning && <VersionDialog inst={inst} dep={versioning} onClose={() => setVersioning(null)} />}
       {diffing && <DepDiffDialog inst={inst} dep={diffing} onClose={() => setDiffing(null)} />}
+      {configuring && <DepConfigureDialog inst={inst} dep={configuring} onClose={() => setConfiguring(null)} />}
     </div>
   );
 }
