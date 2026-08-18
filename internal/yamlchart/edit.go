@@ -3,6 +3,8 @@ package yamlchart
 import (
 	"fmt"
 	"strings"
+
+	"helmdex/internal/paths"
 )
 
 type DepID string
@@ -25,6 +27,11 @@ func (c *Chart) UpsertDependency(dep Dependency) error {
 	}
 	if dep.Repository == "" {
 		return fmt.Errorf("dependency repository is required")
+	}
+	// The dependency id keys per-dependency state on disk (depmeta files,
+	// values.dep-set markers), so it must stay a single path component.
+	if err := paths.ValidateSegment("dependency id", string(DependencyID(dep))); err != nil {
+		return err
 	}
 
 	// Upsert key is the stable dep id (alias if set, else name).
@@ -76,6 +83,9 @@ func (c *Chart) ReplaceDependencyByID(oldID DepID, dep Dependency) error {
 		return fmt.Errorf("dependency repository is required")
 	}
 	newID := DependencyID(dep)
+	if err := paths.ValidateSegment("dependency id", string(newID)); err != nil {
+		return err
+	}
 	// Ensure old exists; record index.
 	idx := -1
 	for i := range c.Dependencies {

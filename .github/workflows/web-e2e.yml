@@ -1,0 +1,47 @@
+name: 🌐 Tests Web E2E
+
+on:
+  push:
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  web:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install devbox
+        uses: jetify-com/devbox-install-action@v0.12.0
+
+      - name: Cache devbox
+        uses: actions/cache@v4
+        with:
+          path: |
+            .devbox
+            /nix/store
+          key: devbox-${{ runner.os }}-${{ hashFiles('devbox.json', 'devbox.lock') }}
+
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+
+      # Builds the SPA, then the binary that embeds it, then drives Chromium
+      # against the real server on a throwaway repo.
+      - name: Run web E2E tests
+        run: devbox run -- task test-web:ci
+
+      - name: Upload artifacts (on failure)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: web-e2e-artifacts
+          path: |
+            test-results
+            playwright-report

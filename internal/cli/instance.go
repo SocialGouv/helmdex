@@ -83,6 +83,14 @@ func newInstanceDepAddCmd(f *rootFlags) *cobra.Command {
 			if err := yamlchart.WriteChart(chartPath, c); err != nil {
 				return err
 			}
+			// Record the source, like the TUI and the web API do. Without it a
+			// dependency added here would keep whatever attribution a previous
+			// dependency of the same id left behind.
+			if err := writeDepSourceMeta(repoRoot, inst.Name, yamlchart.DependencyID(dep), depSourceMeta{
+				Kind: depSourceArbitrary,
+			}); err != nil {
+				return err
+			}
 			// Materialize selected set files (selection is by presence of
 			// values.set.*.yaml). Sets are a managed-mode concept; refuse to
 			// drop helmdex marker files into a direct-mode (agnostic) repo.
@@ -141,6 +149,12 @@ func newInstanceDepRmCmd(f *rootFlags) *cobra.Command {
 				return fmt.Errorf("dependency %q not found", id)
 			}
 			if err := yamlchart.WriteChart(chartPath, c); err != nil {
+				return err
+			}
+			// The id is free again: leaving its source metadata behind would
+			// attribute the next dependency taking that id to a catalog it
+			// never came from.
+			if err := removeDepSourceMeta(repoRoot, inst.Name, id); err != nil {
 				return err
 			}
 			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Removed dependency %s from %s\n", id, args[0])

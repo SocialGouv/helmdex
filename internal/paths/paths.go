@@ -5,9 +5,33 @@ package paths
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 )
+
+// ValidateSegment rejects a value that would not stay a single path component
+// once joined under StateDir.
+//
+// Every user-supplied string that becomes a directory or file name in helmdex
+// state goes through here — instance names, dependency ids, source names.
+// These strings reach the filesystem from URL segments, request bodies and
+// config files, so an unvalidated one is an arbitrary-path primitive: it
+// reads, writes or deletes anywhere the process can.
+//
+// kind names the value in the error message ("instance name", "dependency
+// id", ...).
+func ValidateSegment(kind, value string) error {
+	v := strings.TrimSpace(value)
+	if v == "" {
+		return fmt.Errorf("%s is required", kind)
+	}
+	if v == "." || v == ".." || strings.ContainsAny(v, `/\`) || strings.Contains(v, "..") {
+		return fmt.Errorf("invalid %s %q", kind, value)
+	}
+	return nil
+}
 
 // StateDir returns the root directory for helmdex state of a given repo.
 //

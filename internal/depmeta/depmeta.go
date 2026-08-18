@@ -41,9 +41,22 @@ func InstanceDir(repoRoot, instanceName string) string {
 	return paths.State(repoRoot, "depmeta", instanceName)
 }
 
+// validate guards the two user-supplied path components. The instance name
+// and the dependency id reach this package from URL segments, request bodies
+// and chart files; unvalidated, they address any file the process can touch.
+func validate(repoRoot, instanceName string, depID yamlchart.DepID) error {
+	if strings.TrimSpace(repoRoot) == "" {
+		return fmt.Errorf("repoRoot is required")
+	}
+	if err := paths.ValidateSegment("instance name", instanceName); err != nil {
+		return err
+	}
+	return paths.ValidateSegment("dependency id", string(depID))
+}
+
 // Read loads the metadata for a dependency; ok=false when absent/invalid.
 func Read(repoRoot, instanceName string, depID yamlchart.DepID) (Meta, bool) {
-	if strings.TrimSpace(repoRoot) == "" || strings.TrimSpace(instanceName) == "" || strings.TrimSpace(string(depID)) == "" {
+	if err := validate(repoRoot, instanceName, depID); err != nil {
 		return Meta{}, false
 	}
 	b, err := os.ReadFile(Path(repoRoot, instanceName, depID))
@@ -60,10 +73,23 @@ func Read(repoRoot, instanceName string, depID yamlchart.DepID) (Meta, bool) {
 	return m, true
 }
 
+// Remove drops the metadata for a dependency. Removing a dependency frees its
+// id: metadata left behind would be inherited by whatever takes that id next.
+// Absent metadata is not an error.
+func Remove(repoRoot, instanceName string, depID yamlchart.DepID) error {
+	if err := validate(repoRoot, instanceName, depID); err != nil {
+		return err
+	}
+	if err := os.Remove(Path(repoRoot, instanceName, depID)); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	return nil
+}
+
 // Write persists the metadata for a dependency.
 func Write(repoRoot, instanceName string, depID yamlchart.DepID, m Meta) error {
-	if strings.TrimSpace(repoRoot) == "" || strings.TrimSpace(instanceName) == "" || strings.TrimSpace(string(depID)) == "" {
-		return fmt.Errorf("missing repoRoot/instanceName/depID")
+	if err := validate(repoRoot, instanceName, depID); err != nil {
+		return err
 	}
 	p := Path(repoRoot, instanceName, depID)
 	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {

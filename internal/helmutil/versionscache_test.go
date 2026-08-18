@@ -8,6 +8,10 @@ import (
 )
 
 func TestVersionsCacheReadWriteRoundTrip(t *testing.T) {
+	// A repo without helmdex.yaml keeps its state under the user cache dir;
+	// without this the test writes into the developer's real ~/.cache and
+	// never cleans up.
+	t.Setenv("HELMDEX_CACHE_DIR", t.TempDir())
 	repoRoot := t.TempDir()
 	repoURL := "https://example.com/charts"
 	chart := "nginx"

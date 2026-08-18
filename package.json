@@ -10,6 +10,7 @@
     "tui:run": "tsx tests/tui/scripts/app-run.ts"
   },
   "devDependencies": {
+    "@playwright/test": "^1.62.1",
     "@release-it/conventional-changelog": "^10.0.5",
     "@types/node": "^22.13.1",
     "agent-tui": "1.0.1",

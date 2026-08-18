@@ -270,9 +270,56 @@ func normalizeYAMLLine(l string) string {
 	}
 	if i := strings.Index(s, " #"); i >= 0 {
 		code := strings.TrimRight(s[:i], " \t")
-		return code + " " + strings.TrimLeft(s[i:], " \t")
+		return normalizeFlowSpacing(code) + " " + strings.TrimLeft(s[i:], " \t")
 	}
-	return s
+	return normalizeFlowSpacing(s)
+}
+
+// normalizeFlowSpacing collapses padding inside flow collections, so a
+// hand-written `[ ]` or `{ a: 1 }` still matches the encoder's `[]` and
+// `{a: 1}`.
+//
+// Without it those lines read as changed, and a changed line is re-emitted
+// from the encoder — losing not only its own spacing but the blank lines that
+// preceded it. Like indentation above, this only widens matching: a matched
+// line is re-emitted with its ORIGINAL text, and yamlSemanticEqual rejects any
+// reconstruction whose parsed value differs.
+func normalizeFlowSpacing(s string) string {
+	var b strings.Builder
+	b.Grow(len(s))
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if c != ' ' {
+			b.WriteByte(c)
+			continue
+		}
+		// Drop a run of spaces that touches a flow delimiter on either side.
+		j := i
+		for j < len(s) && s[j] == ' ' {
+			j++
+		}
+		prev := byte(0)
+		if b.Len() > 0 {
+			prev = b.String()[b.Len()-1]
+		}
+		next := byte(0)
+		if j < len(s) {
+			next = s[j]
+		}
+		if !isFlowDelim(prev) && !isFlowDelim(next) {
+			b.WriteString(s[i:j])
+		}
+		i = j - 1
+	}
+	return b.String()
+}
+
+func isFlowDelim(c byte) bool {
+	switch c {
+	case '[', ']', '{', '}', ',':
+		return true
+	}
+	return false
 }
 
 // yamlSemanticEqual reports whether two YAML byte streams decode to the same

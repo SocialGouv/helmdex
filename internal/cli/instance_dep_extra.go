@@ -40,14 +40,16 @@ func newInstanceDepAddFromCatalogCmd(f *rootFlags) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			entries, err := catalog.LoadLocalCatalogEntries(repoRoot)
+			entries, err := catalog.LoadLocalCatalogEntriesWithSource(repoRoot)
 			if err != nil {
 				return err
 			}
 			var e *catalog.Entry
+			var entrySource string
 			for i := range entries {
-				if entries[i].ID == catalogID {
-					e = &entries[i]
+				if entries[i].Entry.ID == catalogID {
+					e = &entries[i].Entry
+					entrySource = entries[i].SourceName
 					break
 				}
 			}
@@ -60,15 +62,10 @@ func newInstanceDepAddFromCatalogCmd(f *rootFlags) *cobra.Command {
 				return err
 			}
 			dep := yamlchart.Dependency{Name: e.Chart.Name, Repository: e.Chart.Repo, Version: e.Version}
-			if err := c.UpsertDependency(dep); err != nil {
-				return err
-			}
-			if err := yamlchart.WriteChart(chartPath, c); err != nil {
-				return err
-			}
 
-			// Materialize selected sets as per-dependency marker files.
-			// Selection rules:
+			// Decide which sets are wanted, and refuse early: every check that
+			// can fail runs before the first write, so a rejected command
+			// leaves nothing behind.
 			// - If --no-default-sets is NOT set, start with catalog defaultSets.
 			// - Always union with explicit --set flags.
 			// - Selection is represented by local file presence; `instance apply` overwrites
@@ -83,6 +80,26 @@ func newInstanceDepAddFromCatalogCmd(f *rootFlags) *cobra.Command {
 			if len(wantSets) > 0 && !values.IsManaged(inst.Path) {
 				return fmt.Errorf("catalog sets require a managed instance (values.instance.yaml); %q is direct-mode (use --no-default-sets)", args[0])
 			}
+
+			if err := c.UpsertDependency(dep); err != nil {
+				return err
+			}
+			if err := yamlchart.WriteChart(chartPath, c); err != nil {
+				return err
+			}
+
+			// Record the catalog attribution, like the TUI and the web API do:
+			// without it the dependency reads as arbitrary everywhere and
+			// `instance dep detach` has nothing to detach from.
+			if err := writeDepSourceMeta(repoRoot, inst.Name, yamlchart.DependencyID(dep), depSourceMeta{
+				Kind:          depSourceCatalog,
+				CatalogID:     e.ID,
+				CatalogSource: entrySource,
+			}); err != nil {
+				return err
+			}
+
+			// Materialize selected sets as per-dependency marker files.
 			seen := map[string]struct{}{}
 			depID := yamlchart.DependencyID(dep)
 			for _, setName := range wantSets {

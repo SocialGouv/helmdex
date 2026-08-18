@@ -1,8 +1,18 @@
 # Wrapper defaults (hand-written, user-owned — helmdex must never regenerate this).
+#
+# The shape here is deliberately hostile to a YAML re-encoder: blank lines,
+# a trailing comment, quoted and unquoted scalars side by side, and a list in
+# compact style. Anything that rewrites this file instead of editing it in
+# place shows up as a diff.
 demo:
   replicaCount: 1 # keep small in preprod
+
   image:
     repository: registry.example.invalid/org/demo
+    pullPolicy: "IfNotPresent"
+
+  tolerations: [ ]
+
 # NetworkPolicies toggle.
 networkPolicy:
   enabled: true

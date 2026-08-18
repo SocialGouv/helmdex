@@ -34,6 +34,10 @@ func writeDepSourceMeta(repoRoot, instanceName string, depID yamlchart.DepID, me
 	return depmeta.Write(repoRoot, instanceName, depID, meta)
 }
 
+func removeDepSourceMeta(repoRoot, instanceName string, depID yamlchart.DepID) error {
+	return depmeta.Remove(repoRoot, instanceName, depID)
+}
+
 func removeOrphanDepSetMarkers(instancePath string, depID yamlchart.DepID, allowedSets map[string]struct{}) error {
 	glob := filepath.Join(instancePath, fmt.Sprintf("values.dep-set.%s--*.yaml", depID))
 	files, err := filepath.Glob(glob)

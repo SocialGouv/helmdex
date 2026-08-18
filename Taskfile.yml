@@ -33,7 +33,7 @@ tasks:
 
   test-tui:
     desc: Run TUI E2E tests (vitest)
-    deps: [deps, build]
+    deps: [deps, build, test:fakehelm]
     vars:
       AGENT_TUI_NATIVE:
         sh: node -p "require('./node_modules/agent-tui/scripts/platform').resolveBinaryPath().binPath"
@@ -50,7 +50,7 @@ tasks:
 
   test-tui:ci:
     desc: Run TUI E2E tests (vitest) in CI (frozen lockfile)
-    deps: [deps:ci, build]
+    deps: [deps:ci, build, test:fakehelm]
     vars:
       AGENT_TUI_NATIVE:
         sh: node -p "require('./node_modules/agent-tui/scripts/platform').resolveBinaryPath().binPath"
@@ -130,6 +130,21 @@ tasks:
     cmds:
       - go test -mod=vendor ./...
 
+  test:fakehelm:
+    desc: Build the fake helm binary used by the hermetic E2E suites
+    sources:
+      - ./internal/testutil/fakehelm/**/*.go
+    generates:
+      - '{{.BIN_DIR}}/fakehelm/helm'
+    cmds:
+      - mkdir -p '{{.BIN_DIR}}/fakehelm'
+      - go build -mod=vendor -o '{{.BIN_DIR}}/fakehelm/helm' ./internal/testutil/fakehelm
+
+  test:server:
+    desc: Run the HTTP API tests with the race detector
+    cmds:
+      - go test -mod=vendor -race ./internal/server/...
+
   fmt:
     desc: Format Go code (gofmt)
     cmds:
@@ -189,6 +204,34 @@ tasks:
     cmds:
       - corepack pnpm --dir webui exec tsc -b
       - corepack pnpm --dir webui exec vitest run
+
+  test-web:
+    desc: Run web UI E2E tests (Playwright against the built binary)
+    # ui:build must precede build: the binary embeds the SPA at compile time,
+    # so building in the other order serves a stale bundle.
+    deps: [deps, test:fakehelm]
+    cmds:
+      - task: ui:build
+      - task: build
+      - corepack pnpm exec playwright test --config tests/web/playwright.config.ts
+
+  test-web:ci:
+    desc: Run web UI E2E tests in CI (frozen lockfile)
+    deps: [deps:ci, test:fakehelm]
+    cmds:
+      - task: ui:build
+      - task: build
+      - corepack pnpm exec playwright install --with-deps chromium
+      - corepack pnpm exec playwright test --config tests/web/playwright.config.ts
+
+  test:all:
+    desc: Run every suite (Go, TUI E2E, web unit, web E2E)
+    cmds:
+      - task: test
+      - task: test:server
+      - task: ui:test
+      - task: test-tui
+      - task: test-web
 
   # -----
   # Desktop (Wails)
@@ -283,4 +326,7 @@ tasks:
     desc: CI pipeline (matches GitHub Actions)
     cmds:
       - task: test
+      - task: test:server
+      - task: ui:test
       - task: test-tui:ci
+      - task: test-web:ci

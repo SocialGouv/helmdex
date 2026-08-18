@@ -22,6 +22,11 @@ jobs:
       - name: Run Go tests
         run: go test -mod=vendor ./...
 
+      # The HTTP API serves the web UI and the desktop app concurrently
+      # (workspace swaps, an event broker); races only show up under -race.
+      - name: Run HTTP API tests with the race detector
+        run: go test -mod=vendor -race ./internal/server/...
+
       - name: Run go vet
         run: go vet -mod=vendor ./...
 

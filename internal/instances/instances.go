@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"helmdex/internal/helmutil"
+	"helmdex/internal/paths"
 	"helmdex/internal/yamlchart"
 )
 
@@ -31,13 +32,7 @@ func instanceDir(repoRoot, appsDir, name string) string {
 // a user-supplied name (the HTTP API decodes %2F in path segments, so an
 // unvalidated name is an arbitrary-path primitive).
 func ValidateName(name string) error {
-	if strings.TrimSpace(name) == "" {
-		return fmt.Errorf("instance name is required")
-	}
-	if name == "." || name == ".." || strings.ContainsAny(name, `/\`) || strings.Contains(name, "..") {
-		return fmt.Errorf("invalid instance name %q", name)
-	}
-	return nil
+	return paths.ValidateSegment("instance name", name)
 }
 
 // Create creates a new umbrella chart instance.

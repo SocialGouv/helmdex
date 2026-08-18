@@ -5,6 +5,8 @@ import (
 	"os"
 	"path/filepath"
 
+	"helmdex/internal/paths"
+
 	"gopkg.in/yaml.v3"
 )
 
@@ -131,6 +133,12 @@ func (c Config) Validate() error {
 			return fmt.Errorf("duplicate sources[].name %q", s.Name)
 		}
 		seen[s.Name] = struct{}{}
+		// The source name is a directory and a file name in helmdex state
+		// (cache/<name>/, catalog/<name>.yaml), and it is settable over the
+		// API — so it must stay a single path component.
+		if err := paths.ValidateSegment("sources[].name", s.Name); err != nil {
+			return err
+		}
 		if s.Git.URL == "" {
 			return fmt.Errorf("sources[%s].git.url is required", s.Name)
 		}

@@ -224,3 +224,61 @@ func TestSetInFile_PreservesSymlinkAndMode(t *testing.T) {
 		t.Fatalf("edit did not reach the symlink target: %v", v)
 	}
 }
+
+// A hand-written values file mixes blank lines with padded flow collections.
+// Editing one key must not reflow the rest: in a helmdex-agnostic repo every
+// stray line is a diff in someone's GitOps history.
+func TestSetInFile_BlankLinesAndFlowPaddingSurvive(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "values.yaml")
+	const orig = `# Wrapper defaults.
+demo:
+  replicaCount: 1 # keep small
+
+  image:
+    repository: registry.example.invalid/org/demo
+
+  tolerations: [ ]
+
+# Toggle.
+networkPolicy:
+  enabled: true
+`
+	if err := os.WriteFile(p, []byte(orig), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	path, err := ParsePath("$.demo.replicaCount")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := SetInFile(p, path, 3); err != nil {
+		t.Fatalf("SetInFile: %v", err)
+	}
+
+	b, err := os.ReadFile(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := string(b)
+
+	if !strings.Contains(got, "replicaCount: 3 # keep small") {
+		t.Fatalf("edit or its trailing comment lost:\n%s", got)
+	}
+	if !strings.Contains(got, "tolerations: [ ]") {
+		t.Fatalf("flow-collection padding was reflowed:\n%s", got)
+	}
+	before, after := strings.Split(orig, "\n"), strings.Split(got, "\n")
+	if len(before) != len(after) {
+		t.Fatalf("line count changed (%d -> %d), blank lines were dropped:\n%s", len(before), len(after), got)
+	}
+	changed := 0
+	for i := range before {
+		if before[i] != after[i] {
+			changed++
+		}
+	}
+	if changed != 1 {
+		t.Fatalf("expected exactly one changed line, got %d:\n%s", changed, got)
+	}
+}

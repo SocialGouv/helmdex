@@ -6,8 +6,10 @@
 /apps/
 /helmdex.yaml
 
-# TUI E2E artifacts + local build output
+# E2E artifacts + local build output
 /tests/tui/artifacts/
+/test-results/
+/playwright-report/
 /bin/
 
 node_modules

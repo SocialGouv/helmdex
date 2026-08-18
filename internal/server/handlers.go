@@ -530,6 +530,12 @@ func (s *Server) handleDepRemove(w http.ResponseWriter, r *http.Request) {
 		httpError(w, http.StatusInternalServerError, err)
 		return
 	}
+	// The id is free again: metadata left behind would attribute the next
+	// dependency taking that id to a catalog it never came from.
+	if err := depmeta.Remove(s.ws().RepoRoot, inst.Name, id); err != nil {
+		httpError(w, http.StatusInternalServerError, err)
+		return
+	}
 	w.WriteHeader(http.StatusNoContent)
 }
 
