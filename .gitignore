@@ -28,3 +28,5 @@ node_modules
 /.playwright-mcp/
 /.pnpm-store/
 /webui/tsconfig.tsbuildinfo
+/build/bin/
+/cmd/helmdex-desktop/frontend/
