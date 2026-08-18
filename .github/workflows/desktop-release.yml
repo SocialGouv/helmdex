@@ -88,11 +88,17 @@ jobs:
 
       - name: Linux deps
         if: startsWith(matrix.platform, 'linux/')
+        env:
+          # 24.04's needrestart prompts mid-install and hangs the runner.
+          DEBIAN_FRONTEND: noninteractive
+          NEEDRESTART_MODE: a
         run: |
           sudo apt-get update
           sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev \
-            libsoup-3.0-dev libfuse2 patchelf desktop-file-utils \
+            libsoup-3.0-dev patchelf desktop-file-utils \
             librsvg2-common gtk-update-icon-cache wget file
+          # libfuse2 was renamed libfuse2t64 in the 24.04 time_t transition.
+          sudo apt-get install -y libfuse2t64 || sudo apt-get install -y libfuse2
 
       - name: Enable corepack
         shell: bash
