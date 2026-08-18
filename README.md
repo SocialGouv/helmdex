@@ -79,7 +79,51 @@ flowchart TD
 
 ## Install
 
-Download the latest binary for your platform:
+helmdex ships in three interchangeable forms — all driving the same engine:
+
+- **Desktop app** — a native window, no terminal needed. Best for interactive use.
+- **CLI / TUI** — a single static binary (`helmdex`) for the terminal and CI.
+- **Web UI** — `helmdex ui` serves the desktop UI in your browser (handy for remote/dev).
+
+### Desktop app
+
+Download the build for your OS from the [latest release](https://github.com/SocialGouv/helmdex/releases/latest), then run it. Every release attaches desktop builds for macOS, Windows and Linux.
+
+**macOS** (universal — Intel + Apple Silicon):
+
+```bash
+curl -fsSL -o helmdex-desktop.zip \
+  https://github.com/SocialGouv/helmdex/releases/latest/download/helmdex-desktop-darwin-universal.zip
+unzip helmdex-desktop.zip -d /Applications/
+# First launch is unsigned: right-click the app → Open, or:
+xattr -dr com.apple.quarantine "/Applications/Helmdex.app"
+open "/Applications/Helmdex.app"
+```
+
+**Windows** (portable — no installer):
+
+```powershell
+Invoke-WebRequest -Uri "https://github.com/SocialGouv/helmdex/releases/latest/download/helmdex-desktop-windows-amd64.exe" -OutFile helmdex-desktop.exe
+.\helmdex-desktop.exe
+```
+
+**Linux** (AppImage — self-contained, bundles its WebKitGTK runtime):
+
+```bash
+ARCH=$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')
+curl -fsSL -o helmdex-desktop.AppImage \
+  "https://github.com/SocialGouv/helmdex/releases/latest/download/helmdex-desktop-linux-${ARCH}.AppImage"
+chmod +x helmdex-desktop.AppImage
+./helmdex-desktop.AppImage
+```
+
+Running the AppImage needs FUSE (`sudo apt install libfuse2` on Debian/Ubuntu), or run it with `--appimage-extract-and-run`. On a Wayland session where the window fails to open, launch with `GDK_BACKEND=x11 ./helmdex-desktop.AppImage` (a standard WebKitGTK-on-Wayland workaround).
+
+The desktop app opens on the current directory and has an **Open repository…** button to switch to any GitOps repo — including [helmdex-agnostic repos](#helmdex-agnostic-mode) with no `helmdex.yaml`.
+
+### CLI / TUI
+
+Download the static binary for your platform:
 
 ```bash
 curl -fsSL "https://github.com/SocialGouv/helmdex/releases/latest/download/helmdex-$(uname -s | tr '[:upper:]' '[:lower:]')-$(uname -m | sed 's/x86_64/amd64/' | sed 's/aarch64/arm64/')" | sudo tee /usr/local/bin/helmdex > /dev/null && sudo chmod +x /usr/local/bin/helmdex
@@ -97,7 +141,7 @@ curl -fsSL "https://github.com/SocialGouv/helmdex/releases/latest/download/helmd
 Invoke-WebRequest -Uri "https://github.com/SocialGouv/helmdex/releases/latest/download/helmdex-windows-amd64.exe" -OutFile helmdex.exe
 ```
 
-Verify the download (optional):
+Verify the download (optional — every asset ships a `.sha256`):
 
 ```bash
 curl -fsSL "https://github.com/SocialGouv/helmdex/releases/latest/download/helmdex-$(uname -s | tr '[:upper:]' '[:lower:]')-$(uname -m | sed 's/x86_64/amd64/' | sed 's/aarch64/arm64/').sha256" | sha256sum -c
@@ -108,6 +152,8 @@ Or build from source:
 ```bash
 go install github.com/SocialGouv/helmdex/cmd/helmdex@latest
 ```
+
+The web UI is served from the CLI binary: `helmdex ui --open` (see [Web UI & desktop](#web-ui--desktop)).
 
 ## Quick start (TUI)
 
@@ -141,18 +187,31 @@ Running `helmdex` with no arguments opens the interactive dashboard when stdin i
 
 ## Web UI & desktop
 
+Prebuilt desktop apps are on the [releases page](#desktop-app). The same UI runs
+in your browser, straight from the CLI binary:
+
 ```bash
 helmdex ui --open          # serve the web UI for the current repo (localhost)
-task ui:dev                # dev loop: Go API + Vite with hot reload
-task desktop:build:linux:amd64   # build the desktop app (Wails)
 ```
 
-The web UI and desktop app share the same SPA and local API: dashboard
-(instances + templates), dependency management (catalog / Artifact Hub /
-arbitrary+OCI, version picker, side-by-side values/schema diffs between
-versions, detach), mode-aware values editing (Monaco), sets, and a file
-browser. Desktop releases (macOS universal, Windows, Linux AppImage) are
-published by CI on every tag.
+The web UI and desktop app share one SPA and local API: dashboard (instances +
+templates), dependency management (catalog / Artifact Hub / arbitrary + OCI,
+version picker, side-by-side values/schema diffs between versions, detach,
+schema-form configurator), mode-aware values editing (Monaco), sets, sources
+editor, and a file browser.
+
+Build them yourself:
+
+```bash
+task ui:dev                      # dev loop: Go API + Vite with hot reload
+task ui:build                    # embed the SPA into the helmdex binary
+task desktop:install-tools       # one-time: install the Wails CLI
+task desktop:build:linux:amd64   # or :linux:arm64 / :darwin:universal / :windows:amd64 / :windows:arm64
+```
+
+Desktop builds (macOS universal `.zip`, Windows portable `.exe`, Linux
+`.AppImage` for amd64 + arm64, each with a `.sha256`) are produced by CI and
+attached to every tagged release.
 
 ## TUI at a glance
 
@@ -208,6 +267,31 @@ The terminal window title tracks your location:
 3. `helmdex catalog sync`
 4. Open the TUI → create an instance → add a dependency → pick sets → apply
 5. Commit the resulting `Chart.yaml`, `Chart.lock`, and generated `values.yaml` for review
+
+---
+
+## helmdex-agnostic mode
+
+Point helmdex (TUI, `helmdex ui`, or the desktop app) at **any** GitOps repo of
+umbrella-chart directories — it adapts to the repo instead of the other way
+round. A repo with no `helmdex.yaml` stays **byte-identical**:
+
+- **No files added.** Per-repo state (Helm envs, caches, catalog, depmeta)
+  lives under your user cache dir, never in the repo. Config comes from
+  `~/.config/helmdex/config.yaml` (with optional per-repo overrides), not a
+  committed file.
+- **Values edited in place.** Instances without a `values.instance.yaml` are
+  *direct*: `values.yaml` (and any `values.*.yaml`) are yours. helmdex edits
+  them through a comment-preserving YAML editor — changing one value is a
+  **one-line diff** (blank lines, comment alignment and list style preserved),
+  and it never regenerates or reorders your file.
+- **Templates detected.** A top-level `templates/` dir of chart blueprints
+  (e.g. review-env gabarits) is surfaced; create instances from them with
+  `helmdex instance create --from-template <name>` or one click in the UI.
+
+Layout is auto-detected (`apps/`, `environments/`, …); pin it per repo in the
+user config if needed. Everything is universal — nothing is tied to any
+specific platform.
 
 ---
 
