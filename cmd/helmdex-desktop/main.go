@@ -19,6 +19,11 @@ import (
 var appIcon []byte
 
 func main() {
+	// Must precede wails.Run: WebKit reads its renderer settings when the
+	// web view is created. Without this the window is a flat rectangle of
+	// BackgroundColour on hybrid-GPU and NVIDIA machines.
+	applyLinuxWebKitFixes()
+
 	app := NewApp()
 
 	// The web UI and API are served by the in-process internal/server
