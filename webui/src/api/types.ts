@@ -1,3 +1,16 @@
+export interface VersionInfo {
+  version: string;
+  commit?: string;
+  repoUrl: string;
+}
+
+export interface UpdateCheck {
+  current: string;
+  latest: string;
+  updateAvailable: boolean;
+  releaseUrl: string;
+}
+
 export interface RepoInfo {
   root: string;
   optedIn: boolean;

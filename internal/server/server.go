@@ -77,6 +77,9 @@ func (s *Server) routes() {
 
 	m.HandleFunc("GET /api/repo", s.handleRepo)
 
+	m.HandleFunc("GET /api/version", s.handleVersion)
+	m.HandleFunc("GET /api/version/check", s.handleVersionCheck)
+
 	m.HandleFunc("GET /api/instances", s.handleInstancesList)
 	m.HandleFunc("POST /api/instances", s.handleInstanceCreate)
 	m.HandleFunc("GET /api/instances/{name}", s.handleInstanceGet)

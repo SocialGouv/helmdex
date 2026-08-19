@@ -27,6 +27,10 @@ declare global {
         App?: DesktopBindings;
       };
     };
+    // Wails runtime, injected alongside the bindings.
+    runtime?: {
+      BrowserOpenURL?: (url: string) => void;
+    };
   }
 }
 
@@ -38,4 +42,14 @@ export function desktopApp(): DesktopBindings {
   const app = window.go?.main?.App;
   if (!app) throw new Error("desktop bindings unavailable outside the desktop app");
   return app;
+}
+
+// openExternal opens a URL in the system browser: the Wails runtime in the
+// desktop shell, a regular new tab in the browser.
+export function openExternal(url: string) {
+  if (window.runtime?.BrowserOpenURL) {
+    window.runtime.BrowserOpenURL(url);
+    return;
+  }
+  window.open(url, "_blank", "noopener");
 }

@@ -13,6 +13,8 @@ import type {
   InspectKind,
   InstanceInfo,
   RepoInfo,
+  UpdateCheck,
+  VersionInfo,
   StoredCredential,
   TemplateInfo,
   TokenPage,
@@ -71,6 +73,9 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
 export const api = {
   repo: () => request<RepoInfo>("/api/repo"),
+
+  version: () => request<VersionInfo>("/api/version"),
+  versionCheck: () => request<UpdateCheck>("/api/version/check"),
 
   instances: () => request<InstanceInfo[]>("/api/instances"),
   instance: (name: string) => request<InstanceInfo>(`/api/instances/${encodeURIComponent(name)}`),

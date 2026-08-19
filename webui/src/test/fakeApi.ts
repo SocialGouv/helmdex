@@ -6,6 +6,8 @@ import type {
   FileInfo,
   InstanceInfo,
   RepoInfo,
+  UpdateCheck,
+  VersionInfo,
   SchemaViolation,
   SetsInfo,
   SourcesInfo,
@@ -30,6 +32,8 @@ import type {
 
 export type FakeApiState = {
   repo: RepoInfo;
+  version: VersionInfo;
+  updateCheck: UpdateCheck;
   instances: InstanceInfo[];
   templates: TemplateInfo[];
   files: Record<string, FileInfo[]>;
@@ -109,6 +113,13 @@ export function defaultState(): FakeApiState {
   };
 
   return {
+    version: { version: "v0.5.0", commit: "abc1234", repoUrl: "https://github.com/SocialGouv/helmdex" },
+    updateCheck: {
+      current: "v0.5.0",
+      latest: "v0.5.0",
+      updateAvailable: false,
+      releaseUrl: "https://github.com/SocialGouv/helmdex/releases/tag/v0.5.0",
+    },
     repo: {
       root: "/repo",
       optedIn: true,
@@ -270,6 +281,8 @@ export function installFakeApi(overrides: Partial<FakeApiState> = {}): FakeApi {
 
     // /api/repo
     if (path === "/api/repo") return json(state.repo);
+    if (path === "/api/version") return json(state.version);
+    if (path === "/api/version/check") return json(state.updateCheck);
     if (path === "/api/templates") return json(state.templates);
     if (path === "/api/catalog") return json(state.catalog);
     if (path === "/api/catalog/sync" && method === "POST") return json([{ SourceName: "Example" }]);

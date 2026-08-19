@@ -1,12 +1,14 @@
 import { useEffect, useState } from "react";
 import { Route, Switch, Link, useRoute } from "wouter";
 import { useQuery } from "@tanstack/react-query";
-import { Boxes, BookOpen, Home, KeyRound } from "lucide-react";
+import { Boxes, BookOpen, Home, Info, KeyRound } from "lucide-react";
 import { api } from "./api/client";
 import { isDesktop } from "./lib/desktop";
+import { maybeAutoCheck, useUpdatesStatus } from "./lib/updates";
 import Dashboard from "./pages/Dashboard";
 import InstancePage from "./pages/Instance";
 import CatalogPage from "./pages/Catalog";
+import AboutDialog from "./components/AboutDialog";
 import EventsIndicator from "./components/EventsIndicator";
 import CredentialsDialog from "./components/CredentialsDialog";
 import ThemeToggle from "./components/ThemeToggle";
@@ -28,6 +30,11 @@ function NavLink({ href, children }: { href: string; children: React.ReactNode }
 export default function App() {
   const repo = useQuery({ queryKey: ["repo"], queryFn: api.repo });
   const [credsOpen, setCredsOpen] = useState(false);
+  const [aboutOpen, setAboutOpen] = useState(false);
+  const updates = useUpdatesStatus();
+
+  // Daily new-version check (opt-out in About); throttled via localStorage.
+  useEffect(() => maybeAutoCheck(), []);
 
   // Folder-aware tab title in the browser; the desktop window title is
   // native, set by the Go shell.
@@ -64,6 +71,27 @@ export default function App() {
             <KeyRound className="h-4 w-4" /> Credentials
           </button>
           {credsOpen && <CredentialsDialog onClose={() => setCredsOpen(false)} />}
+          <button
+            onClick={() => setAboutOpen(true)}
+            className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-sm text-muted transition-colors hover:bg-panel-2 hover:text-text"
+          >
+            <span className="relative">
+              <Info className="h-4 w-4" />
+              {updates.check?.updateAvailable && (
+                <span
+                  className="absolute -right-1 -top-1 h-2 w-2 rounded-full bg-accent"
+                  title={`Update available: ${updates.check.latest}`}
+                />
+              )}
+            </span>
+            About
+            {updates.check?.updateAvailable && (
+              <span className="ml-auto rounded bg-panel-2 px-1.5 py-0.5 text-[10px] text-accent">
+                {updates.check.latest}
+              </span>
+            )}
+          </button>
+          {aboutOpen && <AboutDialog onClose={() => setAboutOpen(false)} />}
           <div className="space-y-1 px-2">
             {repo.data && (
               <>
