@@ -44,8 +44,13 @@ func main() {
 		EnableDefaultContextMenu: true,
 		BackgroundColour:         &options.RGBA{R: 15, G: 17, B: 23, A: 255},
 		Linux: &linux.Options{
-			Icon:        appIcon,
-			ProgramName: "helmdex",
+			Icon: appIcon,
+			// Sets the Wayland app_id (via g_set_prgname). It must equal the
+			// window's X11 WM_CLASS — derived from the launch name
+			// "helmdex-desktop" — and the installed desktop entry's basename,
+			// so GNOME resolves the window icon from helmdex-desktop.desktop
+			// on both Wayland and X11.
+			ProgramName: "helmdex-desktop",
 		},
 		OnStartup: app.onStartup,
 		Bind:      []any{app},
