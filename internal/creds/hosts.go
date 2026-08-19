@@ -96,9 +96,14 @@ func RelatedHosts(host string) []string {
 	return []string{"registry." + host}
 }
 
-// IsGitHubHost reports whether host is GitHub-operated (github.com, GHES
-// tenants on *.ghe.com, ghcr.io) or self-named as a GitHub instance.
+// IsGitHubHost reports whether host is GitHub-operated: github.com and its
+// registry ghcr.io, plus GHES/GHEC tenants on *.ghe.com and *.github.com.
+// It matches on exact host or dotted suffix — never a bare substring, so
+// "notgithub.com" or "mygithub.attacker.example" do not qualify.
 func IsGitHubHost(host string) bool {
 	host = strings.ToLower(strings.TrimSpace(host))
-	return host == "ghcr.io" || strings.HasSuffix(host, ".ghe.com") || strings.Contains(host, "github")
+	return host == "github.com" ||
+		host == "ghcr.io" ||
+		strings.HasSuffix(host, ".github.com") ||
+		strings.HasSuffix(host, ".ghe.com")
 }

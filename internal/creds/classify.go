@@ -9,8 +9,9 @@ import (
 // git when a remote requires (or refuses) authentication. Patterns are kept
 // specific enough to not match local errors like "permission denied" on files.
 var authErrRe = regexp.MustCompile(`(?i)` + strings.Join([]string{
-	`\b401\b`,
-	`\b403\b`,
+	// HTTP status codes, delimited by whitespace/colon so a chart version
+	// like "v1.403.0" or "401-foo" does not classify as an auth failure.
+	`(?:^|\s)(?:401|403)(?:\s|:|$)`,
 	`unauthorized`,
 	`unauthenticated`,
 	`authentication required`,
@@ -25,7 +26,7 @@ var authErrRe = regexp.MustCompile(`(?i)` + strings.Join([]string{
 	`http basic: access denied`,
 	`access denied`,
 	`pull access denied`,
-	`denied: `,
+	`denied: requested access`,
 	`permission denied \(publickey`,
 	`fatal: could not read`,
 	`basic credential not found`,

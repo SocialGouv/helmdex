@@ -4,13 +4,19 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"os"
+	"sort"
 )
 
-// SyncRegistryAuths materializes all stored OCI credentials into a
-// docker-style config.json (helmdex's isolated HELM_REGISTRY_CONFIG file),
-// preserving entries written there by `helm registry login`.
+// SyncRegistryAuths reconciles helmdex's stored OCI credentials into a
+// docker-style config.json (helmdex's isolated HELM_REGISTRY_CONFIG file):
+// it upserts an auths entry for every stored OCI host and removes entries for
+// hosts helmdex previously materialized but no longer holds — so a logout
+// actually stops helm from authenticating.
 //
-// It is cheap when nothing changed: the write is skipped while the target is
+// Hosts written by other tools (e.g. `helm registry login`) are never touched:
+// helmdex tracks the hosts it manages in a sidecar file and only prunes those.
+//
+// It is cheap when nothing changed: the write is skipped while the config is
 // newer than the credential store.
 func SyncRegistryAuths(registryConfigPath string) error {
 	storePath, err := StorePath()
@@ -32,29 +38,85 @@ func SyncRegistryAuths(registryConfigPath string) error {
 		}
 	}
 
+	storeMu.Lock()
+	defer storeMu.Unlock()
+
 	st, err := Load()
 	if err != nil {
 		return err
 	}
 	var ociCreds []Credential
+	current := map[string]struct{}{}
 	for _, c := range st.Credentials {
 		if c.Kind == KindOCI && c.Secret != "" {
 			ociCreds = append(ociCreds, c)
+			current[c.Host] = struct{}{}
 		}
 	}
-	if len(ociCreds) == 0 {
+
+	sidecar := registryConfigPath + ".helmdex-hosts"
+	previous := readManagedHosts(sidecar)
+	var removeHosts []string
+	for _, h := range previous {
+		if _, ok := current[h]; !ok {
+			removeHosts = append(removeHosts, h)
+		}
+	}
+	if len(ociCreds) == 0 && len(removeHosts) == 0 {
 		return nil
 	}
-	return mergeDockerAuths(registryConfigPath, ociCreds, nil)
+	if err := mergeDockerAuths(registryConfigPath, ociCreds, removeHosts); err != nil {
+		return err
+	}
+	return writeManagedHosts(sidecar, current)
 }
 
-// RemoveRegistryAuth deletes host entries from a docker-style config.json.
+// RemoveRegistryAuth deletes host entries from a docker-style config.json and
+// drops the host from the managed-hosts sidecar.
 func RemoveRegistryAuth(registryConfigPath, host string) error {
-	return mergeDockerAuths(registryConfigPath, nil, []string{host})
+	storeMu.Lock()
+	defer storeMu.Unlock()
+	if err := mergeDockerAuths(registryConfigPath, nil, []string{host}); err != nil {
+		return err
+	}
+	sidecar := registryConfigPath + ".helmdex-hosts"
+	managed := map[string]struct{}{}
+	for _, h := range readManagedHosts(sidecar) {
+		if h != host {
+			managed[h] = struct{}{}
+		}
+	}
+	return writeManagedHosts(sidecar, managed)
+}
+
+func readManagedHosts(sidecar string) []string {
+	b, err := os.ReadFile(sidecar)
+	if err != nil {
+		return nil
+	}
+	var hosts []string
+	if err := json.Unmarshal(b, &hosts); err != nil {
+		return nil
+	}
+	return hosts
+}
+
+func writeManagedHosts(sidecar string, hosts map[string]struct{}) error {
+	list := make([]string, 0, len(hosts))
+	for h := range hosts {
+		list = append(list, h)
+	}
+	sort.Strings(list)
+	b, err := json.Marshal(list)
+	if err != nil {
+		return err
+	}
+	return writeFileAtomic0600(sidecar, b, 0o755)
 }
 
 // mergeDockerAuths reads (or initializes) a docker-style config file, upserts
-// an auths entry per credential, removes the listed hosts, and writes the
+// the `auth` field of an entry per credential (preserving any other fields on
+// that host, such as identitytoken), removes the listed hosts, and writes the
 // result atomically with 0600 permissions.
 func mergeDockerAuths(path string, upserts []Credential, removeHosts []string) error {
 	// Work on raw maps to preserve unknown fields helm may have written.
@@ -72,13 +134,22 @@ func mergeDockerAuths(path string, upserts []Credential, removeHosts []string) e
 	}
 
 	for _, c := range upserts {
-		entry, err := json.Marshal(dockerAuthEntry{
-			Auth: base64.StdEncoding.EncodeToString([]byte(c.Username + ":" + c.Secret)),
-		})
+		// Preserve any sibling fields (identitytoken, email, …) another tool
+		// wrote for this host; only (re)set the base64 basic-auth blob.
+		entry := map[string]json.RawMessage{}
+		if raw, ok := auths[c.Host]; ok {
+			_ = json.Unmarshal(raw, &entry)
+		}
+		authVal, err := json.Marshal(base64.StdEncoding.EncodeToString([]byte(c.Username + ":" + c.Secret)))
 		if err != nil {
 			return err
 		}
-		auths[c.Host] = entry
+		entry["auth"] = authVal
+		merged, err := json.Marshal(entry)
+		if err != nil {
+			return err
+		}
+		auths[c.Host] = merged
 	}
 	for _, h := range removeHosts {
 		for _, k := range dockerAuthKeys(h) {

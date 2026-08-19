@@ -12,9 +12,16 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 
 	"gopkg.in/yaml.v3"
 )
+
+// storeMu serializes read-modify-write sequences on the shared on-disk state
+// (the credential store and the materialized registry configs). The HTTP
+// login handler is not otherwise serialized, so concurrent logins would
+// otherwise Load the same store and lose each other's writes.
+var storeMu sync.Mutex
 
 // Kind classifies what a credential authenticates against.
 type Kind string
@@ -165,6 +172,17 @@ func Upsert(c Credential) error {
 	if !ValidKind(c.Kind) {
 		return fmt.Errorf("invalid credential kind %q", c.Kind)
 	}
+	// A control character in a secret breaks the docker-auth base64 line
+	// format and lets a newline inject extra key=value lines into the git
+	// credential-helper protocol; a secret is one opaque value.
+	if strings.ContainsAny(c.Secret, "\n\r\x00") {
+		return fmt.Errorf("credential secret must not contain control characters")
+	}
+	if strings.ContainsAny(c.Username, "\n\r\x00") {
+		return fmt.Errorf("credential username must not contain control characters")
+	}
+	storeMu.Lock()
+	defer storeMu.Unlock()
 	st, err := Load()
 	if err != nil {
 		return err
@@ -187,6 +205,8 @@ func Upsert(c Credential) error {
 // kinds for the host are removed. It reports whether anything was removed.
 func Remove(host string, kind Kind) (bool, error) {
 	host = strings.ToLower(strings.TrimSpace(host))
+	storeMu.Lock()
+	defer storeMu.Unlock()
 	st, err := Load()
 	if err != nil {
 		return false, err

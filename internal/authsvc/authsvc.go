@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"runtime"
+	"slices"
 	"strings"
 	"time"
 
@@ -68,6 +69,17 @@ func Login(ctx context.Context, repoRoot string, req LoginRequest) (LoginResult,
 		return LoginResult{}, fmt.Errorf("kind must be one of oci, git, helm-repo (got %q)", req.Kind)
 	}
 
+	// Bind the verification URL to the credential's host. Without this a
+	// caller (the local API is CSRF-reachable) could name a benign host,
+	// have the server resolve the victim's local credential for it, and set
+	// url to an attacker endpoint — exfiltrating the secret via the
+	// verification request's Authorization header.
+	if u := strings.TrimSpace(req.URL); u != "" {
+		if h := creds.HostOf(u); h != host {
+			return LoginResult{}, fmt.Errorf("verification URL host %q does not match credential host %q", h, host)
+		}
+	}
+
 	cred := creds.Credential{Host: host, Kind: req.Kind, Source: req.Source}
 	switch req.Method {
 	case MethodDetected:
@@ -77,6 +89,12 @@ func Login(ctx context.Context, repoRoot string, req LoginRequest) (LoginResult,
 		srcHost := strings.ToLower(strings.TrimSpace(req.SourceHost))
 		if srcHost == "" {
 			srcHost = host
+		}
+		// A detected credential may only be pulled from the host itself or a
+		// related host (what Detect probes) — never an arbitrary victim host
+		// whose secret would then be resolved for an attacker-named host.
+		if srcHost != host && !slices.Contains(creds.RelatedHosts(host), srcHost) {
+			return LoginResult{}, fmt.Errorf("source host %q is not related to %q", srcHost, host)
 		}
 		username, secret, err := creds.ResolveCandidate(ctx, req.Source, srcHost)
 		if err != nil {

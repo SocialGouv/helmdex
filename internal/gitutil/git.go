@@ -113,7 +113,14 @@ func authForCred(rawURL string, c creds.Credential) gitAuth {
 
 	if creds.IsSSHURL(rawURL) {
 		if strings.TrimSpace(c.SSHKeyPath) != "" {
-			a.env = append(a.env, fmt.Sprintf("GIT_SSH_COMMAND=ssh -i %q -o IdentitiesOnly=yes", c.SSHKeyPath))
+			// git runs GIT_SSH_COMMAND through `sh -c`, so the key path must
+			// not be interpolated into the command string (%q is Go-quoting,
+			// not shell-quoting: `$(...)` in a path would execute). Ferry it
+			// through an env var, which the shell expands without re-parsing.
+			a.env = append(a.env,
+				"HELMDEX_SSH_KEY="+c.SSHKeyPath,
+				`GIT_SSH_COMMAND=ssh -i "$HELMDEX_SSH_KEY" -o IdentitiesOnly=yes`,
+			)
 		}
 		return a
 	}

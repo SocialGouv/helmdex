@@ -177,6 +177,62 @@ func TestAuth_DetectAndDetectedLogin(t *testing.T) {
 	}
 }
 
+// Credential exfiltration guard: a caller must not resolve a victim host's
+// local credential and have it verified against an attacker-controlled URL.
+func TestAuth_LoginRejectsUrlHostMismatch(t *testing.T) {
+	ts := newTestServer(t, testutil.RepoOpts{SourceMode: testutil.SourceNone})
+	testutil.WriteDockerConfig(t, "victim.example.test", "jo", "victim-pat")
+
+	// host names the attacker, url points at the attacker, but sourceHost
+	// tries to resolve the victim's credential.
+	msg := ts.post("/api/auth/login", map[string]any{
+		"host": "attacker.example", "kind": "helm-repo", "method": "detected",
+		"source": "docker-config", "sourceHost": "victim.example.test",
+		"url": "http://127.0.0.1:19191/pwn",
+	}).expect(http.StatusBadRequest).errorMessage()
+	if !strings.Contains(msg, "does not match") && !strings.Contains(msg, "not related") {
+		t.Fatalf("exfil attempt should be rejected, got: %q", msg)
+	}
+	// Nothing was stored under the attacker host.
+	if _, ok := creds.ForHost("attacker.example", creds.KindHelmRepo); ok {
+		t.Fatal("attacker-host credential must not be stored")
+	}
+}
+
+// Even without a URL, a detected login may only pull from the host itself or
+// a related host — never an arbitrary victim host.
+func TestAuth_LoginRejectsUnrelatedSourceHost(t *testing.T) {
+	ts := newTestServer(t, testutil.RepoOpts{SourceMode: testutil.SourceNone})
+	testutil.WriteDockerConfig(t, "victim.example.test", "jo", "victim-pat")
+
+	msg := ts.post("/api/auth/login", map[string]any{
+		"host": "attacker.example", "kind": "oci", "method": "detected",
+		"source": "docker-config", "sourceHost": "victim.example.test",
+	}).expect(http.StatusBadRequest).errorMessage()
+	if !strings.Contains(msg, "not related") {
+		t.Fatalf("unrelated sourceHost should be rejected, got: %q", msg)
+	}
+}
+
+// The legitimate related-host flow (registry host signed in with the git
+// host's credential) must still be allowed.
+func TestAuth_LoginAllowsRelatedSourceHost(t *testing.T) {
+	ts := newTestServer(t, testutil.RepoOpts{SourceMode: testutil.SourceNone})
+	// pic.example.test is the account host related to pic-registry.example.test.
+	testutil.WriteDockerConfig(t, "pic.example.test", "jo", "tok")
+
+	var res struct {
+		Username string `json:"username"`
+	}
+	ts.post("/api/auth/login", map[string]any{
+		"host": "pic-registry.example.test", "kind": "oci", "method": "detected",
+		"source": "docker-config", "sourceHost": "pic.example.test",
+	}).expect(http.StatusOK).decode(&res)
+	if res.Username != "jo" {
+		t.Fatalf("related-host login should succeed: %+v", res)
+	}
+}
+
 func TestAuth_RemoveCredential(t *testing.T) {
 	ts := newTestServer(t, testutil.RepoOpts{SourceMode: testutil.SourceNone})
 	ts.post("/api/auth/login", map[string]any{
