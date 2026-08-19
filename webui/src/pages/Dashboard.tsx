@@ -4,6 +4,8 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Package, Plus, LayoutTemplate, Trash2 } from "lucide-react";
 import * as Dialog from "@radix-ui/react-dialog";
 import { api } from "../api/client";
+import { useMountedRef } from "../lib/useMounted";
+import ViewToggle, { useViewMode } from "../components/ViewToggle";
 import type { InstanceInfo, TemplateInfo } from "../api/types";
 
 function InstanceCard({ inst, onDelete }: { inst: InstanceInfo; onDelete: (name: string) => void }) {
@@ -45,6 +47,37 @@ function InstanceCard({ inst, onDelete }: { inst: InstanceInfo; onDelete: (name:
   );
 }
 
+function InstanceRow({ inst, onDelete }: { inst: InstanceInfo; onDelete: (name: string) => void }) {
+  return (
+    <div className="group flex items-center gap-3 px-3 py-2 transition-colors hover:bg-panel-2">
+      <Link
+        href={`/instances/${encodeURIComponent(inst.name)}`}
+        className="flex min-w-0 flex-1 items-center gap-3"
+      >
+        <Package className="h-4 w-4 shrink-0 text-accent" />
+        <span className="font-medium">{inst.name}</span>
+        {!inst.managed && (
+          <span className="rounded bg-panel-2 px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-muted">
+            direct
+          </span>
+        )}
+        <span className={`truncate text-sm ${inst.depError ? "text-error" : "text-muted"}`}>
+          {inst.depError
+            ? `Chart error: ${inst.depError}`
+            : `${inst.deps.length} ${inst.deps.length === 1 ? "dependency" : "dependencies"}`}
+        </span>
+      </Link>
+      <button
+        onClick={() => onDelete(inst.name)}
+        className="hidden shrink-0 rounded p-1 text-muted hover:bg-panel hover:text-error group-hover:block"
+        title={`Delete ${inst.name}`}
+      >
+        <Trash2 className="h-4 w-4" />
+      </button>
+    </div>
+  );
+}
+
 function CreateDialog({
   open,
   onOpenChange,
@@ -57,10 +90,14 @@ function CreateDialog({
   const [name, setName] = useState("");
   const [, navigate] = useLocation();
   const qc = useQueryClient();
+  const mounted = useMountedRef();
   const create = useMutation({
     mutationFn: () => api.createInstance(name.trim(), fromTemplate),
     onSuccess: (inst) => {
       void qc.invalidateQueries({ queryKey: ["instances"] });
+      // Unmounted = the user switched/closed the folder tab meanwhile:
+      // navigating would hijack the now-active tab's URL.
+      if (!mounted.current) return;
       onOpenChange(false);
       setName("");
       navigate(`/instances/${encodeURIComponent(inst.name)}`);
@@ -115,6 +152,7 @@ export default function Dashboard() {
   const templates = useQuery({ queryKey: ["templates"], queryFn: api.templates });
   const [createOpen, setCreateOpen] = useState(false);
   const [createFrom, setCreateFrom] = useState<string | undefined>();
+  const [view, setView] = useViewMode("dashboard");
 
   const del = useMutation({
     mutationFn: (name: string) => api.deleteInstance(name),
@@ -136,12 +174,15 @@ export default function Dashboard() {
     <div className="p-6">
       <div className="mb-4 flex items-center justify-between">
         <h1 className="text-xl font-semibold">Instances</h1>
-        <button
-          onClick={() => openCreate()}
-          className="flex items-center gap-1.5 rounded-md bg-accent px-3 py-1.5 text-sm font-medium text-bg"
-        >
-          <Plus className="h-4 w-4" /> New instance
-        </button>
+        <div className="flex items-center gap-2">
+          <ViewToggle value={view} onChange={setView} />
+          <button
+            onClick={() => openCreate()}
+            className="flex items-center gap-1.5 rounded-md bg-accent px-3 py-1.5 text-sm font-medium text-bg"
+          >
+            <Plus className="h-4 w-4" /> New instance
+          </button>
+        </div>
       </div>
 
       {instances.isLoading && <div className="text-muted">Loading…</div>}
@@ -150,9 +191,20 @@ export default function Dashboard() {
       )}
       {del.isError && <div className="mb-2 text-error">{(del.error as Error).message}</div>}
 
-      <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
-        {instances.data?.map((inst) => <InstanceCard key={inst.name} inst={inst} onDelete={onDelete} />)}
-      </div>
+      {view === "grid" ? (
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
+          {instances.data?.map((inst) => <InstanceCard key={inst.name} inst={inst} onDelete={onDelete} />)}
+        </div>
+      ) : (
+        instances.data &&
+        instances.data.length > 0 && (
+          <div className="divide-y divide-border overflow-hidden rounded-lg border border-border bg-panel">
+            {instances.data.map((inst) => (
+              <InstanceRow key={inst.name} inst={inst} onDelete={onDelete} />
+            ))}
+          </div>
+        )
+      )}
       {instances.data?.length === 0 && (
         <div className="rounded-lg border border-dashed border-border p-8 text-center text-muted">
           No instances yet. Create one, or copy a template below.
@@ -162,21 +214,37 @@ export default function Dashboard() {
       {templates.data && templates.data.length > 0 && (
         <>
           <h2 className="mb-3 mt-8 text-lg font-medium">Templates</h2>
-          <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
-            {templates.data.map((t: TemplateInfo) => (
-              <button
-                key={t.name}
-                onClick={() => openCreate(t.name)}
-                className="rounded-lg border border-border bg-panel p-4 text-left transition-colors hover:border-accent-2"
-              >
-                <div className="flex items-center gap-2">
-                  <LayoutTemplate className="h-4 w-4 text-accent-2" />
+          {view === "grid" ? (
+            <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
+              {templates.data.map((t: TemplateInfo) => (
+                <button
+                  key={t.name}
+                  onClick={() => openCreate(t.name)}
+                  className="rounded-lg border border-border bg-panel p-4 text-left transition-colors hover:border-accent-2"
+                >
+                  <div className="flex items-center gap-2">
+                    <LayoutTemplate className="h-4 w-4 text-accent-2" />
+                    <span className="font-medium">{t.name}</span>
+                  </div>
+                  <div className="mt-2 text-sm text-muted">Template · click to create an instance from this blueprint</div>
+                </button>
+              ))}
+            </div>
+          ) : (
+            <div className="divide-y divide-border overflow-hidden rounded-lg border border-border bg-panel">
+              {templates.data.map((t: TemplateInfo) => (
+                <button
+                  key={t.name}
+                  onClick={() => openCreate(t.name)}
+                  className="flex w-full items-center gap-3 px-3 py-2 text-left transition-colors hover:bg-panel-2"
+                >
+                  <LayoutTemplate className="h-4 w-4 shrink-0 text-accent-2" />
                   <span className="font-medium">{t.name}</span>
-                </div>
-                <div className="mt-2 text-sm text-muted">Template · click to create an instance from this blueprint</div>
-              </button>
-            ))}
-          </div>
+                  <span className="truncate text-sm text-muted">Template · click to create an instance</span>
+                </button>
+              ))}
+            </div>
+          )}
         </>
       )}
 

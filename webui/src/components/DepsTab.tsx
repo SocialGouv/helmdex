@@ -90,7 +90,7 @@ function InspectDialog({
             {content.data &&
               !content.data.absent &&
               (kind === "readme" ? (
-                <div className="prose-invert max-w-none text-sm leading-relaxed [&_a]:text-accent [&_code]:rounded [&_code]:bg-panel [&_code]:px-1 [&_h1]:mb-2 [&_h1]:text-lg [&_h1]:font-semibold [&_h2]:mb-2 [&_h2]:mt-4 [&_h2]:font-semibold [&_li]:ml-4 [&_li]:list-disc [&_p]:my-2 [&_pre]:my-2 [&_pre]:overflow-auto [&_pre]:rounded [&_pre]:bg-panel [&_pre]:p-2 [&_table]:my-2 [&_td]:border [&_td]:border-border [&_td]:px-2 [&_td]:py-1 [&_th]:border [&_th]:border-border [&_th]:px-2 [&_th]:py-1">
+                <div className="max-w-none text-sm leading-relaxed [&_a]:text-accent [&_code]:rounded [&_code]:bg-panel [&_code]:px-1 [&_h1]:mb-2 [&_h1]:text-lg [&_h1]:font-semibold [&_h2]:mb-2 [&_h2]:mt-4 [&_h2]:font-semibold [&_li]:ml-4 [&_li]:list-disc [&_p]:my-2 [&_pre]:my-2 [&_pre]:overflow-auto [&_pre]:rounded [&_pre]:bg-panel [&_pre]:p-2 [&_table]:my-2 [&_td]:border [&_td]:border-border [&_td]:px-2 [&_td]:py-1 [&_th]:border [&_th]:border-border [&_th]:px-2 [&_th]:py-1">
                   <ReactMarkdown remarkPlugins={[remarkGfm]}>{content.data.text}</ReactMarkdown>
                 </div>
               ) : (

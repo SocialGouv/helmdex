@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import * as Dialog from "@radix-ui/react-dialog";
 import { DiffEditor } from "@monaco-editor/react";
 import { api } from "../api/client";
+import { useEditorTheme } from "../lib/theme";
 import type { DepInfo, InstanceInfo } from "../api/types";
 import ErrorWithAuth from "./ErrorWithAuth";
 
@@ -19,6 +20,7 @@ export default function DepDiffDialog({
   dep: DepInfo;
   onClose: () => void;
 }) {
+  const editorTheme = useEditorTheme();
   const isOCI = dep.repository.startsWith("oci://");
   const [kind, setKind] = useState<DiffKind>("values");
   const [target, setTarget] = useState("");
@@ -121,7 +123,7 @@ export default function DepDiffDialog({
             {target && current.data !== undefined && candidate.data !== undefined && (
               <DiffEditor
                 language={kind === "schema" ? "json" : "yaml"}
-                theme="vs-dark"
+                theme={editorTheme}
                 original={current.data}
                 modified={candidate.data}
                 options={{ readOnly: true, renderSideBySide: true, minimap: { enabled: false }, fontSize: 12 }}

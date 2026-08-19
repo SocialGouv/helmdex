@@ -1,5 +1,7 @@
 @import "tailwindcss";
 
+/* Dark palette (default). Utilities reference these as var(--color-*), so the
+   light block below re-themes everything at runtime via <html data-theme>. */
 @theme {
   --color-bg: #0f1117;
   --color-panel: #161a24;
@@ -11,6 +13,27 @@
   --color-accent-2: #9ece6a;
   --color-warn: #e0af68;
   --color-error: #f7768e;
+}
+
+:root {
+  /* Lightness of the workspace rail monograms (per-folder hues). */
+  --rail-tile-lightness: 72%;
+}
+
+[data-theme="light"] {
+  --color-bg: #f5f6f8;
+  --color-panel: #ffffff;
+  --color-panel-2: #eceff4;
+  --color-border: #d5dae4;
+  --color-text: #1b2130;
+  --color-muted: #5c6577;
+  --color-accent: #3060c9;
+  /* accent-2/warn are darker than their dark-theme hues on purpose: they are
+     used as small text on panel-2 chips, which needs ≥4.5:1 (WCAG AA). */
+  --color-accent-2: #2f7024;
+  --color-warn: #7f5808;
+  --color-error: #c33553;
+  --rail-tile-lightness: 38%;
 }
 
 html,

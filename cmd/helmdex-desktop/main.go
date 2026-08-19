@@ -4,7 +4,12 @@ package main
 
 import (
 	_ "embed"
+	"fmt"
 	"log"
+	"os"
+	"strings"
+
+	"helmdex/internal/desktopstate"
 
 	"github.com/wailsapp/wails/v2"
 	"github.com/wailsapp/wails/v2/pkg/options"
@@ -24,19 +29,26 @@ func main() {
 	// BackgroundColour on hybrid-GPU and NVIDIA machines.
 	applyLinuxWebKitFixes()
 
-	app := NewApp()
+	app := NewApp(initialDirFromArgs(os.Args[1:]))
+
+	width, height, maximized := app.initialWindow()
+	startState := options.Normal
+	if maximized {
+		startState = options.Maximised
+	}
 
 	// The web UI and API are served by the in-process internal/server
-	// handler plugged directly into the Wails AssetServer — no TCP port,
-	// no separate process. Assets stays nil so every request (SPA assets
-	// and /api/*) goes through the handler; Wails injects its runtime
-	// into the index.html response it serves.
+	// multi-workspace handler plugged directly into the Wails AssetServer —
+	// no TCP port, no separate process. Assets stays nil so every request
+	// (SPA assets and /ws/<id>/api/*) goes through the handler; Wails injects
+	// its runtime into the index.html response it serves.
 	err := wails.Run(&options.App{
-		Title:     "Helmdex",
-		Width:     1400,
-		Height:    900,
-		MinWidth:  800,
-		MinHeight: 600,
+		Title:            app.InitialTitle(),
+		Width:            width,
+		Height:           height,
+		MinWidth:         800,
+		MinHeight:        600,
+		WindowStartState: startState,
 		AssetServer: &assetserver.Options{
 			Assets:  nil,
 			Handler: app.Handler(),
@@ -52,10 +64,51 @@ func main() {
 			// on both Wayland and X11.
 			ProgramName: "helmdex-desktop",
 		},
-		OnStartup: app.onStartup,
-		Bind:      []any{app},
+		OnStartup:     app.onStartup,
+		OnShutdown:    app.onShutdown,
+		OnBeforeClose: app.onBeforeClose,
+		Bind:          []any{app},
 	})
 	if err != nil {
 		log.Fatalf("helmdex-desktop: wails run failed: %v", err)
 	}
+}
+
+// initialDirFromArgs handles `helmdex-desktop [dir]`: the folder to open at
+// launch, validated and normalized. No argument means "restore the last
+// session".
+func initialDirFromArgs(args []string) string {
+	// macOS LaunchServices/Cocoa can inject framework flags ("-psn_*",
+	// "-NSDocumentRevisionsDebugMode", …) on GUI launches: ignore every
+	// dash-prefixed token instead of dying before the window opens.
+	dirs := make([]string, 0, len(args))
+	for _, a := range args {
+		if a == "-h" || a == "--help" {
+			fmt.Println("usage: helmdex-desktop [dir]")
+			os.Exit(0)
+		}
+		if strings.HasPrefix(a, "-") {
+			continue
+		}
+		dirs = append(dirs, a)
+	}
+	if len(dirs) == 0 {
+		return ""
+	}
+	if len(dirs) > 1 || dirs[0] == "" {
+		fmt.Fprintln(os.Stderr, "usage: helmdex-desktop [dir]")
+		os.Exit(2)
+	}
+	dir, err := desktopstate.Normalize(dirs[0])
+	if err != nil {
+		log.Fatalf("helmdex-desktop: %v", err)
+	}
+	info, err := os.Stat(dir)
+	if err != nil {
+		log.Fatalf("helmdex-desktop: cannot open %s: %v", dirs[0], err)
+	}
+	if !info.IsDir() {
+		log.Fatalf("helmdex-desktop: %s is not a directory", dirs[0])
+	}
+	return dir
 }

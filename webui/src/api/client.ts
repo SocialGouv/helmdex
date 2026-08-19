@@ -33,8 +33,21 @@ class ApiError extends Error {
   }
 }
 
+// Workspace-scoped API base: "" in the browser (single workspace at /api),
+// "/ws/<id>" per folder tab in the desktop shell, which sets it before
+// (re)mounting the tab's component tree.
+let apiBase = "";
+
+export function setApiBase(base: string) {
+  apiBase = base;
+}
+
+export function apiUrl(path: string): string {
+  return apiBase + path;
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(path, {
+  const res = await fetch(apiUrl(path), {
     headers: init?.body ? { "Content-Type": "application/json" } : undefined,
     ...init,
   });

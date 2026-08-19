@@ -254,7 +254,9 @@ export function installFakeApi(overrides: Partial<FakeApiState> = {}): FakeApi {
     const raw = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
     const url = new URL(raw, "http://localhost");
     const method = (init?.method ?? "GET").toUpperCase();
-    const path = decodeURIComponent(url.pathname);
+    // Route like the Go side: the desktop shell prefixes /ws/<id>, which the
+    // workspace manager strips before dispatching to a workspace server.
+    const path = decodeURIComponent(url.pathname).replace(/^\/ws\/[^/]+(?=\/)/, "");
     requests.push(`${method} ${url.pathname}${url.search}`);
     calls.push({ method, path: `${url.pathname}${url.search}`, body: decodeBody(init?.body) });
 

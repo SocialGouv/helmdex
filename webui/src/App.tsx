@@ -1,14 +1,15 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Route, Switch, Link, useRoute } from "wouter";
 import { useQuery } from "@tanstack/react-query";
 import { Boxes, BookOpen, Home, KeyRound } from "lucide-react";
 import { api } from "./api/client";
+import { isDesktop } from "./lib/desktop";
 import Dashboard from "./pages/Dashboard";
 import InstancePage from "./pages/Instance";
 import CatalogPage from "./pages/Catalog";
 import EventsIndicator from "./components/EventsIndicator";
-import RepoSwitcher from "./components/RepoSwitcher";
 import CredentialsDialog from "./components/CredentialsDialog";
+import ThemeToggle from "./components/ThemeToggle";
 
 function NavLink({ href, children }: { href: string; children: React.ReactNode }) {
   const [active] = useRoute(href === "/" ? "/" : `${href}/*?`);
@@ -28,6 +29,15 @@ export default function App() {
   const repo = useQuery({ queryKey: ["repo"], queryFn: api.repo });
   const [credsOpen, setCredsOpen] = useState(false);
 
+  // Folder-aware tab title in the browser; the desktop window title is
+  // native, set by the Go shell.
+  const root = repo.data?.root;
+  useEffect(() => {
+    if (isDesktop() || !root) return;
+    const name = root.split(/[\\/]/).filter(Boolean).pop() ?? root;
+    document.title = `${name} — Helmdex`;
+  }, [root]);
+
   return (
     <div className="flex h-full">
       <aside className="flex w-60 shrink-0 flex-col border-r border-border bg-panel p-3">
@@ -44,6 +54,9 @@ export default function App() {
           </NavLink>
         </nav>
         <div className="mt-auto space-y-1 text-xs text-muted">
+          <div className="px-2 pb-1">
+            <ThemeToggle />
+          </div>
           <button
             onClick={() => setCredsOpen(true)}
             className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-sm text-muted transition-colors hover:bg-panel-2 hover:text-text"
@@ -51,7 +64,6 @@ export default function App() {
             <KeyRound className="h-4 w-4" /> Credentials
           </button>
           {credsOpen && <CredentialsDialog onClose={() => setCredsOpen(false)} />}
-          <RepoSwitcher />
           <div className="space-y-1 px-2">
             {repo.data && (
               <>

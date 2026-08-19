@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { api, ApiError } from "./client";
+import { api, ApiError, setApiBase } from "./client";
 import { installFakeApi, type FakeApi } from "../test/fakeApi";
 
 /**
@@ -8,9 +8,25 @@ import { installFakeApi, type FakeApi } from "../test/fakeApi";
  */
 
 let fake: FakeApi;
-afterEach(() => fake?.restore());
+afterEach(() => {
+  fake?.restore();
+  setApiBase("");
+});
 
 describe("api client", () => {
+  // The desktop shell scopes every call to the active workspace by prefixing
+  // its /ws/<id> base; the browser keeps the bare /api paths.
+  it("prefixes requests with the workspace base once set", async () => {
+    fake = installFakeApi();
+
+    await api.repo();
+    expect(fake.requests[fake.requests.length - 1]).toBe("GET /api/repo");
+
+    setApiBase("/ws/w2");
+    await api.repo();
+    expect(fake.requests[fake.requests.length - 1]).toBe("GET /ws/w2/api/repo");
+  });
+
   it("surfaces the server's error message, not the status line", async () => {
     fake = installFakeApi();
     fake.failNext("GET", "/api/instances", 500, "read apps dir: permission denied");

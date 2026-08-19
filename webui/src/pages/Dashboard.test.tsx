@@ -9,6 +9,7 @@ let fake: FakeApi;
 afterEach(() => {
   fake?.restore();
   vi.restoreAllMocks();
+  localStorage.clear();
 });
 
 describe("Dashboard", () => {
@@ -115,6 +116,58 @@ describe("Dashboard", () => {
     renderWithProviders(<Dashboard />);
 
     expect(await screen.findByText(/No instances yet/)).toBeDefined();
+  });
+
+  // In the desktop shell, switching folder tabs unmounts the page while a
+  // mutation is in flight; its onSuccess must not navigate (the router is
+  // global — it would hijack the now-active tab's URL).
+  it("does not navigate when a create resolves after unmount (tab switch)", async () => {
+    fake = installFakeApi();
+    const user = userEvent.setup();
+
+    // Gate the create request so it resolves only after the page unmounts.
+    const inner = globalThis.fetch;
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (init?.method === "POST" && String(input).endsWith("/api/instances")) await gate;
+      return inner(input, init);
+    }) as typeof fetch;
+
+    const { location, unmount } = renderWithProviders(<Dashboard />);
+    await screen.findByText("alpha");
+    await user.click(screen.getByRole("button", { name: /new instance/i }));
+    await user.type(await screen.findByPlaceholderText(/instance name/i), "bravo");
+    await user.click(screen.getByRole("button", { name: "Create" }));
+
+    unmount();
+    release();
+    await waitFor(() => expect(fake.state.instances.map((i) => i.name)).toContain("bravo"));
+
+    expect(location()).toBe("/");
+  });
+
+  it("switches between grid and list views and remembers the choice", async () => {
+    fake = installFakeApi();
+    const user = userEvent.setup();
+    renderWithProviders(<Dashboard />);
+    await screen.findByText("alpha");
+
+    // Grid is the default: cards show the dependency chips.
+    expect(screen.getByText("postgresql@15.5.0")).toBeDefined();
+
+    await user.click(screen.getByRole("button", { name: "List view" }));
+    expect(screen.getByRole("button", { name: "List view" }).getAttribute("aria-pressed")).toBe(
+      "true",
+    );
+    // Compact rows: still every instance, no per-dep chips.
+    expect(screen.getByText("alpha")).toBeDefined();
+    expect(screen.getByText("legacy")).toBeDefined();
+    expect(screen.queryByText("postgresql@15.5.0")).toBeNull();
+    expect(localStorage.getItem("helmdex.view.dashboard")).toBe("list");
+
+    // Deletion stays available from a row.
+    expect(screen.getByTitle("Delete alpha")).toBeDefined();
   });
 
   it("reports a failure to list instances", async () => {

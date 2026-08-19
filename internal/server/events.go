@@ -55,6 +55,12 @@ func (b *eventBroker) unsubscribe(ch chan event) {
 // StartHelmEventForwarding wires bundled-helm download events into the
 // broker. Call once per process (the sink is global); returns a stop func.
 func (s *Server) StartHelmEventForwarding() func() {
+	return forwardHelmEvents(s.events.publish)
+}
+
+// forwardHelmEvents installs the process-global bundled-helm event sink and
+// forwards its events through publish. Returns a stop func.
+func forwardHelmEvents(publish func(event)) func() {
 	events := make(chan helmutil.BundledHelmEvent, 8)
 	helmutil.SetBundledHelmEventSink(events)
 	done := make(chan struct{})
@@ -68,13 +74,17 @@ func (s *Server) StartHelmEventForwarding() func() {
 				if ev.Err != "" {
 					msg = ev.Err
 				}
-				s.events.publish(event{Type: "helm." + string(ev.Kind), Message: msg})
+				publish(event{Type: "helm." + string(ev.Kind), Message: msg})
 			}
 		}
 	}()
+	var once sync.Once
 	return func() {
-		helmutil.SetBundledHelmEventSink(nil)
-		close(done)
+		// Idempotent: shutdown paths may race a deferred stop.
+		once.Do(func() {
+			helmutil.SetBundledHelmEventSink(nil)
+			close(done)
+		})
 	}
 }
 

@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import Editor from "@monaco-editor/react";
 import { AlertTriangle, FileText, RefreshCw, Save } from "lucide-react";
 import { api } from "../api/client";
+import { useEditorTheme } from "../lib/theme";
 import type { InstanceInfo, SchemaViolation } from "../api/types";
 
 // Managed instances: layered values files + generated values.yaml.
@@ -33,6 +34,7 @@ export function editableInMode(inst: InstanceInfo, file: string): boolean {
 }
 
 export default function ValuesTab({ inst }: { inst: InstanceInfo }) {
+  const editorTheme = useEditorTheme();
   const qc = useQueryClient();
   const files = useQuery({ queryKey: ["files", inst.name], queryFn: () => api.files(inst.name) });
 
@@ -185,7 +187,7 @@ export default function ValuesTab({ inst }: { inst: InstanceInfo }) {
           {file && content.data !== undefined && (
             <Editor
               language="yaml"
-              theme="vs-dark"
+              theme={editorTheme}
               value={draft ?? content.data}
               onChange={(v) => {
                 if (!editable) return;

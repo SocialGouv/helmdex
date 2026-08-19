@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { File as FileIcon, Folder } from "lucide-react";
 import Editor from "@monaco-editor/react";
 import { api } from "../api/client";
+import { useEditorTheme } from "../lib/theme";
 import type { InstanceInfo } from "../api/types";
 
 function languageFor(path: string): string {
@@ -16,6 +17,7 @@ function languageFor(path: string): string {
 // extra files gitops repos carry (values.deploy.yaml, atlas-env.yaml,
 // local templates/…) without attaching any semantics to them.
 export default function FilesTab({ inst }: { inst: InstanceInfo }) {
+  const editorTheme = useEditorTheme();
   const files = useQuery({ queryKey: ["files", inst.name], queryFn: () => api.files(inst.name) });
   const [selected, setSelected] = useState<string | null>(null);
 
@@ -50,7 +52,7 @@ export default function FilesTab({ inst }: { inst: InstanceInfo }) {
         {selected && content.data !== undefined ? (
           <Editor
             language={languageFor(selected)}
-            theme="vs-dark"
+            theme={editorTheme}
             value={content.data}
             options={{ readOnly: true, minimap: { enabled: false }, fontSize: 13 }}
           />

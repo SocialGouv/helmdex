@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { apiUrl } from "../api/client";
 import type { ServerEvent } from "../api/types";
 
 // Subscribes to the server's SSE stream and surfaces the latest activity
@@ -8,7 +9,7 @@ export default function EventsIndicator() {
   const [connected, setConnected] = useState(false);
 
   useEffect(() => {
-    const es = new EventSource("/api/events");
+    const es = new EventSource(apiUrl("/api/events"));
     es.onopen = () => setConnected(true);
     es.onerror = () => setConnected(false);
     es.onmessage = (e) => {

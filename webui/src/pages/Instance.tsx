@@ -3,6 +3,7 @@ import { Link, useLocation, useParams } from "wouter";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, Hammer, Pencil } from "lucide-react";
 import { api } from "../api/client";
+import { useMountedRef } from "../lib/useMounted";
 import ErrorWithAuth from "../components/ErrorWithAuth";
 import DepsTab from "../components/DepsTab";
 import ValuesTab from "../components/ValuesTab";
@@ -18,6 +19,7 @@ export default function InstancePage() {
   const tab: Tab = TABS.includes(params.tab as Tab) ? (params.tab as Tab) : "deps";
   const [, navigate] = useLocation();
   const qc = useQueryClient();
+  const mounted = useMountedRef();
   const [renaming, setRenaming] = useState(false);
   const [newName, setNewName] = useState(name);
 
@@ -35,6 +37,9 @@ export default function InstancePage() {
     mutationFn: () => api.renameInstance(name, newName.trim()),
     onSuccess: (i) => {
       void qc.invalidateQueries({ queryKey: ["instances"] });
+      // Unmounted = the user switched/closed the folder tab meanwhile:
+      // navigating would hijack the now-active tab's URL.
+      if (!mounted.current) return;
       setRenaming(false);
       navigate(`/instances/${encodeURIComponent(i.name)}/${tab}`, { replace: true });
     },
