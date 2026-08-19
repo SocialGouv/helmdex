@@ -276,14 +276,23 @@ func (s *Server) handleFilesList(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, out)
 }
 
-// validateFileSyntax rejects malformed YAML/JSON before it is written, keyed
-// on the file extension. Other file types are written as-is.
+// validateFileSyntax rejects malformed content before it is written, keyed on
+// the file kind. Chart templates (templates/*) are Go templates, not plain
+// YAML, so they are left as-is. Config files (values*.yaml, Chart.yaml) must
+// additionally be a mapping at the root — a bare scalar or list is valid YAML
+// but broken config (e.g. dropping a `:` turns the document into a scalar).
 func validateFileSyntax(path string, b []byte) error {
+	if hasPathSegment(path, "templates") {
+		return nil
+	}
 	switch strings.ToLower(filepath.Ext(path)) {
 	case ".yaml", ".yml":
-		var doc any
-		if err := yaml.Unmarshal(b, &doc); err != nil {
+		var root yaml.Node
+		if err := yaml.Unmarshal(b, &root); err != nil {
 			return fmt.Errorf("invalid YAML: %w", err)
+		}
+		if isStructuredConfigFile(filepath.Base(path)) && !yamlRootIsMappingOrEmpty(&root) {
+			return fmt.Errorf("invalid YAML: expected a mapping at the document root, not a scalar or list")
 		}
 	case ".json":
 		if len(bytes.TrimSpace(b)) > 0 && !json.Valid(b) {
@@ -291,6 +300,45 @@ func validateFileSyntax(path string, b []byte) error {
 		}
 	}
 	return nil
+}
+
+func hasPathSegment(path, seg string) bool {
+	for _, p := range strings.Split(filepath.ToSlash(path), "/") {
+		if p == seg {
+			return true
+		}
+	}
+	return false
+}
+
+// isStructuredConfigFile reports whether a filename is a Helm config document
+// that must be a mapping: values files and Chart.yaml.
+func isStructuredConfigFile(base string) bool {
+	if base == "Chart.yaml" {
+		return true
+	}
+	lower := strings.ToLower(base)
+	return strings.HasPrefix(lower, "values") && (strings.HasSuffix(lower, ".yaml") || strings.HasSuffix(lower, ".yml"))
+}
+
+func yamlRootIsMappingOrEmpty(root *yaml.Node) bool {
+	n := root
+	if root.Kind == yaml.DocumentNode {
+		if len(root.Content) == 0 {
+			return true // empty document
+		}
+		n = root.Content[0]
+	}
+	switch {
+	case n.Kind == 0:
+		return true // empty
+	case n.Kind == yaml.MappingNode:
+		return true
+	case n.Kind == yaml.ScalarNode && (n.Tag == "!!null" || strings.TrimSpace(n.Value) == ""):
+		return true // explicit null / blank = no values
+	default:
+		return false
+	}
 }
 
 // resolveInstanceFile validates a relative path stays inside the instance dir.
@@ -431,6 +479,49 @@ func (s *Server) handleValuesSet(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+type valuesValidateRequest struct {
+	// Content is the draft values YAML to validate. Empty falls back to the
+	// instance's on-disk edit file.
+	Content string `json:"content,omitempty"`
+}
+
+type valuesValidateResponse struct {
+	Violations []instances.SchemaViolation `json:"violations"`
+}
+
+// handleValuesValidate checks a values draft against each dependency's
+// values.schema.json and returns the violations. It is advisory: the UI uses
+// it to warn before saving, with an explicit bypass.
+func (s *Server) handleValuesValidate(w http.ResponseWriter, r *http.Request) {
+	inst, err := s.getInstance(r.PathValue("name"))
+	if err != nil {
+		httpError(w, http.StatusNotFound, err)
+		return
+	}
+	var req valuesValidateRequest
+	if r.ContentLength > 0 {
+		if err := decodeJSON(r, &req); err != nil {
+			httpError(w, http.StatusBadRequest, err)
+			return
+		}
+	}
+	content := []byte(req.Content)
+	if len(content) == 0 {
+		if b, err := os.ReadFile(values.EditFilePath(inst.Path)); err == nil {
+			content = b
+		}
+	}
+	viols, err := instances.ValidateValuesAgainstSchemas(r.Context(), s.ws().RepoRoot, inst.Path, content)
+	if err != nil {
+		httpError(w, http.StatusBadRequest, err)
+		return
+	}
+	if viols == nil {
+		viols = []instances.SchemaViolation{}
+	}
+	writeJSON(w, http.StatusOK, valuesValidateResponse{Violations: viols})
 }
 
 func (s *Server) handleValuesRegen(w http.ResponseWriter, r *http.Request) {

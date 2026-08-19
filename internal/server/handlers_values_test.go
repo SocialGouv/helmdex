@@ -148,6 +148,49 @@ func TestValues_MissingPathReportsNotFound(t *testing.T) {
 	}
 }
 
+func TestValues_ValidateAgainstDepSchema(t *testing.T) {
+	ts := newTestServer(t, testutil.RepoOpts{SourceMode: testutil.SourceNone})
+	ts.createInstance("alpha")
+	addDep(ts, "alpha", map[string]any{"name": "nginx", "repository": fixtureRepoURL, "version": "15.0.0"})
+
+	type resp struct {
+		Violations []struct {
+			Dep, Path, Message string
+		} `json:"violations"`
+	}
+
+	// Values conforming to nginx's schema (replicaCount: integer, enum service
+	// type) produce no violations.
+	var ok resp
+	ts.post("/api/instances/alpha/values/validate", map[string]any{
+		"content": "nginx:\n  replicaCount: 3\n  service:\n    type: ClusterIP\n",
+	}).expect(http.StatusOK).decode(&ok)
+	if len(ok.Violations) != 0 {
+		t.Fatalf("valid values reported violations: %+v", ok.Violations)
+	}
+
+	// A wrong type and a bad enum each surface as a violation, scoped to the
+	// dependency and the offending path.
+	var bad resp
+	ts.post("/api/instances/alpha/values/validate", map[string]any{
+		"content": "nginx:\n  replicaCount: not-a-number\n  service:\n    type: Bogus\n",
+	}).expect(http.StatusOK).decode(&bad)
+	got := map[string]bool{}
+	for _, v := range bad.Violations {
+		if v.Dep != "nginx" {
+			t.Errorf("violation not scoped to the dep: %+v", v)
+		}
+		got[v.Path] = true
+	}
+	if !got["replicaCount"] || !got["service.type"] {
+		t.Fatalf("expected violations at replicaCount and service.type, got %v", got)
+	}
+
+	// Broken YAML is a 400.
+	ts.post("/api/instances/alpha/values/validate", map[string]any{"content": "nginx: [1,\n"}).
+		expect(http.StatusBadRequest)
+}
+
 // countChangedLines counts lines that differ between two texts, treating
 // added or removed lines as changes.
 func countChangedLines(before, after string) int {

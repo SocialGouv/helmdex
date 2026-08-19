@@ -77,6 +77,16 @@ export interface ValuesGetResponse {
   value: unknown;
 }
 
+export interface SchemaViolation {
+  dep: string;
+  path: string;
+  message: string;
+}
+
+export interface ValuesValidateResponse {
+  violations: SchemaViolation[];
+}
+
 export interface ServerEvent {
   type: string;
   instance?: string;

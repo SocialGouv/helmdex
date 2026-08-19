@@ -259,6 +259,24 @@ func TestFiles_WriteRejectsBrokenSyntax(t *testing.T) {
 	ts.put("/api/instances/alpha/file?path=values.schema.json", "{not json").
 		expect(http.StatusBadRequest)
 
+	// A values file that parses as a bare scalar or a list is valid YAML but
+	// broken config — dropping a ':' does exactly this — and must be refused.
+	for _, body := range []string{"just a broken string", "- a\n- b\n"} {
+		ts.put("/api/instances/alpha/file?path=values.instance.yaml", body).
+			expect(http.StatusBadRequest)
+	}
+	if got := ts.Repo.Read(t, "apps", "alpha", "values.instance.yaml"); got != good {
+		t.Fatalf("a rejected scalar/list write must not touch the file, got %q", got)
+	}
+
+	// Empty (null) values are allowed.
+	ts.put("/api/instances/alpha/file?path=values.instance.yaml", "").expect(http.StatusNoContent)
+
+	// A Helm template (under templates/) is a Go template, not plain YAML —
+	// its {{ }} must not be rejected as invalid YAML.
+	ts.put("/api/instances/alpha/file?path=templates/cm.yaml", "data:\n  x: {{ .Values.x }}\n").
+		expect(http.StatusNoContent)
+
 	// Valid YAML still writes.
 	ts.put("/api/instances/alpha/file?path=values.instance.yaml", "replicaCount: 3\n").
 		expect(http.StatusNoContent)

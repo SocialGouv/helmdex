@@ -91,6 +91,7 @@ func (s *Server) routes() {
 	m.HandleFunc("GET /api/instances/{name}/values", s.handleValuesGet)
 	m.HandleFunc("PUT /api/instances/{name}/values", s.handleValuesSet)
 	m.HandleFunc("POST /api/instances/{name}/values/regen", s.handleValuesRegen)
+	m.HandleFunc("POST /api/instances/{name}/values/validate", s.handleValuesValidate)
 
 	m.HandleFunc("GET /api/instances/{name}/deps", s.handleDepsList)
 	m.HandleFunc("POST /api/instances/{name}/deps", s.handleDepAdd)

@@ -6,6 +6,7 @@ import type {
   FileInfo,
   InstanceInfo,
   RepoInfo,
+  SchemaViolation,
   SetsInfo,
   SourcesInfo,
   StoredCredential,
@@ -40,6 +41,8 @@ export type FakeApiState = {
   sources: SourcesInfo;
   versions: Record<string, string[]>;
   inspect: Record<string, string>;
+  /** Violations returned by POST /values/validate (empty = passes). */
+  schemaViolations: SchemaViolation[];
   auth: {
     creds: StoredCredential[];
     /** Candidates every /api/auth/detect call returns. */
@@ -171,6 +174,7 @@ export function defaultState(): FakeApiState {
       "alpha/nginx/values": "replicaCount: 1\n",
       "alpha/nginx/schema": '{"type":"object","properties":{"replicaCount":{"type":"integer"}}}',
     },
+    schemaViolations: [],
     auth: { creds: [], detect: [], hosts: [] },
   };
 }
@@ -397,6 +401,10 @@ export function installFakeApi(overrides: Partial<FakeApiState> = {}): FakeApi {
     }
 
     if (sub === "values/regen" && method === "POST") return noContent();
+
+    if (sub === "values/validate" && method === "POST") {
+      return json({ violations: state.schemaViolations });
+    }
 
     if (sub === "deps") {
       if (method === "POST") {

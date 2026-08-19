@@ -17,6 +17,7 @@ import type {
   TemplateInfo,
   TokenPage,
   ValuesGetResponse,
+  ValuesValidateResponse,
   WorkspaceAuthHost,
 } from "./types";
 
@@ -98,6 +99,11 @@ export const api = {
     }),
   valuesRegen: (name: string) =>
     request<void>(`/api/instances/${encodeURIComponent(name)}/values/regen`, { method: "POST" }),
+  validateValues: (name: string, content: string) =>
+    request<ValuesValidateResponse>(`/api/instances/${encodeURIComponent(name)}/values/validate`, {
+      method: "POST",
+      body: JSON.stringify({ content }),
+    }),
 
   addDep: (
     name: string,
