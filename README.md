@@ -3,14 +3,14 @@
 
   <h1>helmdex</h1>
 
-  <p>TUI organizer for Helm umbrella chart instances — no rendering, no deploy.</p>
+  <p>Organizer for Helm umbrella chart instances — desktop app, web UI, TUI &amp; CLI. No rendering, no deploy.</p>
 </div>
 
 ---
 
 ## helmdex in 30 seconds
 
-`helmdex` is an organizer for GitOps-friendly Helm **umbrella chart** instances — as a **TUI**, a **web UI** (`helmdex ui`), and a **desktop app**.
+`helmdex` is an organizer for GitOps-friendly Helm **umbrella chart** instances — as a **desktop app**, a **web UI** (`helmdex ui`), a **TUI**, and a **CLI**.
 
 - Create and manage multiple instances (one per app / env)
 - Add / upgrade dependencies, from a curated catalog or Artifact Hub
@@ -26,9 +26,9 @@
 
 - 🧾 **GitOps-friendly umbrella chart instances** on disk: commit `Chart.yaml`, `Chart.lock`, and a generated `values.yaml` that’s meant to be reviewed in PRs.
 - 🗂️ **Curated catalog + presets**: add approved dependencies from a team catalog and apply versioned defaults/platform/sets.
-- 🔎 **Artifact Hub built-in**: search charts and pick versions without leaving the TUI (also available via CLI).
+- 🔎 **Artifact Hub built-in**: search charts and pick versions without leaving the app (also available via CLI).
 - 🧅 **Layered values → one merged output**: defaults → platform → sets → per-dep sets → `values.instance.yaml` → merged `values.yaml`.
-- 🧠 **Schema-aware configuration**: when charts publish `values.schema.json`, edit values with a structured TUI editor.
+- 🧠 **Schema-aware configuration**: when charts publish `values.schema.json`, edit values with a structured form editor.
 - 🧪 **Safer upgrades**: preview diffs between chart versions (values + schema) before applying.
 - 🤖 **CLI parity for automation**: use helmdex in CI (`catalog sync`, `instance apply`, values get/set, dependency inspect…).
 - 🧯 **Escape hatches**: detach a dependency from a catalog entry to unblock urgent changes.
@@ -37,7 +37,7 @@
 - 🔑 **Private sources, frictionless sign-in**: a 401 on a private OCI registry / Helm repo / git source becomes a sign-in flow — credentials auto-detected from local config (docker/podman/helm/git/gh/glab), or a PAT via the provider's pre-filled token page, or SSH deploy keys; verified before being stored.
 - 🕊️ **Agnostic-repo mode**: repos without `helmdex.yaml` stay byte-identical — state lives in the user cache, config in `~/.config/helmdex/config.yaml`, and every values file is user-owned and edited **in place** (comments, blank lines and alignment preserved; a 1-value change is a 1-line diff).
 - 📐 **Templates / blueprints**: a repo `templates/` dir of chart blueprints (e.g. review-env gabarits) is detected; create instances from them in one step (`instance create --from-template`).
-- 🖥️ **Web UI & desktop app**: `helmdex ui` serves a local SPA (same engine as the TUI); the Wails-based desktop app wraps it with a native repo picker — fully offline.
+- 🖥️ **Desktop app & web UI**: the Wails-based desktop app manages several repos side by side (one tab per folder) with a native picker — fully offline; `helmdex ui` serves the same local SPA in a browser. Dark/light/system theme and grid ⇄ list display modes.
 
 <details>
 <summary>How helmdex fits a GitOps PR workflow</summary>
@@ -46,7 +46,7 @@
 flowchart TD
   %% Use quoted labels + <br/> for maximum Mermaid renderer compatibility.
   subgraph Dev["Developer and platform repo"]
-    A["Open helmdex (TUI) or run CLI"] --> B["Select instance (app / env)"]
+    A["Open helmdex (desktop/web/TUI) or run CLI"] --> B["Select instance (app / env)"]
     B --> C["Add/upgrade dependency<br/>Catalog • Artifact Hub • Arbitrary • OCI"]
     C --> D["Select sets<br/>values.set.* and values.dep-set.* markers"]
     D --> E["Edit overrides<br/>values.instance.yaml (YAML or schema editor)"]
@@ -84,7 +84,7 @@ helmdex ships in three interchangeable forms — all driving the same engine:
 
 - **Desktop app** — a native window, no terminal needed. Best for interactive use.
 - **CLI / TUI** — a single static binary (`helmdex`) for the terminal and CI.
-- **Web UI** — `helmdex ui` serves the desktop UI in your browser (handy for remote/dev).
+- **Web UI** — `helmdex ui` serves the same UI in your browser (handy for remote/dev).
 
 ### Desktop app
 
@@ -120,7 +120,11 @@ chmod +x helmdex-desktop.AppImage
 
 Running the AppImage needs FUSE (`sudo apt install libfuse2` on Debian/Ubuntu), or run it with `--appimage-extract-and-run`. On a Wayland session where the window fails to open, launch with `GDK_BACKEND=x11 ./helmdex-desktop.AppImage` (a standard WebKitGTK-on-Wayland workaround).
 
-The desktop app opens on the current directory and has an **Open repository…** button to switch to any GitOps repo — including [helmdex-agnostic repos](#helmdex-agnostic-mode) with no `helmdex.yaml`.
+The desktop app manages **several repos side by side**: each open folder is a tab in the vertical rail on the left, served by its own isolated workspace, and the window title follows the active folder. Open folders, the active tab and the window geometry are restored on relaunch. Any GitOps repo works — including [helmdex-agnostic repos](#helmdex-agnostic-mode) with no `helmdex.yaml`.
+
+- **Open a folder**: the `+` tile in the rail (or `Ctrl+O`), or launch as `helmdex-desktop <dir>`; on first launch (no folders restored), starting it from a terminal in a project directory opens that directory.
+- **Switch tabs**: click a tile, `Ctrl+1`…`Ctrl+9` to jump, `Ctrl+PgUp`/`Ctrl+PgDn` to cycle.
+- **Close a tab**: the `×` badge on hover, or middle-click the tile.
 
 ### CLI / TUI
 

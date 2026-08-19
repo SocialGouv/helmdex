@@ -12,7 +12,7 @@ import (
 const (
 	Name    = "helmdex"
 	Short   = "helmdex scaffolds and maintains GitOps-friendly Helm umbrella chart instances"
-	Long    = "helmdex is a TUI-first organizer for Helm umbrella chart instances (no template rendering, no deploy)."
+	Long    = "helmdex is an organizer for Helm umbrella chart instances — desktop app, web UI, TUI, and CLI (no template rendering, no deploy)."
 	RepoURL = "https://github.com/SocialGouv/helmdex"
 )
 

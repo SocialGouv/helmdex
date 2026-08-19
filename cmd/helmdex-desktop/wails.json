@@ -12,7 +12,7 @@
     "productName": "Helmdex",
     "productVersion": "0.0.0",
     "copyright": "Copyright © 2026",
-    "comments": "TUI/desktop organizer for Helm umbrella chart instances"
+    "comments": "Organizer for Helm umbrella chart instances — desktop app"
   },
   "_comment": "wails build runs from this directory (Taskfile desktop:* targets). The web UI is built by `task ui:build` and embedded via internal/server/static; -skipbindings + -s skip Wails frontend hooks."
 }
