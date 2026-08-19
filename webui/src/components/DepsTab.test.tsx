@@ -151,6 +151,29 @@ describe("DepsTab", () => {
     });
   });
 
+  it("warms sibling tabs even when the first tab's artifact is absent (404)", async () => {
+    fake = installFakeApi();
+    // The default readme tab 404s (chart ships no README) — the prefetch must
+    // still fire so values/schema don't reload on switch.
+    fake.failNext(
+      "GET",
+      "/api/instances/alpha/deps/nginx/inspect",
+      404,
+      "this chart does not ship a README file",
+    );
+    const user = userEvent.setup();
+    renderWithProviders(<DepsTab inst={managedInstance()} />);
+
+    await user.click(screen.getAllByTitle(/Inspect readme/)[1]);
+    await screen.findByText(/does not ship a README file/);
+
+    await waitFor(() => {
+      const reqs = fake.requests.join("\n");
+      expect(reqs).toContain("/deps/nginx/inspect?kind=values");
+      expect(reqs).toContain("/deps/nginx/inspect?kind=schema");
+    });
+  });
+
   it("shows a genuinely absent artifact (404) as muted information, not an error", async () => {
     fake = installFakeApi();
     fake.failNext(

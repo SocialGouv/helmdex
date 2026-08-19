@@ -11,6 +11,11 @@ import ErrorWithAuth from "./ErrorWithAuth";
 import DepDiffDialog from "./DepDiffDialog";
 import DepConfigureDialog from "./DepConfigureDialog";
 
+// An inspect artifact is either present (its text) or genuinely absent (the
+// chart ships no README/schema) — the latter is a normal, cacheable outcome,
+// not an error.
+type InspectResult = { absent: false; text: string } | { absent: true; message: string };
+
 function InspectDialog({
   inst,
   dep,
@@ -22,28 +27,38 @@ function InspectDialog({
 }) {
   const qc = useQueryClient();
   const [kind, setKind] = useState<InspectKind>("readme");
-  // A pinned chart version's artifacts are immutable, so never refetch them
-  // on tab-switch-back.
+  // A pinned chart version's artifacts are immutable, so never refetch on
+  // tab-switch (staleTime: Infinity). A genuinely absent artifact (404) is
+  // modeled as *successful* data, not an error — otherwise React Query treats
+  // an errored tab as recoverable and refetches it on every activation,
+  // re-flashing "Loading (may pull the chart)".
   const inspectQuery = (k: InspectKind) => ({
     queryKey: ["inspect", inst.name, dep.id, k],
-    queryFn: () => api.depInspect(inst.name, dep.id, k),
+    queryFn: async (): Promise<InspectResult> => {
+      try {
+        return { absent: false, text: await api.depInspect(inst.name, dep.id, k) };
+      } catch (e) {
+        if (e instanceof ApiError && e.status === 404) return { absent: true, message: e.message };
+        throw e;
+      }
+    },
     staleTime: Infinity,
-    // An artifact fetch fails deterministically (absent, or auth) — retrying
-    // a 404 is wasted work; the UI offers explicit retry/sign-in instead.
     retry: false,
   });
   const content = useQuery(inspectQuery(kind));
 
-  // All three tabs come from the same chart archive. Once the first one
-  // resolves the server has it cached, so warm the other tabs — switching
-  // tabs is then instant instead of flashing "Loading (may pull the chart)".
+  // All three tabs come from the same chart archive. Once the first request
+  // settles — succeeds OR 404s because the artifact is absent — the server has
+  // the archive cached, so warm the other tabs. Keying on isFetched (not
+  // isSuccess) matters for charts whose default tab is absent (e.g. no
+  // README): otherwise the siblings would still flash "Loading (may pull…)".
   useEffect(() => {
-    if (!content.isSuccess) return;
+    if (!content.isFetched) return;
     for (const k of ["readme", "values", "schema"] as InspectKind[]) {
       if (k !== kind) void qc.prefetchQuery(inspectQuery(k));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [content.isSuccess]);
+  }, [content.isFetched]);
 
   return (
     <Dialog.Root open onOpenChange={(v) => !v && onClose()}>
@@ -67,23 +82,20 @@ function InspectDialog({
             </div>
           </Dialog.Title>
           <div className="min-h-0 flex-1 overflow-auto rounded-md bg-panel-2 p-4">
-            {content.isLoading && <div className="text-muted">Loading (may pull the chart)…</div>}
-            {content.isError &&
-              ((content.error as ApiError).status === 404 ? (
-                // The chart genuinely ships no README/schema — information,
-                // not a failure.
-                <div className="text-muted">{(content.error as Error).message}</div>
-              ) : (
-                <ErrorWithAuth error={content.error} onRetry={() => void content.refetch()} />
-              ))}
-            {content.data !== undefined &&
+            {content.isPending && <div className="text-muted">Loading (may pull the chart)…</div>}
+            {content.isError && (
+              <ErrorWithAuth error={content.error} onRetry={() => void content.refetch()} />
+            )}
+            {content.data?.absent && <div className="text-muted">{content.data.message}</div>}
+            {content.data &&
+              !content.data.absent &&
               (kind === "readme" ? (
                 <div className="prose-invert max-w-none text-sm leading-relaxed [&_a]:text-accent [&_code]:rounded [&_code]:bg-panel [&_code]:px-1 [&_h1]:mb-2 [&_h1]:text-lg [&_h1]:font-semibold [&_h2]:mb-2 [&_h2]:mt-4 [&_h2]:font-semibold [&_li]:ml-4 [&_li]:list-disc [&_p]:my-2 [&_pre]:my-2 [&_pre]:overflow-auto [&_pre]:rounded [&_pre]:bg-panel [&_pre]:p-2 [&_table]:my-2 [&_td]:border [&_td]:border-border [&_td]:px-2 [&_td]:py-1 [&_th]:border [&_th]:border-border [&_th]:px-2 [&_th]:py-1">
-                  <ReactMarkdown remarkPlugins={[remarkGfm]}>{content.data}</ReactMarkdown>
+                  <ReactMarkdown remarkPlugins={[remarkGfm]}>{content.data.text}</ReactMarkdown>
                 </div>
               ) : (
                 <pre className="whitespace-pre-wrap break-words font-mono text-xs leading-relaxed">
-                  {content.data}
+                  {content.data.text}
                 </pre>
               ))}
           </div>

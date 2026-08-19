@@ -32,6 +32,12 @@ func artifactAbsentErr(kind InspectKind) error {
 	return fmt.Errorf("%w: this chart does not ship %s", ErrArtifactAbsent, name)
 }
 
+// AbsentMessage returns the human-facing part of an ErrArtifactAbsent error,
+// without the internal sentinel prefix.
+func AbsentMessage(err error) string {
+	return strings.TrimPrefix(err.Error(), ErrArtifactAbsent.Error()+": ")
+}
+
 // DepByID finds a dependency by its id (alias or name).
 func DepByID(chart yamlchart.Chart, id string) (yamlchart.Dependency, error) {
 	want := yamlchart.DepID(strings.TrimSpace(id))

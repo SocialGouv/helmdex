@@ -727,7 +727,7 @@ func (s *Server) handleDepInspect(w http.ResponseWriter, r *http.Request) {
 		// A genuinely absent artifact (chart ships no README/schema) is
 		// information, not a gateway or auth failure.
 		if errors.Is(err, instances.ErrArtifactAbsent) {
-			httpError(w, http.StatusNotFound, err)
+			httpError(w, http.StatusNotFound, fmt.Errorf("%s", instances.AbsentMessage(err)))
 			return
 		}
 		cand, _ := creds.CandidateForRepo(dep.Repository)
