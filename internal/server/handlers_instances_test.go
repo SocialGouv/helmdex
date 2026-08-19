@@ -237,6 +237,33 @@ func TestFiles_ListReadWrite(t *testing.T) {
 	ts.get("/api/instances/alpha/file").expect(http.StatusBadRequest)
 }
 
+// Malformed YAML/JSON must be rejected before it reaches disk — otherwise a
+// direct-mode instance persists a broken values file silently.
+func TestFiles_WriteRejectsBrokenSyntax(t *testing.T) {
+	ts := newTestServer(t, testutil.RepoOpts{SourceMode: testutil.SourceNone})
+	ts.createInstance("alpha")
+
+	good := ts.Repo.Read(t, "apps", "alpha", "values.instance.yaml")
+
+	// Broken YAML (unbalanced bracket) is refused, and the file is untouched.
+	msg := ts.put("/api/instances/alpha/file?path=values.instance.yaml", "replicaCount: [1, 2\nfoo: :bar\n").
+		expect(http.StatusBadRequest).errorMessage()
+	if !strings.Contains(msg, "invalid YAML") {
+		t.Fatalf("expected an 'invalid YAML' error, got %q", msg)
+	}
+	if got := ts.Repo.Read(t, "apps", "alpha", "values.instance.yaml"); got != good {
+		t.Fatalf("broken write must not touch the file on disk, got %q", got)
+	}
+
+	// Broken JSON is refused too.
+	ts.put("/api/instances/alpha/file?path=values.schema.json", "{not json").
+		expect(http.StatusBadRequest)
+
+	// Valid YAML still writes.
+	ts.put("/api/instances/alpha/file?path=values.instance.yaml", "replicaCount: 3\n").
+		expect(http.StatusNoContent)
+}
+
 func TestFiles_ListSkipsVendoredChartsContents(t *testing.T) {
 	ts := newTestServer(t, testutil.RepoOpts{SourceMode: testutil.SourceNone})
 	ts.createInstance("alpha")

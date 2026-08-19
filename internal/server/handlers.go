@@ -1,6 +1,8 @@
 package server
 
 import (
+	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -11,6 +13,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"gopkg.in/yaml.v3"
 
 	"helmdex/internal/artifacthub"
 	"helmdex/internal/catalog"
@@ -272,6 +276,23 @@ func (s *Server) handleFilesList(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, out)
 }
 
+// validateFileSyntax rejects malformed YAML/JSON before it is written, keyed
+// on the file extension. Other file types are written as-is.
+func validateFileSyntax(path string, b []byte) error {
+	switch strings.ToLower(filepath.Ext(path)) {
+	case ".yaml", ".yml":
+		var doc any
+		if err := yaml.Unmarshal(b, &doc); err != nil {
+			return fmt.Errorf("invalid YAML: %w", err)
+		}
+	case ".json":
+		if len(bytes.TrimSpace(b)) > 0 && !json.Valid(b) {
+			return fmt.Errorf("invalid JSON")
+		}
+	}
+	return nil
+}
+
 // resolveInstanceFile validates a relative path stays inside the instance dir.
 func resolveInstanceFile(instPath, rel string) (string, error) {
 	if rel == "" {
@@ -317,6 +338,13 @@ func (s *Server) handleFileWrite(w http.ResponseWriter, r *http.Request) {
 	}
 	b, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 10<<20))
 	if err != nil {
+		httpError(w, http.StatusBadRequest, err)
+		return
+	}
+	// Reject malformed content before it reaches disk: a broken YAML/JSON
+	// values file would otherwise be persisted silently (direct mode) or only
+	// surface later as a regen failure (managed mode), after the damage.
+	if err := validateFileSyntax(p, b); err != nil {
 		httpError(w, http.StatusBadRequest, err)
 		return
 	}
