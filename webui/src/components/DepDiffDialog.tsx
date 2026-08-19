@@ -4,7 +4,7 @@ import * as Dialog from "@radix-ui/react-dialog";
 import { DiffEditor } from "@monaco-editor/react";
 import { api } from "../api/client";
 import type { DepInfo, InstanceInfo } from "../api/types";
-import AuthRequiredNotice from "./AuthRequiredNotice";
+import ErrorWithAuth from "./ErrorWithAuth";
 
 type DiffKind = "values" | "schema";
 
@@ -109,10 +109,9 @@ export default function DepDiffDialog({
             )}
             {target && (current.isError || candidate.isError) && (
               <div className="grid h-full place-items-center p-4">
-                <div className="text-error">{((current.error ?? candidate.error) as Error)?.message}</div>
-                <AuthRequiredNotice
+                <ErrorWithAuth
                   error={current.error ?? candidate.error}
-                  onResolved={() => {
+                  onRetry={() => {
                     void current.refetch();
                     void candidate.refetch();
                   }}

@@ -65,6 +65,43 @@ const (
 	storeKind       = "HelmdexCredentials"
 )
 
+// DefaultUsername returns username, falling back to "oauth2" when empty:
+// forges accept a PAT with any non-empty username. This is the single home
+// of that rule.
+func DefaultUsername(username string) string {
+	if strings.TrimSpace(username) == "" {
+		return "oauth2"
+	}
+	return username
+}
+
+// writeFileAtomic0600 writes data to path with 0600 permissions via a temp
+// file + rename, creating the parent directory with dirPerm.
+func writeFileAtomic0600(path string, data []byte, dirPerm os.FileMode) error {
+	if err := os.MkdirAll(filepath.Dir(path), dirPerm); err != nil {
+		return err
+	}
+	tmp, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+"-*")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+	defer func() {
+		_ = tmp.Close()
+		_ = os.Remove(tmpName)
+	}()
+	if err := tmp.Chmod(0o600); err != nil {
+		return err
+	}
+	if _, err := tmp.Write(data); err != nil {
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmpName, path)
+}
+
 // StorePath returns the credentials file location.
 // Overridable with HELMDEX_CREDENTIALS (used by tests).
 func StorePath() (string, error) {
@@ -116,28 +153,7 @@ func Save(st Store) error {
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return err
-	}
-	tmp, err := os.CreateTemp(filepath.Dir(path), ".credentials-*.yaml")
-	if err != nil {
-		return err
-	}
-	tmpName := tmp.Name()
-	defer func() {
-		_ = tmp.Close()
-		_ = os.Remove(tmpName)
-	}()
-	if err := tmp.Chmod(0o600); err != nil {
-		return err
-	}
-	if _, err := tmp.Write(out); err != nil {
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		return err
-	}
-	return os.Rename(tmpName, path)
+	return writeFileAtomic0600(path, out, 0o700)
 }
 
 // Upsert adds or replaces the credential for (host, kind).

@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -141,7 +142,7 @@ func RepoAdd(ctx context.Context, env Env, name, url string) error {
 			return nil
 		}
 		args := []string{"repo", "add", name, url, "--force-update", "--username", cred.Username, "--password-stdin"}
-		if _, err := runStdin(ctx, env, cred.Secret, "helm", args...); err != nil {
+		if _, err := runWith(ctx, env, strings.NewReader(cred.Secret), "helm", args...); err != nil {
 			return err
 		}
 		_ = os.WriteFile(repoUpdateMarkerPath(env), []byte(time.Now().UTC().Format(time.RFC3339)), 0o644)
@@ -349,6 +350,13 @@ func ShowValuesBestEffort(ctx context.Context, env Env, ref, version string, rep
 }
 
 func run(ctx context.Context, env Env, name string, args ...string) (string, error) {
+	return runWith(ctx, env, nil, name, args...)
+}
+
+// runWith is the single non-interactive helm executor; a non-nil stdin is
+// piped to the subprocess (used to pass secrets without exposing them in
+// argv).
+func runWith(ctx context.Context, env Env, stdin io.Reader, name string, args ...string) (string, error) {
 	if name == "helm" || name == "helm.exe" {
 		p, err := helmCommandPath(ctx)
 		if err != nil {
@@ -361,6 +369,7 @@ func run(ctx context.Context, env Env, name string, args ...string) (string, err
 	// user env (HELM_REPOSITORY_CONFIG, HELM_REPOSITORY_CACHE, HELM_PLUGINS, ...)
 	// cannot leak global state into helmdex operations.
 	cmd.Env = isolatedProcessEnv(os.Environ(), env)
+	cmd.Stdin = stdin
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
 	cmd.Stdout = &stdout
@@ -368,36 +377,6 @@ func run(ctx context.Context, env Env, name string, args ...string) (string, err
 	if err := cmd.Run(); err != nil {
 		// If the context is done, prefer surfacing ctx.Err() over an OS-level
 		// "signal: killed" or other opaque exec error.
-		if ctxErr := ctx.Err(); ctxErr != nil {
-			return "", fmt.Errorf("helm %s failed: %v", strings.Join(args, " "), ctxErr)
-		}
-		msg := strings.TrimSpace(stderr.String())
-		if msg == "" {
-			msg = err.Error()
-		}
-		return "", fmt.Errorf("helm %s failed: %s", strings.Join(args, " "), msg)
-	}
-	return stdout.String(), nil
-}
-
-// runStdin is run() with data piped to the subprocess stdin (used to pass
-// secrets to helm without exposing them in argv).
-func runStdin(ctx context.Context, env Env, stdin string, name string, args ...string) (string, error) {
-	if name == "helm" || name == "helm.exe" {
-		p, err := helmCommandPath(ctx)
-		if err != nil {
-			return "", err
-		}
-		name = p
-	}
-	cmd := exec.CommandContext(ctx, name, args...)
-	cmd.Env = isolatedProcessEnv(os.Environ(), env)
-	cmd.Stdin = strings.NewReader(stdin)
-	var stdout bytes.Buffer
-	var stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-	if err := cmd.Run(); err != nil {
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return "", fmt.Errorf("helm %s failed: %v", strings.Join(args, " "), ctxErr)
 		}

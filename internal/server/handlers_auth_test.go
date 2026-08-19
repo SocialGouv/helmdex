@@ -1,7 +1,6 @@
 package server
 
 import (
-	"encoding/base64"
 	"encoding/json"
 	"net/http"
 	"os"
@@ -35,22 +34,6 @@ func registryAuths(t *testing.T, path string) map[string]json.RawMessage {
 		t.Fatalf("parse %s: %v", path, err)
 	}
 	return cfg.Auths
-}
-
-// writeDockerConfig points DOCKER_CONFIG at a temp dir holding creds for host.
-func writeDockerConfig(t *testing.T, host, user, secret string) {
-	t.Helper()
-	dir := t.TempDir()
-	t.Setenv("DOCKER_CONFIG", dir)
-	auth := base64.StdEncoding.EncodeToString([]byte(user + ":" + secret))
-	cfg := map[string]any{"auths": map[string]any{host: map[string]string{"auth": auth}}}
-	b, err := json.Marshal(cfg)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "config.json"), b, 0o600); err != nil {
-		t.Fatal(err)
-	}
 }
 
 func TestAuth_LoginManualOCIAndList(t *testing.T) {
@@ -154,7 +137,7 @@ func TestAuth_LoginGitSSHKeyStoredWithoutURL(t *testing.T) {
 
 func TestAuth_DetectAndDetectedLogin(t *testing.T) {
 	ts := newTestServer(t, testutil.RepoOpts{SourceMode: testutil.SourceNone})
-	writeDockerConfig(t, "reg.example.test", "jo", "docker-secret")
+	testutil.WriteDockerConfig(t, "reg.example.test", "jo", "docker-secret")
 
 	var det struct {
 		Candidates []creds.Candidate `json:"candidates"`

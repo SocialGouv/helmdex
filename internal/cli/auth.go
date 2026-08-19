@@ -62,7 +62,7 @@ func newAuthDetectCmd() *cobra.Command {
 			if !creds.ValidKind(k) {
 				return fmt.Errorf("--kind must be one of oci, git, helm-repo")
 			}
-			cands := creds.Detect(cmd.Context(), args[0], k)
+			cands := creds.Detect(cmd.Context(), args[0])
 			if len(cands) == 0 {
 				cmd.Println("no local credentials found")
 			}

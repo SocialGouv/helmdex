@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { RefreshCw } from "lucide-react";
 import { api } from "../api/client";
-import AuthRequiredNotice from "../components/AuthRequiredNotice";
+import ErrorWithAuth from "../components/ErrorWithAuth";
 import SourcesEditor from "../components/SourcesEditor";
 
 export default function CatalogPage() {
@@ -27,10 +27,7 @@ export default function CatalogPage() {
       </div>
 
       {sync.isError && (
-        <div className="mb-2">
-          <div className="text-error">{(sync.error as Error).message}</div>
-          <AuthRequiredNotice error={sync.error} onResolved={() => sync.mutate()} />
-        </div>
+        <ErrorWithAuth className="mb-2" error={sync.error} onRetry={() => sync.mutate()} />
       )}
       {catalog.isLoading && <div className="text-muted">Loading…</div>}
       {catalog.isError && <div className="text-error">{(catalog.error as Error).message}</div>}

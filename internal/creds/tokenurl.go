@@ -16,27 +16,24 @@ type TokenPage struct {
 	// Host is the account host the token page belongs to (for a registry
 	// host this is usually the related git host).
 	Host string `json:"host"`
+	// OpenError reports a failed attempt to open the page in a browser; the
+	// URL stays usable for manual opening.
+	OpenError string `json:"openError,omitempty"`
 }
 
 // TokenPageFor guesses the token-creation page for a host. For registry
-// hosts it prefers the related git host (a GitLab/GitHub PAT covers both the
-// registry and git). Best-effort: unknown self-hosted providers get the
+// hosts it prefers the related account host (a GitLab/GitHub PAT covers both
+// the registry and git). Best-effort: unknown self-hosted providers get the
 // GitLab-style URL, which covers the common case of a private GitLab.
 func TokenPageFor(host string, kind Kind) TokenPage {
 	host = strings.ToLower(strings.TrimSpace(host))
 	accountHost := host
 	if kind == KindOCI {
-		// pic-registry.example.org -> pic.example.org, registry.gitlab.com -> gitlab.com
-		for _, rel := range RelatedHosts(host) {
-			if !strings.HasPrefix(rel, "registry.") && !strings.Contains(strings.Split(rel, ".")[0], "-registry") {
-				accountHost = rel
-				break
-			}
-		}
+		accountHost = AccountHostFor(host)
 	}
 
-	if accountHost == "github.com" || strings.Contains(accountHost, "github") || host == "ghcr.io" {
-		if host == "ghcr.io" {
+	if IsGitHubHost(accountHost) {
+		if accountHost == "ghcr.io" {
 			accountHost = "github.com"
 		}
 		q := url.Values{}

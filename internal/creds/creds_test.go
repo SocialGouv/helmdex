@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"runtime"
 	"testing"
+
+	"helmdex/internal/testutil"
 )
 
 func withStore(t *testing.T) string {
@@ -175,20 +177,13 @@ func TestCandidatesAndMatch(t *testing.T) {
 
 func TestDetectDockerConfigAndResolve(t *testing.T) {
 	withStore(t)
-	dir := t.TempDir()
-	t.Setenv("DOCKER_CONFIG", dir)
-	auth := base64.StdEncoding.EncodeToString([]byte("jo:glpat-abc"))
-	cfg := map[string]any{"auths": map[string]any{"pic-registry.example.org": map[string]string{"auth": auth}}}
-	b, _ := json.Marshal(cfg)
-	if err := os.WriteFile(filepath.Join(dir, "config.json"), b, 0o600); err != nil {
-		t.Fatal(err)
-	}
+	testutil.WriteDockerConfig(t, "pic-registry.example.org", "jo", "glpat-abc")
 	// Keep the other probes inert.
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	t.Setenv("XDG_RUNTIME_DIR", t.TempDir())
 	t.Setenv("PATH", t.TempDir())
 
-	cands := Detect(context.Background(), "pic-registry.example.org", KindOCI)
+	cands := Detect(context.Background(), "pic-registry.example.org")
 	found := false
 	for _, c := range cands {
 		if c.Source == SourceDockerConfig && c.Host == "pic-registry.example.org" && c.Username == "jo" {
@@ -219,7 +214,7 @@ func TestDetectGlab(t *testing.T) {
 	}
 
 	// Registry host: the glab entry for the related git host must surface.
-	cands := Detect(context.Background(), "pic-registry.example.org", KindOCI)
+	cands := Detect(context.Background(), "pic-registry.example.org")
 	found := false
 	for _, c := range cands {
 		if c.Source == SourceGlabCLI && c.Host == "pic.example.org" && c.Username == "jo" {
@@ -267,7 +262,7 @@ exit 1
 		t.Fatalf("git credential fill: %q %q %v", u, s, err)
 	}
 
-	cands := Detect(context.Background(), "pic.example.org", KindGit)
+	cands := Detect(context.Background(), "pic.example.org")
 	found := false
 	for _, c := range cands {
 		if c.Source == SourceGitCredential && c.Host == "pic.example.org" {
@@ -276,6 +271,34 @@ exit 1
 	}
 	if !found {
 		t.Fatalf("git-credential candidate not detected: %+v", cands)
+	}
+}
+
+func TestDetectGh(t *testing.T) {
+	withStore(t)
+	dir := t.TempDir()
+	t.Setenv("GH_CONFIG_DIR", dir)
+	t.Setenv("DOCKER_CONFIG", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("XDG_RUNTIME_DIR", t.TempDir())
+	t.Setenv("GLAB_CONFIG_DIR", t.TempDir())
+	t.Setenv("PATH", t.TempDir())
+	hosts := "github.com:\n  user: jo\n  git_protocol: https\n"
+	if err := os.WriteFile(filepath.Join(dir, "hosts.yml"), []byte(hosts), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	// The probe reads hosts.yml only (the token may live in the keyring) —
+	// no gh executable needed.
+	cands := Detect(context.Background(), "github.com")
+	found := false
+	for _, c := range cands {
+		if c.Source == SourceGhCLI && c.Host == "github.com" && c.Username == "jo" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("gh candidate not detected: %+v", cands)
 	}
 }
 

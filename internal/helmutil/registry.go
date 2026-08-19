@@ -23,18 +23,8 @@ func RegistryLogin(ctx context.Context, env Env, registry string, opt RegistryLo
 	if registry == "" {
 		return fmt.Errorf("registry is required")
 	}
-	args := []string{"registry", "login", registry}
-	if strings.TrimSpace(opt.Username) != "" {
-		args = append(args, "--username", opt.Username)
-	}
-	if opt.PasswordStdin {
-		args = append(args, "--password-stdin")
-	}
-	if strings.TrimSpace(opt.Password) != "" {
-		args = append(args, "--password", opt.Password)
-	}
 	// Interactive: helm may prompt, and password-stdin reads from stdin.
-	return runInteractive(ctx, env, "", "helm", args...)
+	return runInteractive(ctx, env, "", "helm", registryLoginArgs(registry, opt.Username, opt.Password, opt.PasswordStdin)...)
 }
 
 // RegistryLoginStdin runs `helm registry login` non-interactively, piping the
@@ -51,10 +41,21 @@ func RegistryLoginStdin(ctx context.Context, env Env, registry, username, secret
 	if strings.TrimSpace(secret) == "" {
 		return fmt.Errorf("secret is required")
 	}
-	args := []string{"registry", "login", registry, "--password-stdin"}
+	args := registryLoginArgs(registry, username, "", true)
+	_, err := runWith(ctx, env, strings.NewReader(secret), "helm", args...)
+	return err
+}
+
+func registryLoginArgs(registry, username, password string, passwordStdin bool) []string {
+	args := []string{"registry", "login", registry}
 	if strings.TrimSpace(username) != "" {
 		args = append(args, "--username", username)
 	}
-	_, err := runStdin(ctx, env, secret, "helm", args...)
-	return err
+	if passwordStdin {
+		args = append(args, "--password-stdin")
+	}
+	if strings.TrimSpace(password) != "" {
+		args = append(args, "--password", password)
+	}
+	return args
 }

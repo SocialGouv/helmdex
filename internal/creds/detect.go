@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -46,36 +47,55 @@ const probeTimeout = 5 * time.Second
 // Detect probes the user's local configuration for credentials usable
 // against host (and closely related hosts). It returns candidates without
 // secrets, ordered by relevance (exact host first, then related hosts).
-func Detect(ctx context.Context, host string, kind Kind) []Candidate {
+//
+// Sources are probed for every credential kind on purpose: forge PATs are
+// cross-usable (a GitLab token found in a git helper also authenticates the
+// GitLab registry, and vice versa).
+func Detect(ctx context.Context, host string) []Candidate {
 	host = strings.ToLower(strings.TrimSpace(host))
 	hosts := append([]string{host}, RelatedHosts(host)...)
 
+	type probeFn func(ctx context.Context, host string) (Candidate, error)
+	type spec struct {
+		host  string
+		probe probeFn
+	}
+	var specs []spec
+	for _, h := range hosts {
+		for _, p := range []probeFn{probeDockerConfig, probePodman, probeHelmRegistry, probeGitCredential, probeGhCLI, probeGlabCLI} {
+			specs = append(specs, spec{host: h, probe: p})
+		}
+	}
+
+	// Several probes fork subprocesses (git, credential helpers) that can
+	// each take seconds; run everything concurrently and keep declaration
+	// order, which ranks exact-host results before related-host ones.
+	results := make([]Candidate, len(specs))
+	var wg sync.WaitGroup
+	for i, s := range specs {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if c, err := s.probe(ctx, s.host); err == nil {
+				results[i] = c
+			}
+		}()
+	}
+	wg.Wait()
+
 	var out []Candidate
 	seen := map[string]struct{}{}
-	add := func(c Candidate, err error) {
-		if err != nil || c.Source == "" {
-			return
+	for _, c := range results {
+		if c.Source == "" {
+			continue
 		}
 		key := c.Source + "|" + c.Host
 		if _, ok := seen[key]; ok {
-			return
+			continue
 		}
 		seen[key] = struct{}{}
 		out = append(out, c)
 	}
-
-	for _, h := range hosts {
-		// Container-registry style sources are most relevant for OCI but a
-		// docker login against a GitLab registry also proves a usable
-		// account, so probe them for every kind.
-		add(probeDockerLike(SourceDockerConfig, dockerConfigPath(), h))
-		add(probePodman(h))
-		add(probeDockerLike(SourceHelmRegistry, helmRegistryConfigPath(), h))
-		add(probeGitCredential(ctx, h))
-		add(probeGhCLI(ctx, h))
-		add(probeGlabCLI(h))
-	}
-	_ = kind
 	return out
 }
 
@@ -86,15 +106,18 @@ func ResolveCandidate(ctx context.Context, source, host string) (username, secre
 	host = strings.ToLower(strings.TrimSpace(host))
 	switch source {
 	case SourceDockerConfig:
-		return resolveDockerLike(dockerConfigPath(), host)
+		u, s, _, err := lookupDockerLike(dockerConfigPath(), host)
+		return u, s, err
 	case SourcePodman:
 		p, perr := podmanAuthPath()
 		if perr != nil {
 			return "", "", perr
 		}
-		return resolveDockerLike(p, host)
+		u, s, _, err := lookupDockerLike(p, host)
+		return u, s, err
 	case SourceHelmRegistry:
-		return resolveDockerLike(helmRegistryConfigPath(), host)
+		u, s, _, err := lookupDockerLike(helmRegistryConfigPath(), host)
+		return u, s, err
 	case SourceGitCredential:
 		return gitCredentialFill(ctx, host)
 	case SourceGhCLI:
@@ -181,77 +204,60 @@ func dockerAuthKeys(host string) []string {
 	return keys
 }
 
-func probeDockerLike(source, path, host string) (Candidate, error) {
+// lookupDockerLike resolves a credential from a docker-style config file:
+// per-host credential helper first, then inline auths entries, then the
+// global credsStore. labelSuffix names the helper involved, for UI labels.
+func lookupDockerLike(path, host string) (username, secret, labelSuffix string, err error) {
 	cfg, err := readDockerConfig(path)
 	if err != nil {
-		return Candidate{}, err
-	}
-	label := map[string]string{
-		SourceDockerConfig: "Docker login",
-		SourceHelmRegistry: "helm registry login",
-	}[source]
-
-	// Credential helper for this specific host?
-	if helper, ok := cfg.CredHelpers[host]; ok {
-		if u, _, err := credHelperGet(helper, host); err == nil {
-			return Candidate{Source: source, Host: host, Username: u, Label: label + " (" + helper + " helper)"}, nil
-		}
-	}
-	for _, k := range dockerAuthKeys(host) {
-		if e, ok := cfg.Auths[k]; ok {
-			u, _, err := decodeDockerAuth(e)
-			if err != nil {
-				continue
-			}
-			return Candidate{Source: source, Host: host, Username: u, Label: label}, nil
-		}
-	}
-	// Global credsStore may hold the host even without an auths entry.
-	if cfg.CredsStore != "" {
-		if u, _, err := credHelperGet(cfg.CredsStore, host); err == nil {
-			return Candidate{Source: source, Host: host, Username: u, Label: label + " (" + cfg.CredsStore + " store)"}, nil
-		}
-	}
-	return Candidate{}, os.ErrNotExist
-}
-
-func probePodman(host string) (Candidate, error) {
-	p, err := podmanAuthPath()
-	if err != nil {
-		return Candidate{}, err
-	}
-	c, err := probeDockerLike(SourcePodman, p, host)
-	if err != nil {
-		return Candidate{}, err
-	}
-	c.Label = "Podman login"
-	return c, nil
-}
-
-func resolveDockerLike(path, host string) (string, string, error) {
-	cfg, err := readDockerConfig(path)
-	if err != nil {
-		return "", "", err
+		return "", "", "", err
 	}
 	if helper, ok := cfg.CredHelpers[host]; ok {
 		if u, s, err := credHelperGet(helper, host); err == nil {
-			return u, s, nil
+			return u, s, " (" + helper + " helper)", nil
 		}
 	}
 	for _, k := range dockerAuthKeys(host) {
 		if e, ok := cfg.Auths[k]; ok {
-			u, s, err := decodeDockerAuth(e)
-			if err == nil && s != "" {
-				return u, s, nil
+			if u, s, err := decodeDockerAuth(e); err == nil && s != "" {
+				return u, s, "", nil
 			}
 		}
 	}
 	if cfg.CredsStore != "" {
 		if u, s, err := credHelperGet(cfg.CredsStore, host); err == nil {
-			return u, s, nil
+			return u, s, " (" + cfg.CredsStore + " store)", nil
 		}
 	}
-	return "", "", fmt.Errorf("no credential for %s in %s", host, path)
+	return "", "", "", fmt.Errorf("no credential for %s in %s", host, path)
+}
+
+func probeDockerConfig(_ context.Context, host string) (Candidate, error) {
+	u, _, suffix, err := lookupDockerLike(dockerConfigPath(), host)
+	if err != nil {
+		return Candidate{}, err
+	}
+	return Candidate{Source: SourceDockerConfig, Host: host, Username: u, Label: "Docker login" + suffix}, nil
+}
+
+func probePodman(_ context.Context, host string) (Candidate, error) {
+	p, err := podmanAuthPath()
+	if err != nil {
+		return Candidate{}, err
+	}
+	u, _, suffix, err := lookupDockerLike(p, host)
+	if err != nil {
+		return Candidate{}, err
+	}
+	return Candidate{Source: SourcePodman, Host: host, Username: u, Label: "Podman login" + suffix}, nil
+}
+
+func probeHelmRegistry(_ context.Context, host string) (Candidate, error) {
+	u, _, suffix, err := lookupDockerLike(helmRegistryConfigPath(), host)
+	if err != nil {
+		return Candidate{}, err
+	}
+	return Candidate{Source: SourceHelmRegistry, Host: host, Username: u, Label: "helm registry login" + suffix}, nil
 }
 
 func decodeDockerAuth(e dockerAuthEntry) (string, string, error) {
@@ -349,6 +355,56 @@ func probeGitCredential(ctx context.Context, host string) (Candidate, error) {
 
 // --- gh CLI (GitHub) ---
 
+type ghHostEntry struct {
+	User string `yaml:"user"`
+}
+
+func ghConfigPath() string {
+	if v := strings.TrimSpace(os.Getenv("GH_CONFIG_DIR")); v != "" {
+		return filepath.Join(v, "hosts.yml")
+	}
+	base, err := os.UserConfigDir()
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(base, "gh", "hosts.yml")
+}
+
+func readGhHost(host string) (ghHostEntry, error) {
+	path := ghConfigPath()
+	if path == "" {
+		return ghHostEntry{}, os.ErrNotExist
+	}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return ghHostEntry{}, err
+	}
+	var hosts map[string]ghHostEntry
+	if err := yaml.Unmarshal(b, &hosts); err != nil {
+		return ghHostEntry{}, fmt.Errorf("parse %s: %w", path, err)
+	}
+	e, ok := hosts[host]
+	if !ok {
+		return ghHostEntry{}, os.ErrNotExist
+	}
+	return e, nil
+}
+
+// probeGhCLI reports a gh CLI login by reading gh's hosts.yml — no exec.
+// The token itself often lives in the system keyring, so the host entry is
+// the availability signal and `gh auth token` resolves the secret later.
+func probeGhCLI(_ context.Context, host string) (Candidate, error) {
+	// gh only ever holds GitHub credentials; skip other hosts.
+	if !IsGitHubHost(host) {
+		return Candidate{}, os.ErrNotExist
+	}
+	e, err := readGhHost(host)
+	if err != nil {
+		return Candidate{}, err
+	}
+	return Candidate{Source: SourceGhCLI, Host: host, Username: e.User, Label: "GitHub CLI (gh)"}, nil
+}
+
 func resolveGhCLI(ctx context.Context, host string) (string, string, error) {
 	cctx, cancel := context.WithTimeout(ctx, probeTimeout)
 	defer cancel()
@@ -363,41 +419,8 @@ func resolveGhCLI(ctx context.Context, host string) (string, string, error) {
 	if token == "" {
 		return "", "", fmt.Errorf("gh returned an empty token for %s", host)
 	}
-	username := ghUsername(ctx, host)
-	if username == "" {
-		// GHCR and git-over-https accept a PAT with any non-empty username.
-		username = "oauth2"
-	}
-	return username, token, nil
-}
-
-func ghUsername(ctx context.Context, host string) string {
-	cctx, cancel := context.WithTimeout(ctx, probeTimeout)
-	defer cancel()
-	cmd := exec.CommandContext(cctx, "gh", "api", "user", "-q", ".login", "--hostname", host)
-	var stdout bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = nil
-	if err := cmd.Run(); err != nil {
-		return ""
-	}
-	return strings.TrimSpace(stdout.String())
-}
-
-func probeGhCLI(ctx context.Context, host string) (Candidate, error) {
-	// gh only ever holds GitHub credentials; skip the exec for other hosts.
-	if host != "github.com" && !strings.HasSuffix(host, ".ghe.com") && !strings.Contains(host, "github") {
-		return Candidate{}, os.ErrNotExist
-	}
-	cctx, cancel := context.WithTimeout(ctx, probeTimeout)
-	defer cancel()
-	cmd := exec.CommandContext(cctx, "gh", "auth", "token", "--hostname", host)
-	cmd.Stdout = nil
-	cmd.Stderr = nil
-	if err := cmd.Run(); err != nil {
-		return Candidate{}, err
-	}
-	return Candidate{Source: SourceGhCLI, Host: host, Username: ghUsername(ctx, host), Label: "GitHub CLI (gh)"}, nil
+	e, _ := readGhHost(host)
+	return e.User, token, nil
 }
 
 // --- glab CLI (GitLab) ---
@@ -450,7 +473,7 @@ func glabUsername(e glabHostEntry) string {
 	return e.Username
 }
 
-func probeGlabCLI(host string) (Candidate, error) {
+func probeGlabCLI(_ context.Context, host string) (Candidate, error) {
 	e, err := readGlabHost(host)
 	if err != nil {
 		return Candidate{}, err
@@ -463,10 +486,5 @@ func resolveGlabCLI(host string) (string, string, error) {
 	if err != nil {
 		return "", "", fmt.Errorf("no glab token for %s: %w", host, err)
 	}
-	username := glabUsername(e)
-	if username == "" {
-		// GitLab accepts any non-empty username alongside a PAT.
-		username = "oauth2"
-	}
-	return username, e.Token, nil
+	return glabUsername(e), e.Token, nil
 }

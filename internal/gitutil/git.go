@@ -76,7 +76,7 @@ func VerifyAccess(ctx context.Context, url string) error {
 // VerifyAccessWithCredential checks that the remote is reachable with an
 // explicit credential (used to validate a login before persisting it).
 func VerifyAccessWithCredential(ctx context.Context, url string, c creds.Credential) error {
-	_, err := output(ctx, "", authForCred(url, c, true), "ls-remote", "--", url, "HEAD")
+	_, err := output(ctx, "", authForCred(url, c), "ls-remote", "--", url, "HEAD")
 	return err
 }
 
@@ -98,11 +98,13 @@ type gitAuth struct {
 //   - ssh: a stored deploy-key path is passed via GIT_SSH_COMMAND; without
 //     one, the ambient ssh-agent/default keys apply as usual
 func authFor(rawURL string) gitAuth {
-	c, ok := creds.ForURL(rawURL, creds.KindGit)
-	return authForCred(rawURL, c, ok)
+	c, _ := creds.ForURL(rawURL, creds.KindGit)
+	return authForCred(rawURL, c)
 }
 
-func authForCred(rawURL string, c creds.Credential, ok bool) gitAuth {
+// authForCred builds the wiring for an explicit credential; a zero-value
+// Credential yields prompt-disabling env only.
+func authForCred(rawURL string, c creds.Credential) gitAuth {
 	a := gitAuth{env: []string{
 		"GIT_TERMINAL_PROMPT=0",
 		// Git Credential Manager would otherwise pop a GUI prompt.
@@ -110,25 +112,20 @@ func authForCred(rawURL string, c creds.Credential, ok bool) gitAuth {
 	}}
 
 	if creds.IsSSHURL(rawURL) {
-		if ok && strings.TrimSpace(c.SSHKeyPath) != "" {
+		if strings.TrimSpace(c.SSHKeyPath) != "" {
 			a.env = append(a.env, fmt.Sprintf("GIT_SSH_COMMAND=ssh -i %q -o IdentitiesOnly=yes", c.SSHKeyPath))
 		}
 		return a
 	}
 
-	if ok && c.Secret != "" {
-		username := c.Username
-		if strings.TrimSpace(username) == "" {
-			// Forges accept a PAT with any non-empty username.
-			username = "oauth2"
-		}
+	if c.Secret != "" {
 		// The empty first value resets the helper list so ambient helpers
 		// cannot override the stored credential; the inline helper reads the
 		// secret from the environment.
 		helper := `!f() { printf 'username=%s\npassword=%s\n' "$HELMDEX_GIT_USERNAME" "$HELMDEX_GIT_PASSWORD"; }; f`
 		a.configArgs = []string{"-c", "credential.helper=", "-c", "credential.helper=" + helper}
 		a.env = append(a.env,
-			"HELMDEX_GIT_USERNAME="+username,
+			"HELMDEX_GIT_USERNAME="+creds.DefaultUsername(c.Username),
 			"HELMDEX_GIT_PASSWORD="+c.Secret,
 		)
 	}

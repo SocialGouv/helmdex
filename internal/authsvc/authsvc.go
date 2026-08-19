@@ -56,7 +56,9 @@ type LoginResult struct {
 }
 
 // Login resolves, verifies and stores a credential. repoRoot scopes the Helm
-// env used for OCI verification (the shared registry config of that repo).
+// env used for OCI verification (the shared registry config of that repo);
+// it may be empty — OCI logins are then stored unverified, and the other
+// kinds don't need it.
 func Login(ctx context.Context, repoRoot string, req LoginRequest) (LoginResult, error) {
 	host := strings.ToLower(strings.TrimSpace(req.Host))
 	if host == "" {
@@ -104,9 +106,8 @@ func Login(ctx context.Context, repoRoot string, req LoginRequest) (LoginResult,
 	default:
 		return LoginResult{}, fmt.Errorf("unknown method %q", req.Method)
 	}
-	if cred.Username == "" && cred.Secret != "" {
-		// Forges accept a PAT with any non-empty username.
-		cred.Username = "oauth2"
+	if cred.Secret != "" {
+		cred.Username = creds.DefaultUsername(cred.Username)
 	}
 
 	verified, msg, err := verify(ctx, repoRoot, cred, strings.TrimSpace(req.URL))
@@ -187,7 +188,8 @@ func verifyHelmRepoIndex(ctx context.Context, repoURL, username, secret string) 
 }
 
 // Logout removes the stored credential and its materialized registry entry
-// for the currently open repo.
+// for the currently open repo. repoRoot may be empty (no registry cleanup —
+// only relevant to OCI credentials).
 func Logout(repoRoot, host string, kind creds.Kind) (bool, error) {
 	removed, err := creds.Remove(host, kind)
 	if err != nil {

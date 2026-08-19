@@ -7,7 +7,7 @@ import remarkGfm from "remark-gfm";
 import { api } from "../api/client";
 import type { DepInfo, InspectKind, InstanceInfo } from "../api/types";
 import AddDepWizard from "./AddDepWizard";
-import AuthRequiredNotice from "./AuthRequiredNotice";
+import ErrorWithAuth from "./ErrorWithAuth";
 import DepDiffDialog from "./DepDiffDialog";
 import DepConfigureDialog from "./DepConfigureDialog";
 
@@ -50,10 +50,7 @@ function InspectDialog({
           <div className="min-h-0 flex-1 overflow-auto rounded-md bg-panel-2 p-4">
             {content.isLoading && <div className="text-muted">Loading (may pull the chart)…</div>}
             {content.isError && (
-              <div>
-                <div className="text-error">{(content.error as Error).message}</div>
-                <AuthRequiredNotice error={content.error} onResolved={() => void content.refetch()} />
-              </div>
+              <ErrorWithAuth error={content.error} onRetry={() => void content.refetch()} />
             )}
             {content.data !== undefined &&
               (kind === "readme" ? (
@@ -129,15 +126,13 @@ function VersionDialog({
             </button>
           </form>
           {setVersion.isError && (
-            <div className="mb-2">
-              <div className="text-sm text-error">{(setVersion.error as Error).message}</div>
-              <AuthRequiredNotice
-                error={setVersion.error}
-                onResolved={() => {
-                  if (setVersion.variables) setVersion.mutate(setVersion.variables);
-                }}
-              />
-            </div>
+            <ErrorWithAuth
+              className="mb-2"
+              error={setVersion.error}
+              onRetry={() => {
+                if (setVersion.variables) setVersion.mutate(setVersion.variables);
+              }}
+            />
           )}
 
           {isOCI ? (
@@ -148,13 +143,7 @@ function VersionDialog({
             <div className="min-h-0 flex-1 overflow-auto">
               {versions.isLoading && <div className="text-muted">Loading versions…</div>}
               {versions.isError && (
-                <div>
-                  <div className="text-error">{(versions.error as Error).message}</div>
-                  <AuthRequiredNotice
-                    error={versions.error}
-                    onResolved={() => void versions.refetch()}
-                  />
-                </div>
+                <ErrorWithAuth error={versions.error} onRetry={() => void versions.refetch()} />
               )}
               {versions.data?.versions.map((v) => (
                 <button

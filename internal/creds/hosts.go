@@ -48,45 +48,57 @@ func IsSSHURL(raw string) bool {
 	return i > 0 && strings.Contains(raw[:i], "@")
 }
 
+// registryStripped classifies a registry-shaped host and returns the host
+// that owns the account, following the common GitLab conventions:
+//
+//	registry.gitlab.example.org -> gitlab.example.org
+//	pic-registry.example.org    -> pic.example.org
+//
+// ok is false when host is not registry-shaped.
+func registryStripped(host string) (string, bool) {
+	labels := strings.Split(host, ".")
+	if len(labels) < 2 {
+		return "", false
+	}
+	first, rest := labels[0], strings.Join(labels[1:], ".")
+	switch {
+	case first == "registry":
+		return rest, true
+	case strings.HasSuffix(first, "-registry"):
+		return strings.TrimSuffix(first, "-registry") + "." + rest, true
+	}
+	return "", false
+}
+
+// AccountHostFor maps a registry host to the host that likely owns the
+// account (identity when host is not registry-shaped).
+func AccountHostFor(host string) string {
+	host = strings.ToLower(strings.TrimSpace(host))
+	if stripped, ok := registryStripped(host); ok {
+		return stripped
+	}
+	return host
+}
+
 // RelatedHosts returns plausible sibling hosts that commonly share the same
-// account as host — e.g. a GitLab container registry vs its GitLab instance:
-//
-//	registry.gitlab.example.org  <-> gitlab.example.org
-//	pic-registry.example.org     <-> pic.example.org
-//
+// account as host — e.g. a GitLab container registry vs its GitLab instance.
 // The result never contains host itself and is best-effort (used only to
 // widen credential detection and token-page guessing).
 func RelatedHosts(host string) []string {
 	host = strings.ToLower(strings.TrimSpace(host))
-	labels := strings.Split(host, ".")
-	if len(labels) < 2 {
+	if strings.Count(host, ".") < 1 {
 		return nil
 	}
-	first, rest := labels[0], strings.Join(labels[1:], ".")
-
-	var out []string
-	add := func(h string) {
-		if h == "" || h == host {
-			return
-		}
-		for _, e := range out {
-			if e == h {
-				return
-			}
-		}
-		out = append(out, h)
+	if stripped, ok := registryStripped(host); ok && stripped != host {
+		return []string{stripped}
 	}
+	// git host -> registry host
+	return []string{"registry." + host}
+}
 
-	switch {
-	case first == "registry":
-		// registry.example.org -> example.org
-		add(rest)
-	case strings.HasSuffix(first, "-registry"):
-		// pic-registry.example.org -> pic.example.org
-		add(strings.TrimSuffix(first, "-registry") + "." + rest)
-	default:
-		// example.org -> registry.example.org (git host -> registry host)
-		add("registry." + host)
-	}
-	return out
+// IsGitHubHost reports whether host is GitHub-operated (github.com, GHES
+// tenants on *.ghe.com, ghcr.io) or self-named as a GitHub instance.
+func IsGitHubHost(host string) bool {
+	host = strings.ToLower(strings.TrimSpace(host))
+	return host == "ghcr.io" || strings.HasSuffix(host, ".ghe.com") || strings.Contains(host, "github")
 }

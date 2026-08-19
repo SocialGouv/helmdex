@@ -46,6 +46,21 @@ func httpOpError(w http.ResponseWriter, status int, err error, cands ...creds.Au
 	httpError(w, status, err)
 }
 
+// dedupCandidates keeps the first candidate per (host, kind), preserving order.
+func dedupCandidates(cands []creds.AuthCandidate) []creds.AuthCandidate {
+	var out []creds.AuthCandidate
+	seen := map[string]struct{}{}
+	for _, c := range cands {
+		key := c.Host + "|" + string(c.Kind)
+		if _, dup := seen[key]; dup {
+			continue
+		}
+		seen[key] = struct{}{}
+		out = append(out, c)
+	}
+	return out
+}
+
 // authCandidatesForChart lists the remotes an instance's dependency
 // operations may need credentials for.
 func authCandidatesForChart(instPath string) []creds.AuthCandidate {
@@ -54,20 +69,12 @@ func authCandidatesForChart(instPath string) []creds.AuthCandidate {
 		return nil
 	}
 	var out []creds.AuthCandidate
-	seen := map[string]struct{}{}
 	for _, d := range c.Dependencies {
-		cand, ok := creds.CandidateForRepo(d.Repository)
-		if !ok {
-			continue
+		if cand, ok := creds.CandidateForRepo(d.Repository); ok {
+			out = append(out, cand)
 		}
-		key := cand.Host + "|" + string(cand.Kind)
-		if _, dup := seen[key]; dup {
-			continue
-		}
-		seen[key] = struct{}{}
-		out = append(out, cand)
 	}
-	return out
+	return dedupCandidates(out)
 }
 
 // authCandidatesForSources lists the git remotes of the configured sources.
@@ -140,7 +147,7 @@ func (s *Server) handleAuthDetect(w http.ResponseWriter, r *http.Request) {
 		httpError(w, http.StatusBadRequest, fmt.Errorf("kind must be one of oci, git, helm-repo"))
 		return
 	}
-	cands := creds.Detect(r.Context(), req.Host, req.Kind)
+	cands := creds.Detect(r.Context(), req.Host)
 	if cands == nil {
 		cands = []creds.Candidate{}
 	}
@@ -188,12 +195,8 @@ func (s *Server) handleAuthTokenPage(w http.ResponseWriter, r *http.Request) {
 	page := creds.TokenPageFor(req.Host, req.Kind)
 	if req.Open {
 		if err := authsvc.OpenBrowser(page.URL); err != nil {
-			// Return the URL anyway so the UI can show it for manual opening.
-			writeJSON(w, http.StatusOK, map[string]any{
-				"provider": page.Provider, "url": page.URL, "host": page.Host,
-				"openError": err.Error(),
-			})
-			return
+			// The URL stays in the payload so the UI can offer manual opening.
+			page.OpenError = err.Error()
 		}
 	}
 	writeJSON(w, http.StatusOK, page)
@@ -221,15 +224,19 @@ func (s *Server) handleAuthHosts(w http.ResponseWriter, r *http.Request) {
 	}
 	cands = append(cands, s.authCandidatesForSources()...)
 
+	stored, err := creds.List()
+	if err != nil {
+		httpError(w, http.StatusInternalServerError, err)
+		return
+	}
+	haveCred := map[string]struct{}{}
+	for _, c := range stored {
+		haveCred[c.Host+"|"+string(c.Kind)] = struct{}{}
+	}
+
 	out := []workspaceAuthHost{}
-	seen := map[string]struct{}{}
-	for _, c := range cands {
-		key := c.Host + "|" + string(c.Kind)
-		if _, dup := seen[key]; dup {
-			continue
-		}
-		seen[key] = struct{}{}
-		_, has := creds.ForHost(c.Host, c.Kind)
+	for _, c := range dedupCandidates(cands) {
+		_, has := haveCred[c.Host+"|"+string(c.Kind)]
 		out = append(out, workspaceAuthHost{AuthCandidate: c, HasCredential: has})
 	}
 	writeJSON(w, http.StatusOK, out)

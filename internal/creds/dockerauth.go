@@ -4,7 +4,6 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"os"
-	"path/filepath"
 )
 
 // SyncRegistryAuths materializes all stored OCI credentials into a
@@ -96,27 +95,5 @@ func mergeDockerAuths(path string, upserts []Credential, removeHosts []string) e
 	if err != nil {
 		return err
 	}
-
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return err
-	}
-	tmp, err := os.CreateTemp(filepath.Dir(path), ".registry-config-*.json")
-	if err != nil {
-		return err
-	}
-	tmpName := tmp.Name()
-	defer func() {
-		_ = tmp.Close()
-		_ = os.Remove(tmpName)
-	}()
-	if err := tmp.Chmod(0o600); err != nil {
-		return err
-	}
-	if _, err := tmp.Write(out); err != nil {
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		return err
-	}
-	return os.Rename(tmpName, path)
+	return writeFileAtomic0600(path, out, 0o755)
 }
