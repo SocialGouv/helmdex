@@ -3,6 +3,7 @@ import { Link, useLocation, useParams } from "wouter";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, Hammer, Pencil } from "lucide-react";
 import { api } from "../api/client";
+import AuthRequiredNotice from "../components/AuthRequiredNotice";
 import DepsTab from "../components/DepsTab";
 import ValuesTab from "../components/ValuesTab";
 import FilesTab from "../components/FilesTab";
@@ -105,7 +106,15 @@ export default function InstancePage() {
         </div>
       </div>
 
-      {apply.isError && <div className="mb-2 text-sm text-error">{(apply.error as Error).message}</div>}
+      {apply.isError && (
+        <div className="mb-2">
+          <div className="text-sm text-error">{(apply.error as Error).message}</div>
+          <AuthRequiredNotice
+            error={apply.error}
+            onResolved={() => apply.mutate(apply.variables ?? false)}
+          />
+        </div>
+      )}
       {rename.isError && <div className="mb-2 text-sm text-error">{(rename.error as Error).message}</div>}
       {inst.isError && <div className="text-error">{(inst.error as Error).message}</div>}
 

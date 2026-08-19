@@ -1,12 +1,14 @@
+import { useState } from "react";
 import { Route, Switch, Link, useRoute } from "wouter";
 import { useQuery } from "@tanstack/react-query";
-import { Boxes, BookOpen, Home } from "lucide-react";
+import { Boxes, BookOpen, Home, KeyRound } from "lucide-react";
 import { api } from "./api/client";
 import Dashboard from "./pages/Dashboard";
 import InstancePage from "./pages/Instance";
 import CatalogPage from "./pages/Catalog";
 import EventsIndicator from "./components/EventsIndicator";
 import RepoSwitcher from "./components/RepoSwitcher";
+import CredentialsDialog from "./components/CredentialsDialog";
 
 function NavLink({ href, children }: { href: string; children: React.ReactNode }) {
   const [active] = useRoute(href === "/" ? "/" : `${href}/*?`);
@@ -24,6 +26,7 @@ function NavLink({ href, children }: { href: string; children: React.ReactNode }
 
 export default function App() {
   const repo = useQuery({ queryKey: ["repo"], queryFn: api.repo });
+  const [credsOpen, setCredsOpen] = useState(false);
 
   return (
     <div className="flex h-full">
@@ -41,6 +44,13 @@ export default function App() {
           </NavLink>
         </nav>
         <div className="mt-auto space-y-1 text-xs text-muted">
+          <button
+            onClick={() => setCredsOpen(true)}
+            className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-sm text-muted transition-colors hover:bg-panel-2 hover:text-text"
+          >
+            <KeyRound className="h-4 w-4" /> Credentials
+          </button>
+          {credsOpen && <CredentialsDialog onClose={() => setCredsOpen(false)} />}
           <RepoSwitcher />
           <div className="space-y-1 px-2">
             {repo.data && (

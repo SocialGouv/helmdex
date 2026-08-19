@@ -104,3 +104,72 @@ export interface SourcesInfo {
   savePath: string;
   saveSource: string;
 }
+
+// --- auth (private chart sources) ---
+
+export type AuthKind = "oci" | "git" | "helm-repo";
+
+/** A remote a failed operation may need credentials for. */
+export interface AuthCandidate {
+  host: string;
+  kind: AuthKind;
+  url?: string;
+}
+
+/** Rides along 401 API errors so the UI can offer sign-in. */
+export interface AuthRequiredInfo {
+  candidates: AuthCandidate[];
+}
+
+/** A credential found in the user's local configuration (no secret). */
+export interface DetectedCredential {
+  source: string;
+  host: string;
+  username?: string;
+  label: string;
+}
+
+export interface TokenPage {
+  provider: string;
+  url: string;
+  host: string;
+  openError?: string;
+}
+
+export interface AuthDetectResponse {
+  candidates: DetectedCredential[];
+  tokenPage: TokenPage;
+}
+
+export interface StoredCredential {
+  host: string;
+  kind: AuthKind;
+  username?: string;
+  sshKeyPath?: string;
+  source?: string;
+}
+
+export interface AuthLoginRequest {
+  host: string;
+  kind: AuthKind;
+  method: "manual" | "detected";
+  source?: string;
+  sourceHost?: string;
+  username?: string;
+  secret?: string;
+  sshKeyPath?: string;
+  url?: string;
+}
+
+export interface AuthLoginResult {
+  host: string;
+  kind: AuthKind;
+  username?: string;
+  source: string;
+  verified: boolean;
+  message?: string;
+}
+
+export interface WorkspaceAuthHost extends AuthCandidate {
+  hasCredential: boolean;
+}

@@ -4,6 +4,7 @@ import * as Dialog from "@radix-ui/react-dialog";
 import { Save } from "lucide-react";
 import { api } from "../api/client";
 import type { DepInfo, InstanceInfo } from "../api/types";
+import AuthRequiredNotice, { authRequiredOf } from "./AuthRequiredNotice";
 import SchemaForm, { type JSONSchema } from "./SchemaForm";
 
 // Structured (values.schema.json driven) editor for one dependency's
@@ -76,10 +77,13 @@ export default function DepConfigureDialog({
             {(schema.isLoading || current.isLoading) && (
               <div className="text-muted">Loading schema (may pull the chart)…</div>
             )}
-            {schema.isError && (
+            {schema.isError && !authRequiredOf(schema.error) && (
               <div className="mb-2 text-sm text-warn">
                 No values.schema.json available for this chart — use the Values tab to edit YAML directly.
               </div>
+            )}
+            {schema.isError && (
+              <AuthRequiredNotice error={schema.error} onResolved={() => void schema.refetch()} />
             )}
             {schemaParseError && <div className="mb-2 text-sm text-error">{schemaParseError}</div>}
             {parsedSchema && loaded && (

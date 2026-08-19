@@ -13,6 +13,7 @@ import (
 
 	"helmdex/internal/artifacthub"
 	"helmdex/internal/catalog"
+	"helmdex/internal/creds"
 	"helmdex/internal/depmeta"
 	"helmdex/internal/helmutil"
 	"helmdex/internal/instances"
@@ -215,7 +216,7 @@ func (s *Server) handleInstanceApply(w http.ResponseWriter, r *http.Request) {
 	s.events.publish(event{Type: "apply.start", Instance: inst.Name})
 	if err := instances.Apply(r.Context(), s.ws().RepoRoot, s.ws().Config, inst, req.Relock); err != nil {
 		s.events.publish(event{Type: "apply.error", Instance: inst.Name, Message: err.Error()})
-		httpError(w, http.StatusInternalServerError, err)
+		httpOpError(w, http.StatusInternalServerError, err, authCandidatesForChart(inst.Path)...)
 		return
 	}
 	s.events.publish(event{Type: "apply.done", Instance: inst.Name})
@@ -577,12 +578,13 @@ func (s *Server) handleDepSetVersion(w http.ResponseWriter, r *http.Request) {
 			env := helmutil.EnvForRepoURL(s.ws().RepoRoot, c.Dependencies[i].Repository)
 			repoName := helmutil.RepoNameForURL(c.Dependencies[i].Repository)
 			ref := repoName + "/" + c.Dependencies[i].Name
+			cand, _ := creds.CandidateForRepo(c.Dependencies[i].Repository)
 			if err := helmutil.RepoAdd(r.Context(), env, repoName, c.Dependencies[i].Repository); err != nil {
-				httpError(w, http.StatusBadGateway, err)
+				httpOpError(w, http.StatusBadGateway, err, cand)
 				return
 			}
 			if _, err := helmutil.ShowChart(r.Context(), env, ref, req.Version); err != nil {
-				httpError(w, http.StatusBadRequest, fmt.Errorf("invalid version %q for %s: %w", req.Version, id, err))
+				httpOpError(w, http.StatusBadRequest, fmt.Errorf("invalid version %q for %s: %w", req.Version, id, err), cand)
 				return
 			}
 		}
@@ -679,7 +681,8 @@ func (s *Server) handleDepVersions(w http.ResponseWriter, r *http.Request) {
 	}
 	vs, err := helmutil.RepoChartVersions(r.Context(), s.ws().RepoRoot, dep.Repository, dep.Name, 24*time.Hour)
 	if err != nil {
-		httpError(w, http.StatusBadGateway, err)
+		cand, _ := creds.CandidateForRepo(dep.Repository)
+		httpOpError(w, http.StatusBadGateway, err, cand)
 		return
 	}
 	best, _ := semverutil.BestStable(vs)
@@ -720,7 +723,8 @@ func (s *Server) handleDepInspect(w http.ResponseWriter, r *http.Request) {
 	}
 	content, err := instances.LoadDepInspectContent(r.Context(), s.ws().RepoRoot, inst.Path, dep, kind)
 	if err != nil {
-		httpError(w, http.StatusBadGateway, err)
+		cand, _ := creds.CandidateForRepo(dep.Repository)
+		httpOpError(w, http.StatusBadGateway, err, cand)
 		return
 	}
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
@@ -760,7 +764,7 @@ func (s *Server) handleCatalogSync(w http.ResponseWriter, r *http.Request) {
 	res, err := catalog.NewSyncer(s.ws().RepoRoot).Sync(r.Context(), s.ws().Config)
 	if err != nil {
 		s.events.publish(event{Type: "catalog.sync.error", Message: err.Error()})
-		httpError(w, http.StatusBadGateway, err)
+		httpOpError(w, http.StatusBadGateway, err, s.authCandidatesForSources()...)
 		return
 	}
 	s.events.publish(event{Type: "catalog.sync.done"})

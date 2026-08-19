@@ -36,3 +36,25 @@ func RegistryLogin(ctx context.Context, env Env, registry string, opt RegistryLo
 	// Interactive: helm may prompt, and password-stdin reads from stdin.
 	return runInteractive(ctx, env, "", "helm", args...)
 }
+
+// RegistryLoginStdin runs `helm registry login` non-interactively, piping the
+// secret through stdin. Helm validates the credentials against the registry
+// and, on success, persists them into env.RegistryConfig.
+func RegistryLoginStdin(ctx context.Context, env Env, registry, username, secret string) error {
+	if err := env.EnsureDirs(); err != nil {
+		return err
+	}
+	registry = strings.TrimSpace(registry)
+	if registry == "" {
+		return fmt.Errorf("registry is required")
+	}
+	if strings.TrimSpace(secret) == "" {
+		return fmt.Errorf("secret is required")
+	}
+	args := []string{"registry", "login", registry, "--password-stdin"}
+	if strings.TrimSpace(username) != "" {
+		args = append(args, "--username", username)
+	}
+	_, err := runStdin(ctx, env, secret, "helm", args...)
+	return err
+}

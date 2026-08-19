@@ -2,12 +2,15 @@ import { vi } from "vitest";
 import type {
   CatalogEntryWithSource,
   DepInfo,
+  DetectedCredential,
   FileInfo,
   InstanceInfo,
   RepoInfo,
   SetsInfo,
   SourcesInfo,
+  StoredCredential,
   TemplateInfo,
+  WorkspaceAuthHost,
 } from "../api/types";
 
 /**
@@ -37,6 +40,12 @@ export type FakeApiState = {
   sources: SourcesInfo;
   versions: Record<string, string[]>;
   inspect: Record<string, string>;
+  auth: {
+    creds: StoredCredential[];
+    /** Candidates every /api/auth/detect call returns. */
+    detect: DetectedCredential[];
+    hosts: WorkspaceAuthHost[];
+  };
 };
 
 /** One recorded exchange, body included: some flags only live in the body. */
@@ -58,8 +67,15 @@ export type FakeApi = {
   calls: RecordedCall[];
   /** The last call matching a method and path prefix, body included. */
   lastCall(method: string, pathPrefix: string): RecordedCall | undefined;
-  /** Force the next matching request to fail. */
-  failNext(method: string, pathPrefix: string, status: number, message: string): void;
+  /** Force the next matching request to fail. `extra` fields are merged
+   * into the error body (e.g. an `authRequired` payload). */
+  failNext(
+    method: string,
+    pathPrefix: string,
+    status: number,
+    message: string,
+    extra?: Record<string, unknown>,
+  ): void;
   restore(): void;
 };
 
@@ -155,6 +171,7 @@ export function defaultState(): FakeApiState {
       "alpha/nginx/values": "replicaCount: 1\n",
       "alpha/nginx/schema": '{"type":"object","properties":{"replicaCount":{"type":"integer"}}}',
     },
+    auth: { creds: [], detect: [], hosts: [] },
   };
 }
 
@@ -190,7 +207,14 @@ function setAtPath(root: unknown, path: string, value: unknown): unknown {
   return out;
 }
 
-type Failure = { method: string; pathPrefix: string; status: number; message: string };
+type Failure = {
+  method: string;
+  pathPrefix: string;
+  status: number;
+  message: string;
+  /** Extra fields merged into the error body (e.g. authRequired). */
+  extra?: Record<string, unknown>;
+};
 
 /** JSON bodies are decoded; anything else (file writes) is kept verbatim. */
 function decodeBody(body: BodyInit | null | undefined): unknown {
@@ -233,7 +257,7 @@ export function installFakeApi(overrides: Partial<FakeApiState> = {}): FakeApi {
     const planned = failures.findIndex((f) => f.method === method && path.startsWith(f.pathPrefix));
     if (planned >= 0) {
       const f = failures.splice(planned, 1)[0];
-      return fail(f.status, f.message);
+      return json({ error: f.message, ...f.extra }, f.status);
     }
 
     const body = init?.body ? (JSON.parse(String(init.body)) as Record<string, unknown>) : undefined;
@@ -254,6 +278,56 @@ export function installFakeApi(overrides: Partial<FakeApiState> = {}): FakeApi {
       return json(state.sources);
     }
     if (path === "/api/artifacthub/search") return json([]);
+
+    // /api/auth
+    if (path === "/api/auth/creds" && method === "GET") return json(state.auth.creds);
+    const credDel = path.match(/^\/api\/auth\/creds\/(.+)$/);
+    if (credDel && method === "DELETE") {
+      const host = credDel[1];
+      const kind = url.searchParams.get("kind");
+      const before = state.auth.creds.length;
+      state.auth.creds = state.auth.creds.filter(
+        (c) => !(c.host === host && (!kind || c.kind === kind)),
+      );
+      if (state.auth.creds.length === before) return fail(404, `no stored credential for "${host}"`);
+      return noContent();
+    }
+    if (path === "/api/auth/detect" && method === "POST") {
+      const host = String(body?.host ?? "");
+      return json({
+        candidates: state.auth.detect,
+        tokenPage: {
+          provider: "gitlab",
+          host,
+          url: `https://${host}/-/user_settings/personal_access_tokens?name=helmdex`,
+        },
+      });
+    }
+    if (path === "/api/auth/login" && method === "POST") {
+      const host = String(body?.host ?? "");
+      const kind = String(body?.kind ?? "") as StoredCredential["kind"];
+      if (!host) return fail(400, "host is required");
+      const cred: StoredCredential = {
+        host,
+        kind,
+        username: (body?.username as string) || "jo",
+        source: String(body?.source ?? "manual"),
+      };
+      state.auth.creds = [...state.auth.creds.filter((c) => !(c.host === host && c.kind === kind)), cred];
+      state.auth.hosts = state.auth.hosts.map((h) =>
+        h.host === host && h.kind === kind ? { ...h, hasCredential: true } : h,
+      );
+      return json({ ...cred, verified: true });
+    }
+    if (path === "/api/auth/token-page" && method === "POST") {
+      const host = String(body?.host ?? "");
+      return json({
+        provider: "gitlab",
+        host,
+        url: `https://${host}/-/user_settings/personal_access_tokens?name=helmdex`,
+      });
+    }
+    if (path === "/api/auth/hosts") return json(state.auth.hosts);
 
     // /api/instances
     if (path === "/api/instances") {
@@ -440,8 +514,8 @@ export function installFakeApi(overrides: Partial<FakeApiState> = {}): FakeApi {
       const wanted = method.toUpperCase();
       return [...calls].reverse().find((c) => c.method === wanted && c.path.startsWith(pathPrefix));
     },
-    failNext(method, pathPrefix, status, message) {
-      failures.push({ method: method.toUpperCase(), pathPrefix, status, message });
+    failNext(method, pathPrefix, status, message, extra) {
+      failures.push({ method: method.toUpperCase(), pathPrefix, status, message, extra });
     },
     restore() {
       globalThis.fetch = original;

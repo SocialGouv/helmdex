@@ -9,7 +9,8 @@
 // Supported surface (everything internal/helmutil invokes):
 //
 //	version --short
-//	repo add <name> <url> [--force-update]
+//	registry login <host> [--username u] [--password-stdin]
+//	repo add <name> <url> [--force-update] [--username u] [--password-stdin]
 //	repo list -o json
 //	repo update <name>...
 //	repo remove <name>
@@ -34,9 +35,11 @@ import (
 	"archive/tar"
 	"compress/gzip"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -79,6 +82,8 @@ func main() {
 		cmdVersion(args[1:])
 	case "repo":
 		cmdRepo(args[1:])
+	case "registry":
+		cmdRegistry(args[1:])
 	case "search":
 		cmdSearch(u, args[1:])
 	case "show":
@@ -199,8 +204,10 @@ type repositoriesFile struct {
 }
 
 type repoEntry struct {
-	Name string `yaml:"name" json:"name"`
-	URL  string `yaml:"url" json:"url"`
+	Name     string `yaml:"name" json:"name"`
+	URL      string `yaml:"url" json:"url"`
+	Username string `yaml:"username,omitempty" json:"username,omitempty"`
+	Password string `yaml:"password,omitempty" json:"password,omitempty"`
 }
 
 func repositoriesPath() string {
@@ -241,6 +248,75 @@ func writeRepositories(f repositoriesFile) {
 	}
 }
 
+// cmdRegistry implements `registry login <host>`, mimicking helm: the
+// credential lands as an auths entry in HELM_REGISTRY_CONFIG. Tests force
+// auth failures via HELMDEX_FAKE_HELM_FAIL ("registry login=...").
+func cmdRegistry(args []string) {
+	if len(args) == 0 || args[0] != "login" {
+		fatalf("registry: only `registry login` is supported by fakehelm")
+	}
+	args = args[1:]
+	pos := positional(args)
+	if len(pos) != 1 {
+		fatalf("registry login: expected <host>, got %v", pos)
+	}
+	host := pos[0]
+	username := flagValue(args, "--username")
+	if username == "" {
+		username = flagValue(args, "-u")
+	}
+	password := flagValue(args, "--password")
+	if password == "" {
+		password = flagValue(args, "-p")
+	}
+	if has(args, "--password-stdin") {
+		password = readStdinSecret()
+	}
+	if password == "" {
+		fatalf("registry login: no password provided")
+	}
+
+	path := strings.TrimSpace(os.Getenv("HELM_REGISTRY_CONFIG"))
+	if path == "" {
+		fatalf("HELM_REGISTRY_CONFIG is not set")
+	}
+	cfg := map[string]any{}
+	if b, err := os.ReadFile(path); err == nil && len(b) > 0 {
+		if err := json.Unmarshal(b, &cfg); err != nil {
+			fatalf("parse %s: %v", path, err)
+		}
+	}
+	auths, _ := cfg["auths"].(map[string]any)
+	if auths == nil {
+		auths = map[string]any{}
+	}
+	auths[host] = map[string]string{
+		"auth": base64.StdEncoding.EncodeToString([]byte(username + ":" + password)),
+	}
+	cfg["auths"] = auths
+	out, err := json.Marshal(cfg)
+	if err != nil {
+		fatalf("marshal %s: %v", path, err)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		fatalf("mkdir %s: %v", filepath.Dir(path), err)
+	}
+	if err := os.WriteFile(path, out, 0o600); err != nil {
+		fatalf("write %s: %v", path, err)
+	}
+	fmt.Println("Login Succeeded")
+}
+
+// readStdinSecret reads a --password-stdin secret (everything up to EOF,
+// trailing newline stripped, like helm).
+func readStdinSecret() string {
+	b, err := io.ReadAll(os.Stdin)
+	if err != nil {
+		fatalf("read password from stdin: %v", err)
+	}
+	return strings.TrimRight(string(b), "\r\n")
+}
+
 func cmdRepo(args []string) {
 	if len(args) == 0 {
 		fatalf("repo: subcommand required")
@@ -266,13 +342,18 @@ func repoAdd(args []string) {
 		fatalf("repo add: expected <name> <url>, got %v", pos)
 	}
 	name, url := pos[0], pos[1]
+	username := flagValue(args, "--username")
+	password := flagValue(args, "--password")
+	if has(args, "--password-stdin") {
+		password = readStdinSecret()
+	}
 
 	f := readRepositories()
 	for i, r := range f.Repositories {
 		if r.Name != name {
 			continue
 		}
-		if f.Repositories[i].URL == url {
+		if f.Repositories[i].URL == url && f.Repositories[i].Username == username && f.Repositories[i].Password == password {
 			// Helm only refuses a name reused for a *different* URL.
 			fmt.Printf("%q already exists with the same configuration, skipping\n", name)
 			return
@@ -281,11 +362,13 @@ func repoAdd(args []string) {
 			fatalf("repository name (%s) already exists, please specify a different name", name)
 		}
 		f.Repositories[i].URL = url
+		f.Repositories[i].Username = username
+		f.Repositories[i].Password = password
 		writeRepositories(f)
 		fmt.Printf("%q has been updated. Happy Helming!\n", name)
 		return
 	}
-	f.Repositories = append(f.Repositories, repoEntry{Name: name, URL: url})
+	f.Repositories = append(f.Repositories, repoEntry{Name: name, URL: url, Username: username, Password: password})
 	writeRepositories(f)
 	fmt.Printf("%q has been added to your repositories\n", name)
 }

@@ -34,6 +34,7 @@
 - 🧯 **Escape hatches**: detach a dependency from a catalog entry to unblock urgent changes.
 - 📌 **Reproducible dependency operations**: helmdex ships a pinned Helm binary and verifies downloads.
 - 🔒 **Repo-local isolation**: Helm repos/caches and OCI auth are stored under `.helmdex/` (no pollution of user `~/.config/helm` or `~/.docker`).
+- 🔑 **Private sources, frictionless sign-in**: a 401 on a private OCI registry / Helm repo / git source becomes a sign-in flow — credentials auto-detected from local config (docker/podman/helm/git/gh/glab), or a PAT via the provider's pre-filled token page, or SSH deploy keys; verified before being stored.
 - 🕊️ **Agnostic-repo mode**: repos without `helmdex.yaml` stay byte-identical — state lives in the user cache, config in `~/.config/helmdex/config.yaml`, and every values file is user-owned and edited **in place** (comments, blank lines and alignment preserved; a 1-value change is a 1-line diff).
 - 📐 **Templates / blueprints**: a repo `templates/` dir of chart blueprints (e.g. review-env gabarits) is detected; create instances from them in one step (`instance create --from-template`).
 - 🖥️ **Web UI & desktop app**: `helmdex ui` serves a local SPA (same engine as the TUI); the Wails-based desktop app wraps it with a native repo picker — fully offline.
@@ -414,6 +415,25 @@ When you open **Add dependency → Predefined catalog** and no entries are found
 
 ---
 
+## Private sources (authentication)
+
+Private OCI registries (e.g. a GitLab container registry), password-protected Helm repositories and private git sources all work — helmdex manages the credentials for you.
+
+When an operation fails because a remote requires authentication, the web/desktop UI turns the error into a **Sign in** flow, ordered by friction:
+
+1. **Detected local credentials** — helmdex scans your existing config for the host (and related hosts, e.g. `pic.example.org` for `pic-registry.example.org`): Docker/Podman logins (including credential helpers), previous `helm registry login`s, git credential helpers, `gh` and `glab` CLI tokens. One click wires it; the secret is resolved locally and never transits through the browser.
+2. **Create a token in the browser** — opens the provider's token-creation page pre-filled with a name and read scopes (GitLab and GitHub), then paste the PAT.
+3. **Manual** — username/password, or an SSH key path for git remotes (stored by path, never read).
+
+Every credential is verified against the remote before being stored (a bad token is rejected with the server's response). The sidebar **Credentials** panel lists every remote the open repository references, its sign-in state, and the stored credentials.
+
+Details:
+
+- Credentials are stored per host in `~/.config/helmdex/credentials.yaml` (0600) and shared across repositories; remove them with `helmdex auth remove <host>` or from the Credentials panel.
+- OCI credentials are materialized into each repository's isolated Helm environment automatically — your global `~/.docker/config.json` stays untouched and is never used implicitly.
+- git operations never prompt interactively (a hidden prompt would hang the server/desktop); a missing credential surfaces as a sign-in flow instead. SSH remotes use your ssh-agent/default keys as usual, or a configured deploy key.
+- The same flows exist in the CLI: `helmdex auth detect|login|list|remove` (see the CLI reference).
+
 ## Values and files (deeper)
 
 ### Values merge order
@@ -547,6 +567,20 @@ helmdex catalog get <id> [--format json|table]
 helmdex artifacthub search <query> [--limit 20] [--format json|table]
 helmdex artifacthub versions <repoKey> <package> [--format json|table]
 ```
+
+### Authentication (private sources)
+
+```bash
+helmdex auth detect <host> [--kind oci|git|helm-repo]   # what local config already knows this host
+helmdex auth login <host> --kind oci --use glab-cli     # wire a detected credential
+helmdex auth login <host> --kind oci --password-stdin   # or paste a PAT
+helmdex auth login <host> --kind oci --open-token-page  # open the provider's token page first
+helmdex auth login <host> --kind git --ssh-key ~/.ssh/id_ed25519
+helmdex auth list
+helmdex auth remove <host> [--kind ...]
+```
+
+See [Private sources](#private-sources-authentication) for the full flow.
 
 ### OCI registry
 

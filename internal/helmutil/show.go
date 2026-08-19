@@ -14,7 +14,10 @@ import (
 	"strings"
 	"time"
 
+	"helmdex/internal/creds"
 	"helmdex/internal/paths"
+
+	"gopkg.in/yaml.v3"
 )
 
 type Env struct {
@@ -107,6 +110,14 @@ func (e Env) EnsureDirs() error {
 			return err
 		}
 	}
+	// Materialize stored OCI credentials into the shared registry config so
+	// every helm invocation in this env can authenticate against private
+	// registries. Cheap no-op while the config is up to date.
+	if strings.TrimSpace(e.RegistryConfig) != "" {
+		if err := creds.SyncRegistryAuths(e.RegistryConfig); err != nil {
+			return fmt.Errorf("sync registry credentials: %w", err)
+		}
+	}
 	return nil
 }
 
@@ -119,6 +130,22 @@ func RepoNameForURL(u string) string {
 func RepoAdd(ctx context.Context, env Env, name, url string) error {
 	if err := env.EnsureDirs(); err != nil {
 		return err
+	}
+
+	// Private classic repo: authenticate with the stored credential. The
+	// credential is passed via --password-stdin (never argv) and persisted by
+	// helm into this env's repositories.yaml, where subsequent search/pull/
+	// dependency commands pick it up.
+	if cred, ok := creds.ForURL(url, creds.KindHelmRepo); ok && cred.Secret != "" {
+		if repoEntryMatches(env, name, url, cred.Username, cred.Secret) {
+			return nil
+		}
+		args := []string{"repo", "add", name, url, "--force-update", "--username", cred.Username, "--password-stdin"}
+		if _, err := runStdin(ctx, env, cred.Secret, "helm", args...); err != nil {
+			return err
+		}
+		_ = os.WriteFile(repoUpdateMarkerPath(env), []byte(time.Now().UTC().Format(time.RFC3339)), 0o644)
+		return nil
 	}
 
 	// Avoid `helm repo add --force-update` because it refreshes index data every
@@ -351,6 +378,64 @@ func run(ctx context.Context, env Env, name string, args ...string) (string, err
 		return "", fmt.Errorf("helm %s failed: %s", strings.Join(args, " "), msg)
 	}
 	return stdout.String(), nil
+}
+
+// runStdin is run() with data piped to the subprocess stdin (used to pass
+// secrets to helm without exposing them in argv).
+func runStdin(ctx context.Context, env Env, stdin string, name string, args ...string) (string, error) {
+	if name == "helm" || name == "helm.exe" {
+		p, err := helmCommandPath(ctx)
+		if err != nil {
+			return "", err
+		}
+		name = p
+	}
+	cmd := exec.CommandContext(ctx, name, args...)
+	cmd.Env = isolatedProcessEnv(os.Environ(), env)
+	cmd.Stdin = strings.NewReader(stdin)
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return "", fmt.Errorf("helm %s failed: %v", strings.Join(args, " "), ctxErr)
+		}
+		msg := strings.TrimSpace(stderr.String())
+		if msg == "" {
+			msg = err.Error()
+		}
+		return "", fmt.Errorf("helm %s failed: %s", strings.Join(args, " "), msg)
+	}
+	return stdout.String(), nil
+}
+
+// repoEntryMatches reports whether this env's repositories.yaml already holds
+// the repo with the exact same URL and credentials, making a re-add
+// (--force-update, which refetches the index) unnecessary.
+func repoEntryMatches(env Env, name, url, username, password string) bool {
+	b, err := os.ReadFile(filepath.Join(env.ConfigHome, "repositories.yaml"))
+	if err != nil {
+		return false
+	}
+	var f struct {
+		Repositories []struct {
+			Name     string `yaml:"name"`
+			URL      string `yaml:"url"`
+			Username string `yaml:"username"`
+			Password string `yaml:"password"`
+		} `yaml:"repositories"`
+	}
+	if err := yaml.Unmarshal(b, &f); err != nil {
+		return false
+	}
+	for _, r := range f.Repositories {
+		if r.Name == name {
+			return strings.TrimSpace(r.URL) == strings.TrimSpace(url) &&
+				r.Username == username && r.Password == password
+		}
+	}
+	return false
 }
 
 func runInteractive(ctx context.Context, env Env, dir string, name string, args ...string) error {

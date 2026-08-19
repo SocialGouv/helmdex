@@ -111,6 +111,13 @@ func (s *Server) routes() {
 	m.HandleFunc("GET /api/config/sources", s.handleConfigSourcesGet)
 	m.HandleFunc("PUT /api/config/sources", s.handleConfigSourcesPut)
 
+	m.HandleFunc("GET /api/auth/creds", s.handleAuthCredsList)
+	m.HandleFunc("DELETE /api/auth/creds/{host}", s.handleAuthCredRemove)
+	m.HandleFunc("POST /api/auth/detect", s.handleAuthDetect)
+	m.HandleFunc("POST /api/auth/login", s.handleAuthLogin)
+	m.HandleFunc("POST /api/auth/token-page", s.handleAuthTokenPage)
+	m.HandleFunc("GET /api/auth/hosts", s.handleAuthHosts)
+
 	m.HandleFunc("GET /api/catalog", s.handleCatalogList)
 	m.HandleFunc("POST /api/catalog/sync", s.handleCatalogSync)
 	m.HandleFunc("GET /api/artifacthub/search", s.handleArtifactHubSearch)

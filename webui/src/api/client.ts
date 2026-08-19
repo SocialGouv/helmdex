@@ -1,5 +1,9 @@
 import type {
   AHPackage,
+  AuthDetectResponse,
+  AuthLoginRequest,
+  AuthLoginResult,
+  AuthRequiredInfo,
   ConfigSource,
   SetsInfo,
   SourcesInfo,
@@ -9,15 +13,22 @@ import type {
   InspectKind,
   InstanceInfo,
   RepoInfo,
+  StoredCredential,
   TemplateInfo,
+  TokenPage,
   ValuesGetResponse,
+  WorkspaceAuthHost,
 } from "./types";
 
 class ApiError extends Error {
   status: number;
-  constructor(status: number, message: string) {
+  /** Set when the server classified the failure as a missing/invalid
+   * credential for a remote — the UI offers a sign-in flow then. */
+  authRequired?: AuthRequiredInfo;
+  constructor(status: number, message: string, authRequired?: AuthRequiredInfo) {
     super(message);
     this.status = status;
+    this.authRequired = authRequired;
   }
 }
 
@@ -28,13 +39,15 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   });
   if (!res.ok) {
     let message = `${res.status} ${res.statusText}`;
+    let authRequired: AuthRequiredInfo | undefined;
     try {
-      const body = (await res.json()) as { error?: string };
+      const body = (await res.json()) as { error?: string; authRequired?: AuthRequiredInfo };
       if (body.error) message = body.error;
+      if (body.authRequired?.candidates?.length) authRequired = body.authRequired;
     } catch {
       // non-JSON error body: keep the status text
     }
-    throw new ApiError(res.status, message);
+    throw new ApiError(res.status, message, authRequired);
   }
   if (res.status === 204) return undefined as T;
   const ct = res.headers.get("Content-Type") ?? "";
@@ -155,6 +168,26 @@ export const api = {
       method: "PUT",
       body: JSON.stringify({ platform, sources }),
     }),
+
+  authCreds: () => request<StoredCredential[]>("/api/auth/creds"),
+  authRemoveCred: (host: string, kind?: string) =>
+    request<void>(
+      `/api/auth/creds/${encodeURIComponent(host)}${kind ? `?kind=${encodeURIComponent(kind)}` : ""}`,
+      { method: "DELETE" },
+    ),
+  authDetect: (host: string, kind: string) =>
+    request<AuthDetectResponse>("/api/auth/detect", {
+      method: "POST",
+      body: JSON.stringify({ host, kind }),
+    }),
+  authLogin: (req: AuthLoginRequest) =>
+    request<AuthLoginResult>("/api/auth/login", { method: "POST", body: JSON.stringify(req) }),
+  authTokenPage: (host: string, kind: string, open: boolean) =>
+    request<TokenPage>("/api/auth/token-page", {
+      method: "POST",
+      body: JSON.stringify({ host, kind, open }),
+    }),
+  authHosts: () => request<WorkspaceAuthHost[]>("/api/auth/hosts"),
 
   catalog: () => request<CatalogEntryWithSource[]>("/api/catalog"),
   catalogSync: () => request<unknown>("/api/catalog/sync", { method: "POST" }),

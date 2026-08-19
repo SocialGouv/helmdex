@@ -142,6 +142,7 @@ func Hermetic(t *testing.T) string {
 	t.Setenv("XDG_DATA_HOME", filepath.Join(home, ".local", "share"))
 	t.Setenv("HELMDEX_CACHE_DIR", filepath.Join(home, "helmdex-cache"))
 	t.Setenv("HELMDEX_USER_CONFIG", filepath.Join(home, "absent-user-config.yaml"))
+	t.Setenv("HELMDEX_CREDENTIALS", filepath.Join(home, "absent-credentials.yaml"))
 
 	logPath := filepath.Join(t.TempDir(), "fakehelm.log")
 	t.Setenv("HELMDEX_FAKE_HELM_LOG", logPath)

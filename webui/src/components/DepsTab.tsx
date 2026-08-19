@@ -7,6 +7,7 @@ import remarkGfm from "remark-gfm";
 import { api } from "../api/client";
 import type { DepInfo, InspectKind, InstanceInfo } from "../api/types";
 import AddDepWizard from "./AddDepWizard";
+import AuthRequiredNotice from "./AuthRequiredNotice";
 import DepDiffDialog from "./DepDiffDialog";
 import DepConfigureDialog from "./DepConfigureDialog";
 
@@ -48,7 +49,12 @@ function InspectDialog({
           </Dialog.Title>
           <div className="min-h-0 flex-1 overflow-auto rounded-md bg-panel-2 p-4">
             {content.isLoading && <div className="text-muted">Loading (may pull the chart)…</div>}
-            {content.isError && <div className="text-error">{(content.error as Error).message}</div>}
+            {content.isError && (
+              <div>
+                <div className="text-error">{(content.error as Error).message}</div>
+                <AuthRequiredNotice error={content.error} onResolved={() => void content.refetch()} />
+              </div>
+            )}
             {content.data !== undefined &&
               (kind === "readme" ? (
                 <div className="prose-invert max-w-none text-sm leading-relaxed [&_a]:text-accent [&_code]:rounded [&_code]:bg-panel [&_code]:px-1 [&_h1]:mb-2 [&_h1]:text-lg [&_h1]:font-semibold [&_h2]:mb-2 [&_h2]:mt-4 [&_h2]:font-semibold [&_li]:ml-4 [&_li]:list-disc [&_p]:my-2 [&_pre]:my-2 [&_pre]:overflow-auto [&_pre]:rounded [&_pre]:bg-panel [&_pre]:p-2 [&_table]:my-2 [&_td]:border [&_td]:border-border [&_td]:px-2 [&_td]:py-1 [&_th]:border [&_th]:border-border [&_th]:px-2 [&_th]:py-1">
@@ -123,7 +129,15 @@ function VersionDialog({
             </button>
           </form>
           {setVersion.isError && (
-            <div className="mb-2 text-sm text-error">{(setVersion.error as Error).message}</div>
+            <div className="mb-2">
+              <div className="text-sm text-error">{(setVersion.error as Error).message}</div>
+              <AuthRequiredNotice
+                error={setVersion.error}
+                onResolved={() => {
+                  if (setVersion.variables) setVersion.mutate(setVersion.variables);
+                }}
+              />
+            </div>
           )}
 
           {isOCI ? (
@@ -133,7 +147,15 @@ function VersionDialog({
           ) : (
             <div className="min-h-0 flex-1 overflow-auto">
               {versions.isLoading && <div className="text-muted">Loading versions…</div>}
-              {versions.isError && <div className="text-error">{(versions.error as Error).message}</div>}
+              {versions.isError && (
+                <div>
+                  <div className="text-error">{(versions.error as Error).message}</div>
+                  <AuthRequiredNotice
+                    error={versions.error}
+                    onResolved={() => void versions.refetch()}
+                  />
+                </div>
+              )}
               {versions.data?.versions.map((v) => (
                 <button
                   key={v}
