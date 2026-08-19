@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"helmdex/internal/paths"
 )
@@ -50,10 +51,19 @@ func ReadShowCache(repoRoot, repoURL, chart, version string, kind ShowKind) (str
 		}
 		return "", false, err
 	}
+	// An empty cache file is a miss: an absent artifact must not be served as
+	// blank content (this also heals stale empty entries from older builds).
+	if strings.TrimSpace(string(b)) == "" {
+		return "", false, nil
+	}
 	return string(b), true, nil
 }
 
 func WriteShowCache(repoRoot, repoURL, chart, version string, kind ShowKind, content string) error {
+	// Never cache absence as if present: an empty artifact stays a miss.
+	if strings.TrimSpace(content) == "" {
+		return nil
+	}
 	p := ShowCachePath(repoRoot, repoURL, chart, version, kind)
 	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
 		return err

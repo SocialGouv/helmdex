@@ -4,7 +4,7 @@ import * as Dialog from "@radix-ui/react-dialog";
 import { Eye, GitCompareArrows, Plus, SlidersHorizontal, Tag, Trash2, Unlink } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { api } from "../api/client";
+import { api, ApiError } from "../api/client";
 import type { DepInfo, InspectKind, InstanceInfo } from "../api/types";
 import AddDepWizard from "./AddDepWizard";
 import ErrorWithAuth from "./ErrorWithAuth";
@@ -49,9 +49,14 @@ function InspectDialog({
           </Dialog.Title>
           <div className="min-h-0 flex-1 overflow-auto rounded-md bg-panel-2 p-4">
             {content.isLoading && <div className="text-muted">Loading (may pull the chart)…</div>}
-            {content.isError && (
-              <ErrorWithAuth error={content.error} onRetry={() => void content.refetch()} />
-            )}
+            {content.isError &&
+              ((content.error as ApiError).status === 404 ? (
+                // The chart genuinely ships no README/schema — information,
+                // not a failure.
+                <div className="text-muted">{(content.error as Error).message}</div>
+              ) : (
+                <ErrorWithAuth error={content.error} onRetry={() => void content.refetch()} />
+              ))}
             {content.data !== undefined &&
               (kind === "readme" ? (
                 <div className="prose-invert max-w-none text-sm leading-relaxed [&_a]:text-accent [&_code]:rounded [&_code]:bg-panel [&_code]:px-1 [&_h1]:mb-2 [&_h1]:text-lg [&_h1]:font-semibold [&_h2]:mb-2 [&_h2]:mt-4 [&_h2]:font-semibold [&_li]:ml-4 [&_li]:list-disc [&_p]:my-2 [&_pre]:my-2 [&_pre]:overflow-auto [&_pre]:rounded [&_pre]:bg-panel [&_pre]:p-2 [&_table]:my-2 [&_td]:border [&_td]:border-border [&_td]:px-2 [&_td]:py-1 [&_th]:border [&_th]:border-border [&_th]:px-2 [&_th]:py-1">

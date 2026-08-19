@@ -2,6 +2,7 @@ package instances
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -11,6 +12,25 @@ import (
 	"helmdex/internal/helmutil"
 	"helmdex/internal/yamlchart"
 )
+
+// ErrArtifactAbsent means the chart was fetched and read successfully, but it
+// simply does not ship the requested artifact (many charts have no README or
+// values.schema.json). Callers distinguish this from a fetch failure and
+// present it as information, not an error.
+var ErrArtifactAbsent = errors.New("artifact absent")
+
+func artifactAbsentErr(kind InspectKind) error {
+	name := "this artifact"
+	switch kind {
+	case InspectReadme:
+		name = "a README file"
+	case InspectValues:
+		name = "a values.yaml"
+	case InspectSchema:
+		name = "a values.schema.json"
+	}
+	return fmt.Errorf("%w: this chart does not ship %s", ErrArtifactAbsent, name)
+}
 
 // DepByID finds a dependency by its id (alias or name).
 func DepByID(chart yamlchart.Chart, id string) (yamlchart.Dependency, error) {
@@ -78,10 +98,16 @@ func LoadDepInspectContent(ctx context.Context, repoRoot string, instPath string
 		}
 	}
 
+	// gotArchive records that we read a chart archive end-to-end, so its
+	// contents are authoritative: an artifact still missing afterwards is
+	// genuinely absent from the chart, not a fetch failure.
+	gotArchive := false
+
 	// 1) Cached chart archive (.tgz)
 	if tgzPath, ok := helmutil.FindCachedChartArchive(repoRoot, dep.Repository, dep.Name, dep.Version); ok {
 		readme, values, schema, err := helmutil.ReadChartArchiveFilesWithSchema(tgzPath)
 		if err == nil {
+			gotArchive = true
 			if strings.TrimSpace(readme) != "" {
 				_ = helmutil.WriteShowCache(repoRoot, dep.Repository, dep.Name, dep.Version, helmutil.ShowKindReadme, readme)
 			}
@@ -137,6 +163,7 @@ func LoadDepInspectContent(ctx context.Context, repoRoot string, instPath string
 	if tgzPath, err := helmutil.PullChartArchive(ctx2, env, dep.Repository, dep.Name, dep.Version); err == nil {
 		readme, values, schema, err2 := helmutil.ReadChartArchiveFilesWithSchema(tgzPath)
 		if err2 == nil {
+			gotArchive = true
 			if strings.TrimSpace(readme) != "" {
 				_ = helmutil.WriteShowCache(repoRoot, dep.Repository, dep.Name, dep.Version, helmutil.ShowKindReadme, readme)
 			}
@@ -163,12 +190,32 @@ func LoadDepInspectContent(ctx context.Context, repoRoot string, instPath string
 		}
 	}
 
-	// 4) Last resort: helm show (readme/values only)
+	// If we read the chart archive, its contents are authoritative: the
+	// requested artifact would have been returned above if present, so it is
+	// genuinely absent (many charts ship no README or values.schema.json).
+	if gotArchive {
+		return "", artifactAbsentErr(kind)
+	}
+
+	// 4) Last resort: helm show (readme/values only). `helm show` has no
+	// schema subcommand, so a schema we could not read from an archive means
+	// the archive could not be fetched — surface that, not "absent".
 	if kind == InspectSchema {
-		return "", fmt.Errorf("schema not available via helm show; try relocking/pulling chart archive")
+		return "", fmt.Errorf("could not fetch the chart archive to read its schema; check registry access (sign in) or relock the dependency")
 	}
 	ctx3, cancel3 := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel3()
+	showAndCache := func(s string) (string, error) {
+		if strings.TrimSpace(s) == "" {
+			return "", artifactAbsentErr(kind)
+		}
+		k := helmutil.ShowKindValues
+		if kind == InspectReadme {
+			k = helmutil.ShowKindReadme
+		}
+		_ = helmutil.WriteShowCache(repoRoot, dep.Repository, dep.Name, dep.Version, k, s)
+		return s, nil
+	}
 	if strings.HasPrefix(dep.Repository, "oci://") {
 		ref, err := helmutil.OCIChartRef(dep.Repository, dep.Name)
 		if err != nil {
@@ -179,15 +226,13 @@ func LoadDepInspectContent(ctx context.Context, repoRoot string, instPath string
 			if err != nil {
 				return "", err
 			}
-			_ = helmutil.WriteShowCache(repoRoot, dep.Repository, dep.Name, dep.Version, helmutil.ShowKindReadme, s)
-			return s, nil
+			return showAndCache(s)
 		}
 		s, err := helmutil.ShowValues(ctx3, env, ref, dep.Version)
 		if err != nil {
 			return "", err
 		}
-		_ = helmutil.WriteShowCache(repoRoot, dep.Repository, dep.Name, dep.Version, helmutil.ShowKindValues, s)
-		return s, nil
+		return showAndCache(s)
 	}
 	repoName := helmutil.RepoNameForURL(dep.Repository)
 	_ = helmutil.RepoAdd(ctx3, env, repoName, dep.Repository)
@@ -197,13 +242,11 @@ func LoadDepInspectContent(ctx context.Context, repoRoot string, instPath string
 		if err != nil {
 			return "", err
 		}
-		_ = helmutil.WriteShowCache(repoRoot, dep.Repository, dep.Name, dep.Version, helmutil.ShowKindReadme, s)
-		return s, nil
+		return showAndCache(s)
 	}
 	s, err := helmutil.ShowValuesBestEffort(ctx3, env, ref, dep.Version, 24*time.Hour)
 	if err != nil {
 		return "", err
 	}
-	_ = helmutil.WriteShowCache(repoRoot, dep.Repository, dep.Name, dep.Version, helmutil.ShowKindValues, s)
-	return s, nil
+	return showAndCache(s)
 }

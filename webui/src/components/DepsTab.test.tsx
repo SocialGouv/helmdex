@@ -133,6 +133,23 @@ describe("DepsTab", () => {
     expect(await screen.findByText(/no readme available for postgresql/)).toBeDefined();
   });
 
+  it("shows a genuinely absent artifact (404) as muted information, not an error", async () => {
+    fake = installFakeApi();
+    fake.failNext(
+      "GET",
+      "/api/instances/alpha/deps/postgresql/inspect",
+      404,
+      "this chart does not ship a README file",
+    );
+    const user = userEvent.setup();
+    renderWithProviders(<DepsTab inst={managedInstance()} />);
+
+    await user.click(screen.getAllByTitle(/Inspect readme/)[0]);
+    const el = await screen.findByText(/does not ship a README file/);
+    expect(el.className).toContain("text-muted");
+    expect(el.className).not.toContain("text-error");
+  });
+
   it("lists versions and marks the best stable one", async () => {
     fake = installFakeApi();
     const user = userEvent.setup();

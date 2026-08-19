@@ -1,11 +1,17 @@
 package server
 
 import (
+	"archive/tar"
+	"bytes"
+	"compress/gzip"
 	"net/http"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
+	"helmdex/internal/helmutil"
 	"helmdex/internal/testutil"
 )
 
@@ -227,6 +233,63 @@ func TestDeps_Inspect(t *testing.T) {
 
 	ts.get("/api/instances/alpha/deps/nginx/inspect?kind=bogus").expect(http.StatusBadRequest)
 	ts.get("/api/instances/alpha/deps/ghost/inspect?kind=values").expect(http.StatusNotFound)
+}
+
+// A chart that ships no README/schema must report the artifact as genuinely
+// absent (404 + a clear message), distinct from a fetch failure — so the tab
+// reads as empty-by-design, not broken.
+func TestDeps_InspectArtifactAbsent(t *testing.T) {
+	ts := newTestServer(t, testutil.RepoOpts{SourceMode: testutil.SourceNone})
+	ts.createInstance("alpha")
+	const name, version = "bare", "1.0.0"
+	addDep(ts, "alpha", map[string]any{"name": name, "repository": fixtureRepoURL, "version": version})
+
+	// Seed the isolated per-URL env cache with an archive holding only
+	// values.yaml, so the inspect flow reads it without any network.
+	env := helmutil.EnvForRepoURL(ts.Repo.Root, fixtureRepoURL)
+	tgz := filepath.Join(env.CacheHome, "repository", name+"-"+version+".tgz")
+	writeTestChartArchive(t, tgz, name, map[string]string{
+		"Chart.yaml":  "apiVersion: v2\nname: " + name + "\nversion: " + version + "\n",
+		"values.yaml": "replicaCount: 1\n",
+	})
+
+	// values load from the archive…
+	ts.get("/api/instances/alpha/deps/" + name + "/inspect?kind=values").expect(http.StatusOK)
+	// …readme and schema report a clear, non-alarming absence.
+	for _, kind := range []string{"readme", "schema"} {
+		msg := ts.as(t).get("/api/instances/alpha/deps/" + name + "/inspect?kind=" + kind).
+			expect(http.StatusNotFound).errorMessage()
+		if !strings.Contains(msg, "does not ship") {
+			t.Fatalf("inspect %s: want an 'absent' message, got %q", kind, msg)
+		}
+	}
+}
+
+func writeTestChartArchive(t *testing.T, dest, chartName string, files map[string]string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	var buf bytes.Buffer
+	gz := gzip.NewWriter(&buf)
+	tw := tar.NewWriter(gz)
+	for name, content := range files {
+		if err := tw.WriteHeader(&tar.Header{Name: chartName + "/" + name, Mode: 0o644, Size: int64(len(content)), Typeflag: tar.TypeReg}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := tw.Write([]byte(content)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := tw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := gz.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(dest, buf.Bytes(), 0o644); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func TestDeps_DetachRequiresCatalogAttachment(t *testing.T) {
