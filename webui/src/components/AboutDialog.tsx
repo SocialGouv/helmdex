@@ -1,8 +1,9 @@
+import { useRef } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import * as Dialog from "@radix-ui/react-dialog";
-import { Boxes, ExternalLink, RefreshCw } from "lucide-react";
+import { Boxes, DownloadCloud, ExternalLink, RefreshCw } from "lucide-react";
 import { api } from "../api/client";
-import { openExternal } from "../lib/desktop";
+import { desktopApp, isDesktop, openExternal } from "../lib/desktop";
 import { checkForUpdates, setAutoCheckEnabled, useUpdatesStatus } from "../lib/updates";
 
 // About: installed version, link to the project, and the update section
@@ -11,6 +12,31 @@ export default function AboutDialog({ onClose }: { onClose: () => void }) {
   const version = useQuery({ queryKey: ["version"], queryFn: api.version });
   const { autoCheck, check } = useUpdatesStatus();
   const manualCheck = useMutation({ mutationFn: checkForUpdates });
+  // Desktop self-update: install over the current binary, then relaunch.
+  // On success the app restarts, so there is no post-state to render.
+  // The ref is the real double-submit guard: disabled={isPending} only takes
+  // effect after the next React commit, so same-task clicks all get through.
+  const upgradeInFlight = useRef(false);
+  const upgrade = useMutation({
+    mutationFn: async (tag: string) => {
+      if (upgradeInFlight.current) return;
+      upgradeInFlight.current = true;
+      try {
+        await desktopApp().ApplyUpdate(tag);
+        try {
+          await desktopApp().RestartApp();
+        } catch (e) {
+          // The binary IS installed at this point: say so, or the user
+          // re-downloads for nothing.
+          throw new Error(
+            `Update to ${tag} is installed — restart the app manually to run it. (${(e as Error).message})`,
+          );
+        }
+      } finally {
+        upgradeInFlight.current = false;
+      }
+    },
+  });
 
   return (
     <Dialog.Root open onOpenChange={(v) => !v && onClose()}>
@@ -55,23 +81,49 @@ export default function AboutDialog({ onClose }: { onClose: () => void }) {
                 Check for updates
               </button>
               {check &&
-                (check.updateAvailable && check.releaseUrl ? (
-                  <button
-                    onClick={() => openExternal(check.releaseUrl)}
-                    className="flex items-center gap-1.5 rounded-md bg-accent px-2.5 py-1 text-xs font-medium text-bg"
-                  >
-                    Download {check.latest} <ExternalLink className="h-3 w-3" />
-                  </button>
-                ) : check.updateAvailable ? (
-                  <span className="text-xs text-accent">Update available: {check.latest}</span>
+                (check.updateAvailable ? (
+                  isDesktop() ? (
+                    <button
+                      onClick={() => upgrade.mutate(check.latest)}
+                      disabled={upgrade.isPending}
+                      className="flex items-center gap-1.5 rounded-md bg-accent px-2.5 py-1 text-xs font-medium text-bg disabled:opacity-50"
+                    >
+                      <DownloadCloud
+                        className={`h-3.5 w-3.5 ${upgrade.isPending ? "animate-pulse" : ""}`}
+                      />
+                      {upgrade.isPending
+                        ? `Updating to ${check.latest}…`
+                        : `Update to ${check.latest} & restart`}
+                    </button>
+                  ) : check.releaseUrl ? (
+                    <button
+                      onClick={() => openExternal(check.releaseUrl)}
+                      className="flex items-center gap-1.5 rounded-md bg-accent px-2.5 py-1 text-xs font-medium text-bg"
+                    >
+                      Download {check.latest} <ExternalLink className="h-3 w-3" />
+                    </button>
+                  ) : (
+                    <span className="text-xs text-accent">Update available: {check.latest}</span>
+                  )
                 ) : (
                   <span className="text-xs text-accent-2">
                     Up to date{check.latest ? ` (latest: ${check.latest})` : ""}
                   </span>
                 ))}
             </div>
+            {isDesktop() && check?.updateAvailable && check.releaseUrl && (
+              <button
+                onClick={() => openExternal(check.releaseUrl)}
+                className="flex items-center gap-1 text-xs text-muted hover:text-text hover:underline"
+              >
+                or open the release page <ExternalLink className="h-3 w-3" />
+              </button>
+            )}
             {manualCheck.isError && (
               <div className="text-xs text-error">{(manualCheck.error as Error).message}</div>
+            )}
+            {upgrade.isError && (
+              <div className="text-xs text-error">{(upgrade.error as Error).message}</div>
             )}
             <label className="flex items-center gap-2 text-xs text-muted">
               <input

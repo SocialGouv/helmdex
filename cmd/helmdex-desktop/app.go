@@ -8,12 +8,16 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sync"
+	"time"
 
+	"helmdex/internal/appinfo"
 	"helmdex/internal/config"
 	"helmdex/internal/desktopstate"
 	"helmdex/internal/instances"
+	"helmdex/internal/selfupdate"
 	"helmdex/internal/server"
 
 	wruntime "github.com/wailsapp/wails/v2/pkg/runtime"
@@ -83,6 +87,12 @@ func NewApp(initialDir string) *App {
 	a := &App{mgr: mgr, state: st}
 	a.stop = mgr.StartHelmEventForwarding()
 	a.persistLocked()
+
+	// A previous self-update may have left a stashed binary behind (Windows
+	// keeps the running image locked until the app exits).
+	if target, err := selfupdate.DetectTarget(); err == nil {
+		selfupdate.CleanupLeftovers(target.Path)
+	}
 	return a
 }
 
@@ -253,6 +263,39 @@ func (a *App) persistLocked() {
 		// Persistence failure must not block the running session.
 		log.Printf("helmdex-desktop: %v", err)
 	}
+}
+
+// --- self-update ---
+
+// ApplyUpdate downloads the given release, verifies its checksum and swaps
+// it in place of the current binary. Returns the updated path.
+func (a *App) ApplyUpdate(tag string) (string, error) {
+	target, err := selfupdate.DetectTarget()
+	if err != nil {
+		return "", err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+	defer cancel()
+	if err := selfupdate.Apply(ctx, target, tag, appinfo.RepoURL+"/releases/download"); err != nil {
+		return "", err
+	}
+	return target.Path, nil
+}
+
+// RestartApp launches the (freshly updated) binary detached and quits this
+// instance; open folders and window state come back via desktopstate.
+func (a *App) RestartApp() error {
+	target, err := selfupdate.DetectTarget()
+	if err != nil {
+		return err
+	}
+	cmd := exec.Command(target.Path)
+	detachProcess(cmd)
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("relaunch %s: %w", target.Path, err)
+	}
+	wruntime.Quit(a.ctx)
+	return nil
 }
 
 // --- window title & geometry ---

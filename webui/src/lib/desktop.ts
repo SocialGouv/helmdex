@@ -18,6 +18,10 @@ interface DesktopBindings {
   OpenRepoDialog: () => Promise<WorkspacesState>;
   SetActiveWorkspace: (id: string) => Promise<WorkspacesState>;
   CloseWorkspace: (id: string) => Promise<WorkspacesState>;
+  /** Downloads and installs the given release tag over the current binary. */
+  ApplyUpdate: (tag: string) => Promise<string>;
+  /** Relaunches the (updated) binary and quits this instance. */
+  RestartApp: () => Promise<void>;
 }
 
 declare global {

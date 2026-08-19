@@ -125,6 +125,8 @@ The desktop app manages **several repos side by side**: each open folder is a ta
 - **Open a folder**: the `+` tile in the rail (or `Ctrl+O`), or launch as `helmdex-desktop <dir>`; on first launch (no folders restored), starting it from a terminal in a project directory opens that directory.
 - **Switch tabs**: click a tile, `Ctrl+1`…`Ctrl+9` to jump, `Ctrl+PgUp`/`Ctrl+PgDn` to cycle.
 - **Close a tab**: the `×` badge on hover, or middle-click the tile.
+- **Expand the rail**: the chevron at the bottom (or `Ctrl+B`) switches between compact monograms and full names with parent paths.
+- **Updates**: the About dialog (sidebar footer) shows the installed version and checks for new releases (automatic once a day, opt-out). On Linux (AppImage) and Windows, **Update & restart** downloads the release, verifies its checksum, swaps the binary in place and relaunches; the release page stays available as a fallback (and is the way to update on macOS for now).
 
 ### CLI / TUI
 

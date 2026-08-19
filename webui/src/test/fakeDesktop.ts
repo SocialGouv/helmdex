@@ -61,6 +61,13 @@ export function installFakeDesktop(roots: string[]): FakeDesktop {
           if (activeId === id) activeId = (tabs[Math.min(i, tabs.length - 1)] ?? { id: "" }).id;
           return state();
         },
+        ApplyUpdate: async (tag: string) => {
+          calls.push(`ApplyUpdate ${tag}`);
+          return `/apps/helmdex-${tag}.AppImage`;
+        },
+        RestartApp: async () => {
+          calls.push("RestartApp");
+        },
       },
     },
   };
