@@ -133,6 +133,24 @@ describe("DepsTab", () => {
     expect(await screen.findByText(/no readme available for postgresql/)).toBeDefined();
   });
 
+  it("warms the sibling inspect tabs after the first one loads", async () => {
+    fake = installFakeApi();
+    const user = userEvent.setup();
+    renderWithProviders(<DepsTab inst={managedInstance()} />);
+
+    // Open the readme tab (nginx); do not touch values/schema.
+    await user.click(screen.getAllByTitle(/Inspect readme/)[1]);
+    await screen.findByRole("heading", { name: "nginx" });
+
+    // The other two artifacts are prefetched from the same cached archive,
+    // so switching tabs won't flash "Loading (may pull the chart)".
+    await waitFor(() => {
+      const reqs = fake.requests.join("\n");
+      expect(reqs).toContain("/deps/nginx/inspect?kind=values");
+      expect(reqs).toContain("/deps/nginx/inspect?kind=schema");
+    });
+  });
+
   it("shows a genuinely absent artifact (404) as muted information, not an error", async () => {
     fake = installFakeApi();
     fake.failNext(

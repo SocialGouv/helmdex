@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import * as Dialog from "@radix-ui/react-dialog";
 import { Eye, GitCompareArrows, Plus, SlidersHorizontal, Tag, Trash2, Unlink } from "lucide-react";
@@ -20,11 +20,30 @@ function InspectDialog({
   dep: DepInfo;
   onClose: () => void;
 }) {
+  const qc = useQueryClient();
   const [kind, setKind] = useState<InspectKind>("readme");
-  const content = useQuery({
-    queryKey: ["inspect", inst.name, dep.id, kind],
-    queryFn: () => api.depInspect(inst.name, dep.id, kind),
+  // A pinned chart version's artifacts are immutable, so never refetch them
+  // on tab-switch-back.
+  const inspectQuery = (k: InspectKind) => ({
+    queryKey: ["inspect", inst.name, dep.id, k],
+    queryFn: () => api.depInspect(inst.name, dep.id, k),
+    staleTime: Infinity,
+    // An artifact fetch fails deterministically (absent, or auth) — retrying
+    // a 404 is wasted work; the UI offers explicit retry/sign-in instead.
+    retry: false,
   });
+  const content = useQuery(inspectQuery(kind));
+
+  // All three tabs come from the same chart archive. Once the first one
+  // resolves the server has it cached, so warm the other tabs — switching
+  // tabs is then instant instead of flashing "Loading (may pull the chart)".
+  useEffect(() => {
+    if (!content.isSuccess) return;
+    for (const k of ["readme", "values", "schema"] as InspectKind[]) {
+      if (k !== kind) void qc.prefetchQuery(inspectQuery(k));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [content.isSuccess]);
 
   return (
     <Dialog.Root open onOpenChange={(v) => !v && onClose()}>
