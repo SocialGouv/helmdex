@@ -12,9 +12,12 @@ import WorkspaceRail from "./WorkspaceRail";
 // mounts the regular App for the active workspace. Each tab keeps its own
 // React Query client (warm cache) and its last route; the Go side owns the
 // tab list, persistence and the native window title.
+const RAIL_KEY = "helmdex.rail"; // "expanded" widens the folder rail
+
 export default function DesktopShell() {
   const [state, setState] = useState<WorkspacesState | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [railExpanded, setRailExpanded] = useState(() => localStorage.getItem(RAIL_KEY) === "expanded");
   const clients = useRef(new Map<string, QueryClient>());
   const tabRoutes = useRef(new Map<string, string>());
   const [location, navigate] = useLocation();
@@ -62,6 +65,17 @@ export default function DesktopShell() {
     [run],
   );
   const close = useCallback((id: string) => run(desktopApp().CloseWorkspace(id)), [run]);
+  const toggleRail = useCallback(() => {
+    setRailExpanded((v) => {
+      const next = !v;
+      if (next) {
+        localStorage.setItem(RAIL_KEY, "expanded");
+      } else {
+        localStorage.removeItem(RAIL_KEY);
+      }
+      return next;
+    });
+  }, []);
 
   useEffect(() => {
     run(desktopApp().Workspaces());
@@ -78,6 +92,11 @@ export default function DesktopShell() {
       if (e.key === "o") {
         e.preventDefault();
         openDialog();
+        return;
+      }
+      if (e.key === "b") {
+        e.preventDefault();
+        toggleRail();
         return;
       }
       if (e.key >= "1" && e.key <= "9") {
@@ -98,7 +117,7 @@ export default function DesktopShell() {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [openDialog, activate]);
+  }, [openDialog, activate, toggleRail]);
 
   if (!state) return null;
 
@@ -129,7 +148,14 @@ export default function DesktopShell() {
 
   return (
     <div className="flex h-full">
-      <WorkspaceRail state={state} onActivate={activate} onClose={close} onAdd={openDialog} />
+      <WorkspaceRail
+        state={state}
+        expanded={railExpanded}
+        onActivate={activate}
+        onClose={close}
+        onAdd={openDialog}
+        onToggleExpanded={toggleRail}
+      />
       <div className="h-full min-w-0 flex-1">
         <QueryClientProvider client={client}>
           <App key={state.activeId} />

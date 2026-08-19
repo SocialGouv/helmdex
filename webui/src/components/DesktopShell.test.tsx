@@ -31,6 +31,7 @@ beforeEach(() => {
   FakeEventSource.urls = [];
   vi.stubGlobal("EventSource", FakeEventSource);
   window.history.replaceState(null, "", "/");
+  localStorage.clear();
 });
 
 afterEach(() => {
@@ -111,6 +112,22 @@ describe("DesktopShell", () => {
 
     fireEvent.keyDown(input, { key: "2", ctrlKey: true });
     expect(desktop.calls).not.toContain("SetActiveWorkspace w2");
+  });
+
+  it("toggles the rail between compact and expanded with Ctrl+B, persisted", async () => {
+    desktop = installFakeDesktop(["/home/jo/infra"]);
+    fake = installFakeApi();
+    render(<DesktopShell />);
+    await screen.findByText("Dashboard");
+    expect(screen.queryByText("/home/jo")).toBeNull();
+
+    fireEvent.keyDown(window, { key: "b", ctrlKey: true });
+    expect(await screen.findByText("/home/jo")).toBeDefined();
+    expect(localStorage.getItem("helmdex.rail")).toBe("expanded");
+
+    fireEvent.keyDown(window, { key: "b", ctrlKey: true });
+    await waitFor(() => expect(screen.queryByText("/home/jo")).toBeNull());
+    expect(localStorage.getItem("helmdex.rail")).toBeNull();
   });
 
   it("opens the folder dialog with Ctrl+O", async () => {

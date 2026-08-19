@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import WorkspaceRail, { monogram, railHue } from "./WorkspaceRail";
+import WorkspaceRail, { monogram, parentDir, railHue } from "./WorkspaceRail";
 import type { WorkspacesState } from "../lib/desktop";
 
 const state: WorkspacesState = {
@@ -15,9 +15,11 @@ const state: WorkspacesState = {
 function renderRail(overrides: Partial<Parameters<typeof WorkspaceRail>[0]> = {}) {
   const props = {
     state,
+    expanded: false,
     onActivate: vi.fn(),
     onClose: vi.fn(),
     onAdd: vi.fn(),
+    onToggleExpanded: vi.fn(),
     ...overrides,
   };
   render(<WorkspaceRail {...props} />);
@@ -71,6 +73,30 @@ describe("WorkspaceRail", () => {
 
     await user.click(screen.getByRole("button", { name: "Open folder" }));
     expect(props.onAdd).toHaveBeenCalled();
+  });
+
+  it("expanded mode shows names and parent directories; compact only monograms", () => {
+    renderRail({ expanded: true });
+    expect(screen.getByText("infra-prod")).toBeDefined();
+    expect(screen.getAllByText("/home/jo")).toHaveLength(2);
+    expect(screen.getByText("Open folder…")).toBeDefined();
+    expect(screen.getByRole("button", { name: "Collapse the folder rail" })).toBeDefined();
+  });
+
+  it("compact mode renders monograms only, with an expand toggle", async () => {
+    const user = userEvent.setup();
+    const props = renderRail();
+    expect(screen.queryByText("infra-prod")).toBeNull();
+    expect(screen.getByText("IP")).toBeDefined();
+
+    await user.click(screen.getByRole("button", { name: "Expand the folder rail" }));
+    expect(props.onToggleExpanded).toHaveBeenCalled();
+  });
+
+  it("parentDir keeps roots disambiguated", () => {
+    expect(parentDir("/home/jo/infra-prod")).toBe("/home/jo");
+    expect(parentDir("/infra")).toBe("/");
+    expect(parentDir("/")).toBe("/");
   });
 
   it("closes from the badge and from a middle click", async () => {
