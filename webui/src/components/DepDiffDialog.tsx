@@ -21,7 +21,6 @@ export default function DepDiffDialog({
   onClose: () => void;
 }) {
   const editorTheme = useEditorTheme();
-  const isOCI = dep.repository.startsWith("oci://");
   const [kind, setKind] = useState<DiffKind>("values");
   const [target, setTarget] = useState("");
   const [manual, setManual] = useState("");
@@ -29,7 +28,6 @@ export default function DepDiffDialog({
   const versions = useQuery({
     queryKey: ["versions", inst.name, dep.id],
     queryFn: () => api.depVersions(inst.name, dep.id),
-    enabled: !isOCI,
   });
 
   const current = useQuery({
@@ -71,7 +69,7 @@ export default function DepDiffDialog({
                 if (manual.trim()) setTarget(manual.trim());
               }}
             >
-              {!isOCI && versions.data && (
+              {versions.data && (
                 <select
                   value={target}
                   onChange={(e) => setTarget(e.target.value)}

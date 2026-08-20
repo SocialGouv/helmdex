@@ -57,9 +57,9 @@ You must prefer **non-interactive CLI commands** for reproducible actions (CI, s
 
 ### C) Change versions safely
 
-- Preview available versions (non-OCI):
+- Preview available versions (classic repos and OCI registries):
   - `helmdex instance dep versions <instance> <depID> --format table`
-- Upgrade to latest stable (non-OCI):
+- Upgrade to latest stable:
   - `helmdex instance dep upgrade <instance> <depID> [--apply]`
 - Set an exact version:
   - `helmdex instance dep set-version <instance> <depID> --version <ver> [--apply]`

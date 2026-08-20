@@ -519,8 +519,10 @@ helmdex instance dep add <instance> \
   --repo https://charts.bitnami.com/bitnami \
   --name nginx --version 15.0.0 [--alias my-nginx] [--set production]
 
+# For OCI, --repo is the namespace holding the chart: Helm appends the chart
+# name, so this resolves to oci://registry-1.docker.io/cloudpirates/postgres
 helmdex instance dep add <instance> \
-  --repo oci://registry-1.docker.io/cloudpirates/postgres \
+  --repo oci://registry-1.docker.io/cloudpirates \
   --name postgres --version 0.16.0
 
 helmdex instance dep add-from-catalog <instance> --id <entry-id> [--apply] [--set <set>]

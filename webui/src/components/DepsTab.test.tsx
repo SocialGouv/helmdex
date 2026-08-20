@@ -208,24 +208,29 @@ describe("DepsTab", () => {
     );
   });
 
-  it("does not offer a version list for OCI dependencies", async () => {
+  it("lists versions for OCI dependencies", async () => {
     fake = installFakeApi();
     const user = userEvent.setup();
     const inst = managedInstance();
-    inst.deps = [
-      {
-        id: "demo",
-        name: "demo",
-        version: "0.1.0",
-        repository: "oci://registry.example.invalid/org/demo",
-        sourceKind: "arbitrary",
-      },
-    ];
+    const oci = inst.deps.find((d) => d.id === "nginx")!;
+    oci.repository = "oci://registry.example.invalid/org/nginx";
     renderWithProviders(<DepsTab inst={inst} />);
 
-    await user.click(screen.getByTitle("Change version"));
-    expect(await screen.findByText(/version listing is not available/)).toBeDefined();
-    expect(fake.requests.some((r) => r.includes("/versions"))).toBe(false);
+    await user.click(screen.getAllByTitle("Change version")[1]);
+    expect(await screen.findByRole("button", { name: /15\.2\.0/ })).toBeDefined();
+    expect(fake.requests).toContain("GET /api/instances/alpha/deps/nginx/versions");
+
+    // Pinning an exact tag stays available alongside the list.
+    expect(screen.getByPlaceholderText("exact version / pinned tag")).toBeDefined();
+
+    // Validation goes through `helm show chart`, which has no OCI equivalent,
+    // so the server must be told to skip it for these.
+    await user.click(screen.getByRole("button", { name: /15\.2\.0/ }));
+    await waitFor(() =>
+      expect(fake.lastCall("POST", "/api/instances/alpha/deps/nginx/version")?.body).toMatchObject({
+        validate: false,
+      }),
+    );
   });
 
   it("surfaces a rejected version", async () => {

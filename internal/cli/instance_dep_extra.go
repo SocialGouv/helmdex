@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 	"time"
 
@@ -232,7 +231,7 @@ func newInstanceDepUpgradeCmd(f *rootFlags) *cobra.Command {
 	var relock bool
 	cmd := &cobra.Command{
 		Use:   "upgrade <instance> <depID>",
-		Short: "Upgrade a dependency to the latest stable SemVer (non-OCI)",
+		Short: "Upgrade a dependency to the latest stable SemVer",
 		Args:  cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			repoRoot, _, cfg, err := resolveRepoAndConfig(f)
@@ -258,9 +257,6 @@ func newInstanceDepUpgradeCmd(f *rootFlags) *cobra.Command {
 			}
 			if dep == nil {
 				return fmt.Errorf("dependency %q not found", id)
-			}
-			if strings.HasPrefix(dep.Repository, "oci://") {
-				return fmt.Errorf("cannot auto-upgrade OCI dependency %s; set exact version", id)
 			}
 			ctx, cancel := context.WithTimeout(cmd.Context(), 75*time.Second)
 			defer cancel()
@@ -308,7 +304,7 @@ func newInstanceDepVersionsCmd(f *rootFlags) *cobra.Command {
 	var format string
 	cmd := &cobra.Command{
 		Use:   "versions <instance> <depID>",
-		Short: "List versions for a dependency (non-OCI) using isolated helm",
+		Short: "List versions for a dependency (helm repo index, or OCI registry tags)",
 		Args:  cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			repoRoot, _, cfg, err := resolveRepoAndConfig(f)
@@ -334,16 +330,14 @@ func newInstanceDepVersionsCmd(f *rootFlags) *cobra.Command {
 			if dep == nil {
 				return fmt.Errorf("dependency %q not found", id)
 			}
-			if strings.HasPrefix(dep.Repository, "oci://") {
-				return fmt.Errorf("OCI dependency %s has no version listing", id)
-			}
 			ctx, cancel := context.WithTimeout(cmd.Context(), 60*time.Second)
 			defer cancel()
 			vs, err := helmutil.RepoChartVersions(ctx, repoRoot, dep.Repository, dep.Name, 24*time.Hour)
 			if err != nil {
 				return err
 			}
-			sort.Strings(vs)
+			// RepoChartVersions already orders newest-first; re-sorting the
+			// strings lexically would put 9.0.0 above 10.0.0.
 			ff := parseFormat(format, formatJSON)
 			if ff == formatTable {
 				for _, v := range vs {

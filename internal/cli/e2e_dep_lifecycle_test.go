@@ -301,13 +301,51 @@ func TestCLI_Dep_SyncPresets(t *testing.T) {
 	r.mustFail("instance", "dep", "sync-presets", "alpha", "ghost")
 }
 
-func TestCLI_Dep_VersionsRejectedForOCI(t *testing.T) {
+// OCI dependencies list versions from the registry's tags, so `dep versions`
+// works on them like on any classic repository.
+func TestCLI_Dep_VersionsForOCI(t *testing.T) {
 	r := newCLIRepo(t, testutil.RepoOpts{SourceMode: testutil.SourceNone})
+	testutil.FakeRegistry(t, map[string][]string{
+		"org/demo": {"0.1.0", "1.0.0", "artifacthub.io", "1.1.0-rc.1"},
+	})
 	r.run("instance", "create", "alpha")
 	r.run("instance", "dep", "add", "alpha",
-		"--repo", "oci://registry.example.invalid/org/demo", "--name", "demo", "--version", "0.1.0")
+		"--repo", "oci://registry.example.invalid/org", "--name", "demo", "--version", "0.1.0")
 
-	if msg := r.mustFail("instance", "dep", "versions", "alpha", "demo"); !strings.Contains(msg, "OCI") {
+	out := r.run("instance", "dep", "versions", "alpha", "demo", "--format", "table")
+	if got := strings.Join(strings.Fields(out), ","); got != "1.0.0,0.1.0" {
+		t.Fatalf("versions = %q, want newest-first without the junk tag", got)
+	}
+}
+
+// Auto-upgrade reaches OCI dependencies too, now that their versions can be
+// listed. The pre-release must not be picked as "latest stable".
+func TestCLI_Dep_UpgradeOCI(t *testing.T) {
+	r := newCLIRepo(t, testutil.RepoOpts{SourceMode: testutil.SourceNone})
+	testutil.FakeRegistry(t, map[string][]string{
+		"org/demo": {"0.1.0", "1.0.0", "1.1.0-rc.1"},
+	})
+	r.run("instance", "create", "alpha")
+	r.run("instance", "dep", "add", "alpha",
+		"--repo", "oci://registry.example.invalid/org", "--name", "demo", "--version", "0.1.0")
+
+	r.run("instance", "dep", "upgrade", "alpha", "demo")
+
+	if chart := r.Read(t, "apps", "alpha", "Chart.yaml"); !strings.Contains(chart, "version: 1.0.0") {
+		t.Fatalf("dependency not upgraded to the latest stable:\n%s", chart)
+	}
+}
+
+// A registry that cannot be listed must fail loudly rather than yield an empty
+// version list.
+func TestCLI_Dep_VersionsOCIFailureIsSurfaced(t *testing.T) {
+	r := newCLIRepo(t, testutil.RepoOpts{SourceMode: testutil.SourceNone})
+	testutil.FakeRegistry(t, map[string][]string{})
+	r.run("instance", "create", "alpha")
+	r.run("instance", "dep", "add", "alpha",
+		"--repo", "oci://registry.example.invalid/org", "--name", "demo", "--version", "0.1.0")
+
+	if msg := r.mustFail("instance", "dep", "versions", "alpha", "demo"); !strings.Contains(msg, "404") {
 		t.Fatalf("unexpected error: %s", msg)
 	}
 }
