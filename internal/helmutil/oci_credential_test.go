@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -118,18 +119,22 @@ func TestOCIChartVersions_AnonymousWhenNoCredential(t *testing.T) {
 	}
 }
 
-// The full-ref hint is advice about a path, so it may only ride on an answer
-// that says something about the path. Telling a user their URL is wrong when
-// the registry is merely down would send them to break a working config.
-func TestOCIChartVersions_HintOnlyOnA4xx(t *testing.T) {
+// The doubled-path observation may only ride on an answer that concerns the
+// resource itself. Telling a rate-limited user to edit their repository would
+// send them to break a working configuration.
+func TestOCIChartVersions_HintOnlyWhenTheStatusConcernsTheResource(t *testing.T) {
 	const repo = "oci://registry.example.invalid/demo" // namespace ends with the chart name
 	cases := []struct {
 		name     string
 		status   int
 		wantHint bool
 	}{
-		{name: "path rejected", status: http.StatusForbidden, wantHint: true},
-		{name: "path absent", status: http.StatusNotFound, wantHint: true},
+		{name: "resource forbidden", status: http.StatusForbidden, wantHint: true},
+		{name: "resource absent", status: http.StatusNotFound, wantHint: true},
+		{name: "credentials refused", status: http.StatusUnauthorized, wantHint: true},
+		{name: "rate limited", status: http.StatusTooManyRequests, wantHint: false},
+		{name: "blocked for legal reasons", status: http.StatusUnavailableForLegalReasons, wantHint: false},
+		{name: "request timed out", status: http.StatusRequestTimeout, wantHint: false},
 		{name: "registry unwell", status: http.StatusServiceUnavailable, wantHint: false},
 		{name: "registry erroring", status: http.StatusInternalServerError, wantHint: false},
 	}
@@ -146,7 +151,7 @@ func TestOCIChartVersions_HintOnlyOnA4xx(t *testing.T) {
 			if err == nil {
 				t.Fatal("want an error")
 			}
-			hinted := strings.Contains(err.Error(), "already ends with the chart name")
+			hinted := strings.Contains(err.Error(), "Helm appends the chart name")
 			if hinted != tc.wantHint {
 				t.Fatalf("hint present = %v, want %v: %v", hinted, tc.wantHint, err)
 			}
@@ -163,7 +168,113 @@ func TestOCIChartVersions_NoHintWhenRegistryUnreachable(t *testing.T) {
 	if err == nil {
 		t.Fatal("want an error")
 	}
-	if strings.Contains(err.Error(), "already ends with the chart name") {
+	if strings.Contains(err.Error(), "Helm appends the chart name") {
 		t.Fatalf("a connection failure must not be reported as a misconfiguration: %v", err)
+	}
+}
+
+// A registry that challenges Basic with no credential stored produces the
+// client's own refusal rather than a relayed status. That is exactly the shape
+// the doubled-path case takes on such a registry, so the observation must
+// still reach the user.
+func TestOCIChartVersions_HintOnABasicChallengeWithoutCredential(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("WWW-Authenticate", `Basic realm="registry"`)
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+	}))
+	defer srv.Close()
+	t.Setenv(ociregistry.FakeRegistryEnv, srv.URL)
+	t.Setenv("HELMDEX_CREDENTIALS", filepath.Join(t.TempDir(), "absent.yaml"))
+
+	_, err := ociChartVersions(context.Background(), t.TempDir(), "oci://registry.example.invalid/demo", "demo")
+	if err == nil {
+		t.Fatal("want an error")
+	}
+	if !strings.Contains(err.Error(), "Helm appends the chart name") {
+		t.Fatalf("the doubled-path observation must survive a Basic challenge: %v", err)
+	}
+}
+
+// A registry cannot distinguish "absent" from "forbidden", so the observation
+// must read as a possibility rather than an instruction — a namespace really
+// may end with the chart name.
+func TestOCIFullRefHint_ReadsAsAPossibilityNotAnInstruction(t *testing.T) {
+	hint := OCIFullRefHint("oci://reg.test/nginx", "nginx")
+	for _, want := range []string{"asked the registry for", "nginx/nginx", "if the chart is not published"} {
+		if !strings.Contains(hint, want) {
+			t.Fatalf("hint must state what was requested and stay conditional, missing %q: %s", want, hint)
+		}
+	}
+}
+
+// A proxy demanding credentials is not the registry answering about the path.
+// creds.IsAuthError matches it — rightly, for offering a sign-in — so the
+// resource check must be narrower, or the explanation claims the registry was
+// asked for a path the request never reached.
+func TestWithOCIRefHint_IgnoresFailuresBeforeTheRegistry(t *testing.T) {
+	const repo = "oci://reg.test/demo"
+	cases := map[string]struct {
+		err      error
+		wantHint bool
+	}{
+		"proxy demanded credentials": {
+			err:      errors.New("helm pull failed: proxyconnect tcp: proxy returned status 407 Proxy Authentication Required"),
+			wantHint: false,
+		},
+		"registry refused the path": {
+			err:      errors.New("helm pull failed: 403 denied: requested access to the resource is denied"),
+			wantHint: true,
+		},
+		"registry has no such repository": {
+			err:      errors.New("helm pull failed: 404 name unknown"),
+			wantHint: true,
+		},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			got := WithOCIRefHint(tc.err, repo, "demo")
+			hinted := strings.Contains(got.Error(), "Helm appends the chart name")
+			if hinted != tc.wantHint {
+				t.Fatalf("hint present = %v, want %v: %v", hinted, tc.wantHint, got)
+			}
+		})
+	}
+}
+
+// Wrapping twice would repeat the sentence verbatim.
+func TestWithOCIRefHint_IsIdempotent(t *testing.T) {
+	base := errors.New("list tags: 403 denied: requested access to the resource is denied")
+	once := WithOCIRefHint(base, "oci://reg.test/demo", "demo")
+	twice := WithOCIRefHint(once, "oci://reg.test/demo", "demo")
+	if strings.Count(twice.Error(), "Helm appends the chart name") != 1 {
+		t.Fatalf("explanation repeated: %v", twice)
+	}
+}
+
+// Helm reports a registry 404 with no status code at all, so the text shapes it
+// actually emits have to be matched explicitly — otherwise the doubled-path
+// explanation vanishes on exactly the registries that answer 404.
+func TestWithOCIRefHint_RecognisesTheShapesHelmEmits(t *testing.T) {
+	const repo = "oci://reg.test/demo"
+	rejected := map[string]string{
+		// Captured verbatim from helm v4.1.1 against a 404 registry.
+		"oras fetch reference":          `helm pull failed: Error: failed to perform "FetchReference" on source: 127.0.0.1:8791/org/demo/demo:1.0.0: not found`,
+		"distribution name unknown":     "helm pull failed: NAME_UNKNOWN: repository name not known to registry",
+		"distribution manifest unknown": "helm pull failed: MANIFEST_UNKNOWN: manifest unknown",
+		"denied":                        "helm pull failed: 403 denied: requested access to the resource is denied",
+	}
+	for name, text := range rejected {
+		t.Run(name, func(t *testing.T) {
+			got := WithOCIRefHint(errors.New(text), repo, "demo")
+			if !strings.Contains(got.Error(), "Helm appends the chart name") {
+				t.Fatalf("no explanation attached to a registry rejection: %v", got)
+			}
+		})
+	}
+
+	// A bare "not found" from somewhere else must not be treated as one.
+	unrelated := errors.New("helm pull failed: chart values file not found in archive")
+	if got := WithOCIRefHint(unrelated, repo, "demo"); strings.Contains(got.Error(), "Helm appends the chart name") {
+		t.Fatalf("explanation attached to an unrelated failure: %v", got)
 	}
 }

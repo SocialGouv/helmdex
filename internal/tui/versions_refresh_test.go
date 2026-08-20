@@ -5,7 +5,19 @@ import (
 	"testing"
 
 	"helmdex/internal/yamlchart"
+
+	"github.com/charmbracelet/bubbles/list"
+	tea "github.com/charmbracelet/bubbletea"
 )
+
+// filterVersions drives the version list into its filtering state the way a
+// user does: "/" then the query.
+func filterVersions(m *AppModel, query string) {
+	m.depEditVersions, _ = m.depEditVersions.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
+	for _, r := range query {
+		m.depEditVersions, _ = m.depEditVersions.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+	}
+}
 
 func modelWithDepEditOpen(dep yamlchart.Dependency) *AppModel {
 	m := NewAppModel(Params{RepoRoot: "."})
@@ -231,21 +243,246 @@ func TestVersionsRefresh_ModeOscillationKeepsUserInput(t *testing.T) {
 	ok.err = nil
 	ok.versions = []string{"2.0.0"}
 	m.handleVersionsRefreshResult(ok)
-	if m.depEditMode != depEditModeList {
-		t.Fatal("precondition: versions should have restored the picker")
+
+	// The picker must not be restored under someone mid-tag: it would hide
+	// their text and apply the list's selection on Enter instead.
+	if m.depEditMode != depEditModeManual {
+		t.Fatal("a refresh flipped the mode while the user was typing")
 	}
 
-	// Back to empty — a successful listing that yields nothing, so the picker
-	// really does empty out and manual mode is re-entered.
+	empty := errResult(dep, versionsTargetBackground)
+	empty.err = nil
+	empty.versions = nil
+	m.handleVersionsRefreshResult(empty)
+
+	if got := m.depEditVersionInput.Value(); got != "3.14.0" {
+		t.Fatalf("mode oscillation erased the typed version: %q", got)
+	}
+}
+
+// bubbles' SetItems drops the filtered view, and rebuilding it is the caller's
+// job. This drives the result through the app's real Update, because that is
+// where a rebuild scheduled as a command would be lost: nothing routes a
+// FilterMatchesMsg back to a version list.
+func TestVersionsRefresh_KeepsAFilteredViewPopulated(t *testing.T) {
+	dep := yamlchart.Dependency{Name: "demo", Repository: "oci://registry.test/org/demo", Version: "1.0.0"}
+	m := modelWithDepEditOpen(dep)
+	m.setVersionsList([]string{"1.0.0", "1.1.0", "2.0.0"}, versionsTargetDepEdit)
+	filterVersions(m, "1")
+
+	ok := errResult(dep, versionsTargetBackground)
+	ok.err = nil
+	ok.versions = []string{"1.0.0", "1.1.0", "2.0.0"}
+
+	next, _ := m.Update(ok)
+	mm := next.(AppModel)
+
+	if got := len(mm.depEditVersions.VisibleItems()); got != 2 {
+		t.Fatalf("filter %q matched %d items after the refresh, want 2",
+			mm.depEditVersions.FilterValue(), got)
+	}
+}
+
+// A background refresh must not drag the cursor away from where the user was
+// browsing.
+func TestVersionsRefresh_KeepsTheBrowsingPosition(t *testing.T) {
+	dep := yamlchart.Dependency{Name: "demo", Repository: "oci://registry.test/org/demo", Version: "1.0.0"}
+	m := modelWithDepEditOpen(dep)
+	versions := []string{"3.0.0", "2.0.0", "1.0.0"}
+	m.setVersionsList(versions, versionsTargetDepEdit)
+	m.depEditVersions.Select(0) // browsing 3.0.0, not the pinned 1.0.0
+
+	ok := errResult(dep, versionsTargetBackground)
+	ok.err = nil
+	ok.versions = versions
+	m.handleVersionsRefreshResult(ok)
+
+	it, _ := m.depEditVersions.SelectedItem().(versionItem)
+	if it.Ver != "3.0.0" {
+		t.Fatalf("cursor jumped to %q; the user was browsing 3.0.0", it.Ver)
+	}
+}
+
+// Dropping to manual hides the list, but its filter state would survive and
+// swallow the next keystrokes.
+func TestVersionsRefresh_ClearsTheFilterWhenLeavingTheList(t *testing.T) {
+	dep := yamlchart.Dependency{Name: "demo", Repository: "oci://registry.test/org/demo", Version: "1.0.0"}
+	m := modelWithDepEditOpen(dep)
+	m.setVersionsList([]string{"1.0.0", "1.1.0"}, versionsTargetDepEdit)
+	filterVersions(m, "1")
+
 	empty := errResult(dep, versionsTargetBackground)
 	empty.err = nil
 	empty.versions = nil
 	m.handleVersionsRefreshResult(empty)
 
 	if m.depEditMode != depEditModeManual {
-		t.Fatal("precondition: an empty listing should re-enter manual")
+		t.Fatal("precondition: an empty listing should drop to manual")
 	}
-	if got := m.depEditVersionInput.Value(); got != "3.14.0" {
-		t.Fatalf("mode oscillation erased the typed version: %q", got)
+	if got := m.depEditVersions.FilterValue(); got != "" {
+		t.Fatalf("an invisible filter %q survived into manual mode", got)
+	}
+}
+
+// When the version the user was browsing disappears between refreshes, the
+// cursor belongs on the pinned version — not on whatever happens to be first.
+func TestVersionsRefresh_FallsBackToThePinnedVersion(t *testing.T) {
+	dep := yamlchart.Dependency{Name: "demo", Repository: "oci://registry.test/org/demo", Version: "1.0.0"}
+	m := modelWithDepEditOpen(dep)
+	m.setVersionsList([]string{"3.0.0", "1.5.0", "1.0.0"}, versionsTargetDepEdit)
+	m.depEditVersions.Select(1) // browsing 1.5.0
+
+	ok := errResult(dep, versionsTargetBackground)
+	ok.err = nil
+	ok.versions = []string{"3.0.0", "1.0.0"} // 1.5.0 withdrawn
+	m.handleVersionsRefreshResult(ok)
+
+	it, _ := m.depEditVersions.SelectedItem().(versionItem)
+	if it.Ver != "1.0.0" {
+		t.Fatalf("cursor landed on %q; the browsed version is gone, so it belongs on the pinned one", it.Ver)
+	}
+}
+
+// A catalog-attached dependency whose supported set is empty must not be
+// offered a free-text field: that contradicts the message telling the user to
+// detach from the catalog first.
+func TestVersionsRefresh_CatalogEmptinessStaysInListMode(t *testing.T) {
+	dep := yamlchart.Dependency{Name: "demo", Repository: "https://charts.test", Version: "1.0.0"}
+	m := modelWithDepEditOpen(dep)
+	m.depEditSourceOK = true
+	m.depEditSource = depSourceMeta{Kind: depSourceCatalog, CatalogID: "demo-1.0.0"}
+
+	empty := errResult(dep, versionsTargetBackground)
+	empty.err = nil
+	empty.versions = nil
+	m.handleVersionsRefreshResult(empty)
+
+	if m.depEditMode == depEditModeManual {
+		t.Fatal("a catalog-attached dependency must not be offered free-text version entry")
+	}
+}
+
+// The list's Select takes an index into the visible rows, which is the filtered
+// slice while a filter is active. Anchoring on an unfiltered index leaves the
+// cursor on the wrong row — or past the end, where Enter silently does nothing.
+func TestVersionsRefresh_CursorStaysSelectableUnderAFilter(t *testing.T) {
+	dep := yamlchart.Dependency{Name: "demo", Repository: "oci://registry.test/org/demo", Version: "9.0.0"}
+	m := modelWithDepEditOpen(dep)
+	// "1.0.0" sits at unfiltered index 2 but is the first row once "1" filters.
+	versions := []string{"10.0.0", "9.0.0", "1.0.0"}
+	m.setVersionsList(versions, versionsTargetDepEdit)
+	filterVersions(m, "1")
+	m.depEditVersions.Select(0)
+
+	// Whatever the fuzzy filter ranked first is the row the user is on.
+	browsing, ok := m.depEditVersions.SelectedItem().(versionItem)
+	if !ok {
+		t.Fatal("precondition: the filtered list should have a selection")
+	}
+
+	res := errResult(dep, versionsTargetBackground)
+	res.err = nil
+	res.versions = versions
+
+	next, _ := m.Update(res)
+	mm := next.(AppModel)
+
+	after, ok := mm.depEditVersions.SelectedItem().(versionItem)
+	if !ok {
+		t.Fatalf("nothing is selected after the refresh: Enter would silently do nothing (index %d of %d visible)",
+			mm.depEditVersions.Index(), len(mm.depEditVersions.VisibleItems()))
+	}
+	if after.Ver != browsing.Ver {
+		t.Fatalf("cursor moved from %q to %q across a refresh", browsing.Ver, after.Ver)
+	}
+}
+
+// The version list widget is shared across dependencies. A filter typed on one
+// must not survive into the next open and silently hide every version.
+func TestOpenDepEdit_DoesNotInheritThePreviousFilter(t *testing.T) {
+	alpha := yamlchart.Dependency{Name: "alpha", Repository: "oci://reg.test/org", Version: "1.0.0"}
+	m := modelWithDepEditOpen(alpha)
+	m.setVersionsList([]string{"1.0.0", "1.1.0", "2.0.0"}, versionsTargetDepEdit)
+	filterVersions(m, "1")
+	if m.depEditVersions.FilterValue() == "" {
+		t.Fatal("precondition: a filter should be active")
+	}
+
+	// Reopen on a different dependency whose versions share no digit with it.
+	beta := yamlchart.Dependency{Name: "beta", Repository: "oci://reg.test/org", Version: "9.0.0"}
+	m.depEditOpen = false
+	m.depsList.SetItems([]list.Item{depItem{Dep: beta}})
+	m.depsList.Select(0)
+	nm, _ := m.openDepEditSelected()
+	mm := nm.(AppModel)
+	mm.setVersionsList([]string{"9.0.0", "8.5.0"}, versionsTargetDepEdit)
+
+	if got := mm.depEditVersions.FilterValue(); got != "" {
+		t.Fatalf("filter %q leaked into the next dependency", got)
+	}
+	if n := len(mm.depEditVersions.VisibleItems()); n != 2 {
+		t.Fatalf("%d versions visible after reopening; a stale filter is hiding them", n)
+	}
+}
+
+// The manual fallback focuses the version input; if nothing blurs it, the next
+// list-mode open captures keys meant for the list.
+func TestOpenDepEdit_StartsWithTheVersionInputBlurred(t *testing.T) {
+	dep := yamlchart.Dependency{Name: "demo", Repository: "oci://reg.test/org", Version: "1.0.0"}
+	m := modelWithDepEditOpen(dep)
+	m.depEditVersionInput.Focus() // as the manual fallback leaves it
+
+	m.depEditOpen = false
+	m.depsList.SetItems([]list.Item{depItem{Dep: dep}})
+	m.depsList.Select(0)
+	nm, _ := m.openDepEditSelected()
+	mm := nm.(AppModel)
+
+	if mm.depEditVersionInput.Focused() {
+		t.Fatal("a list-mode open must not start with the version input focused")
+	}
+}
+
+// Validation runs in the background, so the user may have opened another
+// dependency by the time it lands. The upgrade diff must be between the two
+// versions of the dependency being upgraded, not between two different charts.
+func TestDepVersionValidated_DiffUsesTheUpgradedDependency(t *testing.T) {
+	alpha := yamlchart.Dependency{Name: "alpha", Repository: "oci://reg.test/alpha", Version: "1.0.0"}
+	beta := yamlchart.Dependency{Name: "beta", Repository: "oci://reg.test/beta", Version: "9.0.0"}
+
+	m := NewAppModel(Params{RepoRoot: "."})
+	m.depsList.SetItems([]list.Item{depItem{Dep: alpha}, depItem{Dep: beta}})
+	// The user moved on to beta while alpha's upgrade was validating.
+	m.depDetailOpen = true
+	m.depDetailDep = beta
+
+	upgraded := alpha
+	upgraded.Version = "9.9.9"
+	nm, _ := m.Update(depVersionValidatedMsg{dep: upgraded})
+	mm := nm.(AppModel)
+
+	if got := mm.depDiffOldDep.Version; got != "1.0.0" {
+		t.Fatalf("upgrade diff reports %q as the version being replaced; alpha was at 1.0.0", got)
+	}
+	if yamlchart.DependencyID(mm.depDiffOldDep) != yamlchart.DependencyID(upgraded) {
+		t.Fatalf("diff compares %s against %s", yamlchart.DependencyID(mm.depDiffOldDep), yamlchart.DependencyID(upgraded))
+	}
+}
+
+// A validation result can land after its dependency is gone — removed, or the
+// user moved to another instance. Opening the diff then would offer to apply
+// the upgrade to whichever chart is selected now.
+func TestDepVersionValidated_DoesNotOpenADiffForAVanishedDependency(t *testing.T) {
+	m := NewAppModel(Params{RepoRoot: "."})
+	other := yamlchart.Dependency{Name: "beta", Repository: "oci://reg.test/beta", Version: "9.0.0"}
+	m.depsList.SetItems([]list.Item{depItem{Dep: other}})
+
+	upgraded := yamlchart.Dependency{Name: "alpha", Repository: "oci://reg.test/alpha", Version: "9.9.9"}
+	nm, _ := m.Update(depVersionValidatedMsg{dep: upgraded})
+	mm := nm.(AppModel)
+
+	if mm.depDiffOpen {
+		t.Fatalf("opened an upgrade diff for a dependency no longer in the chart: old=%+v new=%+v",
+			mm.depDiffOldDep, mm.depDiffNewDep)
 	}
 }

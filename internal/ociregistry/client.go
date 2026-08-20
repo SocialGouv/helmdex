@@ -168,11 +168,17 @@ func (c *Client) doAuthenticated(ctx context.Context, rawURL, repoPath string) (
 		c.token = token
 	case "basic":
 		if c.Secret == "" {
-			return nil, fmt.Errorf("GET %s: 401 unauthorized: registry requires authentication and no credential is available for it", rawURL)
+			return nil, &StatusError{
+				Action: "list tags", Target: rawURL, Status: "401 Unauthorized", Code: http.StatusUnauthorized,
+				Body: "registry requires authentication and no credential is available for it",
+			}
 		}
 		c.useBasic = true
 	default:
-		return nil, fmt.Errorf("GET %s: 401 unauthorized: unsupported authentication challenge %q", rawURL, challenge)
+		return nil, &StatusError{
+			Action: "list tags", Target: rawURL, Status: "401 Unauthorized", Code: http.StatusUnauthorized,
+			Body: fmt.Sprintf("unsupported authentication challenge %q", challenge),
+		}
 	}
 	return c.do(ctx, rawURL)
 }
@@ -280,7 +286,7 @@ func nextPageURL(currentURL string, resp *http.Response) string {
 		return ""
 	}
 	for _, header := range resp.Header.Values("Link") {
-		for _, part := range strings.Split(header, ",") {
+		for _, part := range splitTopLevelCommas(header) {
 			target, attrs, found := strings.Cut(part, ";")
 			if !found || !hasRelNext(attrs) {
 				continue
@@ -292,7 +298,9 @@ func nextPageURL(currentURL string, resp *http.Response) string {
 			next := *current
 			next.RawQuery = ref.RawQuery
 			// A cursor that does not advance would spin until the page cap.
-			if next.String() == currentURL {
+			// Compare by value: a registry that reorders query parameters
+			// between pages would defeat a byte-exact comparison.
+			if next.Query().Encode() == current.Query().Encode() {
 				return ""
 			}
 			return next.String()
@@ -353,7 +361,7 @@ func parseChallenge(header string) (scheme string, params map[string]string) {
 	if !found {
 		return scheme, params
 	}
-	for _, part := range splitParams(rest) {
+	for _, part := range splitTopLevelCommas(rest) {
 		key, value, ok := strings.Cut(part, "=")
 		if !ok {
 			continue
@@ -367,18 +375,25 @@ func parseChallenge(header string) (scheme string, params map[string]string) {
 	return scheme, params
 }
 
-// splitParams splits on commas that are not inside a quoted value — a scope
-// like "repository:a/b:pull,push" legitimately contains one.
-func splitParams(s string) []string {
+// splitTopLevelCommas splits on commas that are not inside a quoted value or a
+// <URI> reference. Both header shapes here legitimately contain one: an auth
+// scope like "repository:a/b:pull,push", and a Link cursor carrying a comma.
+func splitTopLevelCommas(s string) []string {
 	var out []string
 	var current strings.Builder
-	quoted := false
+	quoted, bracketed := false, false
 	for _, r := range s {
 		switch {
 		case r == '"':
 			quoted = !quoted
 			current.WriteRune(r)
-		case r == ',' && !quoted:
+		case r == '<' && !quoted:
+			bracketed = true
+			current.WriteRune(r)
+		case r == '>' && !quoted:
+			bracketed = false
+			current.WriteRune(r)
+		case r == ',' && !quoted && !bracketed:
 			out = append(out, current.String())
 			current.Reset()
 		default:

@@ -155,7 +155,7 @@ func PullChartArchive(ctx context.Context, env Env, repoURL, chartName, version 
 			return "", err
 		}
 		if _, err := run(ctx, env, "helm", "pull", ref, "--version", version, "--destination", dest); err != nil {
-			return "", err
+			return "", WithOCIRefHint(err, repoURL, chartName)
 		}
 		p := filepath.Join(dest, fmt.Sprintf("%s-%s.tgz", chartName, version))
 		if _, err := os.Stat(p); err != nil {

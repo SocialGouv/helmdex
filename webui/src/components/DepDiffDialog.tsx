@@ -69,6 +69,13 @@ export default function DepDiffDialog({
                 if (manual.trim()) setTarget(manual.trim());
               }}
             >
+              {versions.isError && (
+                <ErrorWithAuth
+                  className="max-w-md"
+                  error={versions.error}
+                  onRetry={() => void versions.refetch()}
+                />
+              )}
               {versions.data && (
                 <select
                   value={target}

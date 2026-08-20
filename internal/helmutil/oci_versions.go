@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
+	"regexp"
 	"strings"
 
 	semver "github.com/Masterminds/semver/v3"
@@ -28,17 +30,7 @@ func ociChartVersions(ctx context.Context, repoRoot, repoURL, chartName string) 
 
 	tags, err := client.Tags(ctx, repoPath)
 	if err != nil {
-		// Explain the doubled path rather than letting the user pick a version
-		// that `helm dependency update` would then refuse. Only a 4xx says
-		// anything about the path: a timeout, a 5xx or an unreachable registry
-		// would turn "try again later" into "your configuration is wrong".
-		var status *ociregistry.StatusError
-		if errors.As(err, &status) && status.Code >= 400 && status.Code < 500 {
-			if hint := OCIFullRefHint(repoURL, chartName); hint != "" {
-				return nil, fmt.Errorf("%w — %s", err, hint)
-			}
-		}
-		return nil, err
+		return nil, WithOCIRefHint(err, repoURL, chartName)
 	}
 	return versionsFromTags(tags), nil
 }
@@ -118,4 +110,55 @@ func versionsFromTags(tags []string) []string {
 	}
 	sortVersionsDesc(stable)
 	return stable
+}
+
+// WithOCIRefHint appends the doubled-path observation when a failure concerns
+// the resource itself, so every surface explains the same misconfiguration the
+// same way.
+//
+// Only 401/403/404 qualify. A 408, 429 or 451 says nothing about the path, and
+// telling a rate-limited user to edit their repository would send them to break
+// a working configuration. Transport failures carry no status at all.
+func WithOCIRefHint(err error, repoURL, chartName string) error {
+	if err == nil {
+		return nil
+	}
+	hint := OCIFullRefHint(repoURL, chartName)
+	if hint == "" || !concernsResource(err) {
+		return err
+	}
+	if strings.Contains(err.Error(), ociRefHintMarker) {
+		return err
+	}
+	return fmt.Errorf("%w — %s", err, hint)
+}
+
+// registryRejectedRe matches the text shape of a registry answering 401, 403 or
+// 404 about the requested path.
+//
+// Helm reports a 404 without any status code — `failed to perform
+// "FetchReference" on source: <ref>: not found` — so the Distribution error
+// codes and that ORAS shape are matched explicitly. A bare "not found" is not:
+// it appears in failures that have nothing to do with the registry.
+var registryRejectedRe = regexp.MustCompile(
+	`(?i)(?:^|\s)(?:401|403|404)(?:\s|:|$)` +
+		`|\bunauthorized\b|pull access denied|denied: requested access` +
+		`|\bmanifest[_ ]unknown\b|\bname[_ ]unknown\b|"FetchReference"[^"]*: not found`)
+
+// concernsResource reports whether a failure says anything about the path that
+// was requested.
+func concernsResource(err error) bool {
+	var status *ociregistry.StatusError
+	if errors.As(err, &status) {
+		switch status.Code {
+		case http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound:
+			return true
+		}
+		return false
+	}
+	// helm is shelled out, so its failures carry no status. creds.IsAuthError
+	// is deliberately broader — it also matches a 407 from a proxy the request
+	// never got past — which is right for offering a sign-in and wrong for
+	// claiming the registry said something about this path.
+	return registryRejectedRe.MatchString(err.Error())
 }
