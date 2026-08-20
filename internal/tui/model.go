@@ -2194,36 +2194,58 @@ func (m *AppModel) handleVersionsRefreshResult(msg versionsRefreshResultMsg) tea
 		}
 	}
 
-	// Apply to UI when still relevant.
-	switch msg.target {
-	case versionsTargetDepEdit:
+	// Apply to whichever modal is showing this dependency, whatever asked for
+	// the refresh. Single-flight is keyed per dependency, not per modal, so an
+	// open modal routinely rides on a refresh scheduled by an earlier open or
+	// by the background tick — dispatching on msg.target would drop that
+	// result, leaving an empty picker with no error and no way to retry.
+	if m.depEditOpen && msg.key == versionsKey(m.depEditDep.Repository, m.depEditDep.Name) {
 		m.depEditLoading = false
-		if !m.depEditOpen {
-			return nil
-		}
-		if msg.depID != yamlchart.DependencyID(m.depEditDep) {
-			return nil
-		}
-		if msg.err == nil {
+		if msg.err != nil {
+			m.modalErr = msg.err.Error()
+		} else {
 			m.setVersionsList(msg.versions, versionsTargetDepEdit)
 		}
-		return nil
-	case versionsTargetDepDetail:
+		// An empty picker is a dead end whatever caused it — a failed listing,
+		// or a registry whose tags are all non-SemVer. Cached versions stay
+		// usable, so only an empty list falls back to typing an exact version.
+		//
+		// Both transitions are guarded: seeding the input on every empty result
+		// would erase what the user is typing, and leaving manual mode latched
+		// would hide a picker the next refresh brings back.
+		switch {
+		case len(m.depEditVersionsData) == 0 && m.depEditMode != depEditModeManual:
+			m.depEditMode = depEditModeManual
+			// Seed only an untouched field: the picker can come and go while
+			// the user is mid-tag, and re-entering manual must not erase it.
+			if strings.TrimSpace(m.depEditVersionInput.Value()) == "" {
+				m.depEditVersionInput.SetValue(m.depEditDep.Version)
+			}
+			m.depEditVersionInput.Focus()
+		case len(m.depEditVersionsData) > 0 && m.depEditMode == depEditModeManual:
+			m.depEditMode = depEditModeList
+			m.depEditVersionInput.Blur()
+		}
+	}
+	if m.depDetailOpen && msg.key == versionsKey(m.depDetailDep.Repository, m.depDetailDep.Name) {
 		m.depDetailVersionsLoading = false
-		if !m.depDetailOpen {
-			return nil
-		}
-		if msg.depID != yamlchart.DependencyID(m.depDetailDep) {
-			return nil
-		}
-		if msg.err == nil {
+		if msg.err != nil {
+			m.modalErr = msg.err.Error()
+		} else {
 			m.setVersionsList(msg.versions, versionsTargetDepDetail)
 		}
-		return nil
-	default:
-		// Background refresh: no direct UI.
-		return nil
+		switch {
+		case len(m.depDetailVersionsData) == 0 && m.depDetailMode != depEditModeManual:
+			m.depDetailMode = depEditModeManual
+			if strings.TrimSpace(m.depDetailVersionInput.Value()) == "" {
+				m.depDetailVersionInput.SetValue(m.depDetailDep.Version)
+			}
+		case len(m.depDetailVersionsData) > 0 && m.depDetailMode == depEditModeManual:
+			m.depDetailMode = depEditModeList
+		}
+		m.depDetailPreview.SetContent(m.renderDepDetailBody())
 	}
+	return nil
 }
 
 // noopMsg is used by background cmds to signal "success but no UI change",
@@ -2299,9 +2321,6 @@ func versionsKey(repoURL, chartName string) string {
 
 func (m *AppModel) watchVersions(dep yamlchart.Dependency) {
 	if strings.TrimSpace(dep.Repository) == "" || strings.TrimSpace(dep.Name) == "" {
-		return
-	}
-	if strings.HasPrefix(dep.Repository, "oci://") {
 		return
 	}
 	key := versionsKey(dep.Repository, dep.Name)
@@ -2611,10 +2630,6 @@ func (m AppModel) loadDepDetailVersionsCmd(dep yamlchart.Dependency) tea.Cmd {
 			// Deterministic E2E stub: avoid helm repo access.
 			return depDetailVersionsMsg{ID: id, Versions: []string{"9.9.9", "2.0.0", "1.1.0", "1.0.0"}}
 		}
-		if strings.HasPrefix(dep.Repository, "oci://") {
-			return depDetailVersionsMsg{ID: id, Versions: nil}
-		}
-
 		// Cache-first: return cached versions immediately when present.
 		if vs, _, ok, err := helmutil.ReadVersionsCache(m.params.RepoRoot, dep.Repository, dep.Name); err == nil && ok {
 			return depDetailVersionsMsg{ID: id, Versions: vs}
@@ -3187,9 +3202,10 @@ func (m AppModel) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.depDetailLoading = true
 			m.modalErr = ""
 			m.depDetailPreview.SetContent(m.renderDepDetailBody())
-			cmds := []tea.Cmd{m.beginBusy("Loading"), m.loadDepDetailPreviewsCmd(m.depDetailDep)}
-			if !strings.HasPrefix(m.depDetailDep.Repository, "oci://") {
-				cmds = append(cmds, m.loadDepDetailVersionsCmd(m.depDetailDep))
+			cmds := []tea.Cmd{
+				m.beginBusy("Loading"),
+				m.loadDepDetailPreviewsCmd(m.depDetailDep),
+				m.loadDepDetailVersionsCmd(m.depDetailDep),
 			}
 			m.depStep = depStepNone
 			m.clearStatusErr()
@@ -5790,33 +5806,27 @@ func (m AppModel) openDepDetailSelected() (tea.Model, tea.Cmd) {
 	m.depDetailSets.SetItems(nil)
 	m.depDetailPreview.SetContent(m.renderDepDetailBody())
 
-	// Decide mode.
-	if strings.HasPrefix(dep.Repository, "oci://") {
-		m.depDetailMode = depEditModeManual
-		m.depDetailVersionInput.SetValue(dep.Version)
-		// Only focus when user opens the Versions tab.
-		m.depDetailVersionInput.Blur()
-	} else {
-		m.depDetailMode = depEditModeList
-		m.depDetailVersionInput.Blur()
-	}
+	// Decide mode. OCI repositories list versions too (registry tags), so they
+	// start in list mode like any other; a registry that refuses to list falls
+	// back to manual entry when the refresh fails.
+	m.depDetailMode = depEditModeList
+	m.depDetailVersionInput.SetValue(dep.Version)
+	m.depDetailVersionInput.Blur()
 
 	// Kick off loads.
 	m.depDetailSetsLoading = true
 	cmds := []tea.Cmd{m.beginBusy("Loading"), m.loadDepDetailPreviewsCmd(dep), m.loadDepDetailSetsCmd(dep)}
-	if m.depDetailMode == depEditModeList {
-		// Cache-first: populate from cache immediately if present.
-		if vs, _, ok, err := helmutil.ReadVersionsCache(m.params.RepoRoot, dep.Repository, dep.Name); err == nil && ok {
-			m.setVersionsList(vs, versionsTargetDepDetail)
-		}
-		// Always background refresh; show loader in Versions tab only.
-		key := versionsKey(dep.Repository, dep.Name)
-		if !m.versionsInFlight[key] {
-			m.versionsInFlight[key] = true
-			m.depDetailVersionsLoading = true
-			m.watchVersions(dep)
-			cmds = append(cmds, m.refreshVersionsCmd(dep, versionsTargetDepDetail))
-		}
+	// Cache-first: populate from cache immediately if present.
+	if vs, _, ok, err := helmutil.ReadVersionsCache(m.params.RepoRoot, dep.Repository, dep.Name); err == nil && ok {
+		m.setVersionsList(vs, versionsTargetDepDetail)
+	}
+	// Always background refresh; show loader in Versions tab only.
+	key := versionsKey(dep.Repository, dep.Name)
+	if !m.versionsInFlight[key] {
+		m.versionsInFlight[key] = true
+		m.depDetailVersionsLoading = true
+		m.watchVersions(dep)
+		cmds = append(cmds, m.refreshVersionsCmd(dep, versionsTargetDepDetail))
 	}
 	return m, tea.Batch(cmds...)
 }
@@ -6558,15 +6568,10 @@ func (m AppModel) openDepEditSelected() (tea.Model, tea.Cmd) {
 	m.depEditVersions.SetItems(nil)
 	m.depEditVersions.Title = fmt.Sprintf("Versions (%s)", yamlchart.DependencyID(dep))
 
-	// OCI: cannot query versions; use manual exact version input.
-	if strings.HasPrefix(dep.Repository, "oci://") {
-		m.depEditMode = depEditModeManual
-		m.depEditVersionInput.SetValue(dep.Version)
-		m.depEditVersionInput.Focus()
-		return m, nil
-	}
-
+	// OCI repositories list versions as registry tags, so they use the same
+	// list mode; a failed refresh falls back to manual entry.
 	m.depEditMode = depEditModeList
+	m.depEditVersionInput.SetValue(dep.Version)
 
 	// Cache-first: show cached versions immediately if present.
 	if vs, fetchedAt, ok, err := helmutil.ReadVersionsCache(m.params.RepoRoot, dep.Repository, dep.Name); err == nil && ok {
@@ -6601,9 +6606,6 @@ func (m AppModel) upgradeSelectedDepCmd() (tea.Model, tea.Cmd) {
 
 func (m AppModel) upgradeDepToLatestCmd(dep yamlchart.Dependency) tea.Cmd {
 	return func() tea.Msg {
-		if strings.HasPrefix(dep.Repository, "oci://") {
-			return errMsg{fmt.Errorf("cannot auto-upgrade OCI dependency %s; use v to set exact version", yamlchart.DependencyID(dep))}
-		}
 		if e2eStubHelm() {
 			// Deterministic E2E stub: avoid helm repo access.
 			vs := []string{"9.9.9", "2.0.0", "1.1.0", "1.0.0"}

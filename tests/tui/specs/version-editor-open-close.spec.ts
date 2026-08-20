@@ -15,11 +15,15 @@ afterEach(async () => {
 });
 
 describe('TUI dependency version editor (tier 1)', () => {
-  it('opens version editor and cancels with esc (OCI manual mode)', async () => {
+  it('falls back to manual entry when the registry cannot be listed', async () => {
     const repo = await createTempHelmdexRepo();
     cleanup.push(() => rmTempRepo(repo));
 
-    const h = await startHelmdexTui(repo);
+    // Point every registry at a closed local port: the listing fails without
+    // this suite depending on a real DNS lookup of example.invalid.
+    const h = await startHelmdexTui(repo, {
+      env: { HELMDEX_FAKE_OCI_REGISTRY: 'http://127.0.0.1:1' },
+    });
     cleanup.push(() => h.kill());
 
     // Create instance (app auto-navigates to the instance view).
@@ -47,10 +51,13 @@ describe('TUI dependency version editor (tier 1)', () => {
     await h.press(['Enter']);
     await h.waitForText('Dependency applied');
 
-    // Open version editor.
+    // Open version editor. An OCI dependency lists its registry tags, but this
+    // registry refuses the connection: the failure must surface and the editor
+    // degrade to manual entry rather than trap the user with an empty picker.
     await h.press(['v']);
     await h.waitForText('Change dependency version');
-    await h.screenshotAndAssertIncludes('Enter an exact version:');
+    await h.waitForText('Enter an exact version:');
+    await h.screenshotAndAssertIncludes('Error:');
 
     await h.press(['Escape']);
     await h.waitForText('Dependencies');

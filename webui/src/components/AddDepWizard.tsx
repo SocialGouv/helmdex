@@ -184,6 +184,8 @@ export default function AddDepWizard({ inst, onClose }: { inst: InstanceInfo; on
               <div className="min-h-0 flex-1 overflow-auto">
                 <div className="text-sm text-muted">
                   Enter the repository URL (https://… or oci://…), chart name and exact version below.
+                  For OCI, give the namespace holding the chart — Helm appends the chart name, so
+                  oci://registry/org resolves to oci://registry/org/&lt;chart&gt;.
                 </div>
               </div>
             )}

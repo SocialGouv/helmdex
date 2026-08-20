@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"compress/gzip"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -12,6 +13,7 @@ import (
 	"testing"
 
 	"helmdex/internal/helmutil"
+	"helmdex/internal/ociregistry"
 	"helmdex/internal/testutil"
 )
 
@@ -182,18 +184,74 @@ func TestDeps_VersionsListing(t *testing.T) {
 	}
 }
 
-func TestDeps_VersionsRejectedForOCI(t *testing.T) {
+// OCI repositories have no index.yaml: their versions are registry tags, and
+// the listing must apply the same policy as a classic repo — junk tags out,
+// pre-releases hidden, newest first.
+func TestDeps_VersionsForOCI(t *testing.T) {
 	ts := newTestServer(t, testutil.RepoOpts{SourceMode: testutil.SourceNone})
+	testutil.FakeRegistry(t, map[string][]string{
+		"org/demo": {"0.1.0", "1.0.0", "artifacthub.io", "1.1.0-rc.1", "0.9.0"},
+	})
 	ts.createInstance("alpha")
 	addDep(ts, "alpha", map[string]any{
 		"name":       "demo",
-		"repository": "oci://registry.example.invalid/org/demo",
+		"repository": "oci://registry.example.invalid/org",
 		"version":    "0.1.0",
 	})
 
-	res := ts.get("/api/instances/alpha/deps/demo/versions").expect(http.StatusBadRequest)
-	if !strings.Contains(res.errorMessage(), "OCI") {
-		t.Fatalf("unexpected error: %s", res.errorMessage())
+	var got struct {
+		Current    string   `json:"current"`
+		Versions   []string `json:"versions"`
+		BestStable string   `json:"bestStable"`
+	}
+	ts.get("/api/instances/alpha/deps/demo/versions").expect(http.StatusOK).decode(&got)
+
+	if strings.Join(got.Versions, ",") != "1.0.0,0.9.0,0.1.0" {
+		t.Fatalf("versions = %v", got.Versions)
+	}
+	if got.Current != "0.1.0" {
+		t.Fatalf("current = %q", got.Current)
+	}
+	if got.BestStable != "1.0.0" {
+		t.Fatalf("bestStable = %q", got.BestStable)
+	}
+}
+
+// A registry that refuses the listing must reach the UI as an auth prompt for
+// that host, not as an opaque failure.
+func TestDeps_VersionsOCIUnauthorized(t *testing.T) {
+	ts := newTestServer(t, testutil.RepoOpts{SourceMode: testutil.SourceNone})
+	registry := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("WWW-Authenticate", `Basic realm="registry"`)
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+	}))
+	defer registry.Close()
+	t.Setenv(ociregistry.FakeRegistryEnv, registry.URL)
+
+	ts.createInstance("alpha")
+	addDep(ts, "alpha", map[string]any{
+		"name":       "demo",
+		"repository": "oci://registry.example.invalid/org",
+		"version":    "0.1.0",
+	})
+
+	var got struct {
+		Error        string `json:"error"`
+		AuthRequired *struct {
+			Candidates []struct {
+				Host string `json:"host"`
+				Kind string `json:"kind"`
+			} `json:"candidates"`
+		} `json:"authRequired"`
+	}
+	ts.get("/api/instances/alpha/deps/demo/versions").expect(http.StatusUnauthorized).decode(&got)
+
+	if got.AuthRequired == nil || len(got.AuthRequired.Candidates) == 0 {
+		t.Fatalf("no auth candidate offered: %+v", got)
+	}
+	c := got.AuthRequired.Candidates[0]
+	if c.Host != "registry.example.invalid" || c.Kind != "oci" {
+		t.Fatalf("candidate = %+v", c)
 	}
 }
 
@@ -439,5 +497,61 @@ func TestDeps_ApplySurfacesHelmFailures(t *testing.T) {
 	}
 	if ts.Repo.Exists(t, "apps", "alpha", "Chart.lock") {
 		t.Fatal("a failed relock must not leave a lock file behind")
+	}
+}
+
+// A repository naming the chart instead of its namespace addresses
+// <chart>/<chart>, which the registry rejects. The failure must carry the
+// reason, so the user is not left guessing at the version picker.
+func TestDeps_VersionsOCIFullRefExplainsItself(t *testing.T) {
+	ts := newTestServer(t, testutil.RepoOpts{SourceMode: testutil.SourceNone})
+	testutil.FakeRegistry(t, map[string][]string{"org/demo": {"1.0.0"}})
+	ts.createInstance("alpha")
+	addDep(ts, "alpha", map[string]any{
+		"name":       "demo",
+		"repository": "oci://registry.example.invalid/org/demo",
+		"version":    "0.1.0",
+	})
+
+	msg := ts.get("/api/instances/alpha/deps/demo/versions").expect(http.StatusBadGateway).errorMessage()
+	if !strings.Contains(msg, `set repository to "oci://registry.example.invalid/org"`) {
+		t.Fatalf("the error must name the repository to use: %s", msg)
+	}
+}
+
+// A namespace may legitimately end with the chart name (oci://reg/nginx holding
+// nginx/nginx). When such a registry demands credentials, the sign-in prompt
+// must survive: a shape heuristic must never outrank a real auth failure, or
+// the user is told to break a working configuration.
+func TestDeps_VersionsOCIAuthWinsOverTheFullRefHint(t *testing.T) {
+	ts := newTestServer(t, testutil.RepoOpts{SourceMode: testutil.SourceNone})
+	registry := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, `{"errors":[{"code":"DENIED","message":"denied: requested access to the resource is denied"}]}`, http.StatusForbidden)
+	}))
+	defer registry.Close()
+	t.Setenv(ociregistry.FakeRegistryEnv, registry.URL)
+
+	ts.createInstance("alpha")
+	addDep(ts, "alpha", map[string]any{
+		"name":       "nginx",
+		"repository": "oci://reg.private.invalid/nginx",
+		"version":    "1.0.0",
+	})
+
+	var got struct {
+		Error        string `json:"error"`
+		AuthRequired *struct {
+			Candidates []struct {
+				Host string `json:"host"`
+			} `json:"candidates"`
+		} `json:"authRequired"`
+	}
+	ts.get("/api/instances/alpha/deps/nginx/versions").expect(http.StatusUnauthorized).decode(&got)
+
+	if got.AuthRequired == nil || len(got.AuthRequired.Candidates) == 0 {
+		t.Fatalf("the sign-in prompt must survive the hint: %+v", got)
+	}
+	if got.AuthRequired.Candidates[0].Host != "reg.private.invalid" {
+		t.Fatalf("candidate = %+v", got.AuthRequired.Candidates[0])
 	}
 }

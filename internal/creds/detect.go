@@ -232,6 +232,20 @@ func lookupDockerLike(path, host string) (username, secret, labelSuffix string, 
 	return "", "", "", fmt.Errorf("no credential for %s in %s", host, path)
 }
 
+// DockerAuthFor resolves a username/secret for host from a docker-style
+// config file (credential helper, inline auths entry, then global credsStore).
+//
+// helmdex points HELM_REGISTRY_CONFIG at its own config and materializes the
+// stored OCI credentials into it, so that one file also carries anything a
+// plain `helm registry login` wrote.
+func DockerAuthFor(configPath, host string) (username, secret string, ok bool) {
+	u, s, _, err := lookupDockerLike(configPath, host)
+	if err != nil || s == "" {
+		return "", "", false
+	}
+	return u, s, true
+}
+
 func probeDockerConfig(_ context.Context, host string) (Candidate, error) {
 	u, _, suffix, err := lookupDockerLike(dockerConfigPath(), host)
 	if err != nil {

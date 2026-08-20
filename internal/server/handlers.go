@@ -795,10 +795,6 @@ func (s *Server) handleDepVersions(w http.ResponseWriter, r *http.Request) {
 		httpError(w, http.StatusNotFound, err)
 		return
 	}
-	if strings.HasPrefix(dep.Repository, "oci://") {
-		httpError(w, http.StatusBadRequest, fmt.Errorf("version listing is not supported for OCI repositories"))
-		return
-	}
 	vs, err := helmutil.RepoChartVersions(r.Context(), s.ws().RepoRoot, dep.Repository, dep.Name, 24*time.Hour)
 	if err != nil {
 		cand, _ := creds.CandidateForRepo(dep.Repository)

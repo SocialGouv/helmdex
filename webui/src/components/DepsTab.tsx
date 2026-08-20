@@ -119,7 +119,6 @@ function VersionDialog({
   const versions = useQuery({
     queryKey: ["versions", inst.name, dep.id],
     queryFn: () => api.depVersions(inst.name, dep.id),
-    enabled: !isOCI,
   });
   const [manual, setManual] = useState("");
 
@@ -171,35 +170,29 @@ function VersionDialog({
             />
           )}
 
-          {isOCI ? (
-            <div className="text-sm text-muted">
-              OCI repository: version listing is not available; set the exact pinned tag.
-            </div>
-          ) : (
-            <div className="min-h-0 flex-1 overflow-auto">
-              {versions.isLoading && <div className="text-muted">Loading versions…</div>}
-              {versions.isError && (
-                <ErrorWithAuth error={versions.error} onRetry={() => void versions.refetch()} />
-              )}
-              {versions.data?.versions.map((v) => (
-                <button
-                  key={v}
-                  onClick={() => setVersion.mutate(v)}
-                  disabled={setVersion.isPending}
-                  className={`flex w-full items-center justify-between rounded px-2 py-1.5 text-left text-sm hover:bg-panel-2 ${
-                    v === dep.version ? "text-accent" : ""
-                  }`}
-                >
-                  {v}
-                  {v === versions.data.bestStable && (
-                    <span className="rounded bg-panel-2 px-1.5 text-[10px] uppercase text-accent-2">
-                      best stable
-                    </span>
-                  )}
-                </button>
-              ))}
-            </div>
-          )}
+          <div className="min-h-0 flex-1 overflow-auto">
+            {versions.isLoading && <div className="text-muted">Loading versions…</div>}
+            {versions.isError && (
+              <ErrorWithAuth error={versions.error} onRetry={() => void versions.refetch()} />
+            )}
+            {versions.data?.versions.map((v) => (
+              <button
+                key={v}
+                onClick={() => setVersion.mutate(v)}
+                disabled={setVersion.isPending}
+                className={`flex w-full items-center justify-between rounded px-2 py-1.5 text-left text-sm hover:bg-panel-2 ${
+                  v === dep.version ? "text-accent" : ""
+                }`}
+              >
+                {v}
+                {v === versions.data.bestStable && (
+                  <span className="rounded bg-panel-2 px-1.5 text-[10px] uppercase text-accent-2">
+                    best stable
+                  </span>
+                )}
+              </button>
+            ))}
+          </div>
         </Dialog.Content>
       </Dialog.Portal>
     </Dialog.Root>

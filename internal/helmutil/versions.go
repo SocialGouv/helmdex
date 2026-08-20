@@ -10,16 +10,20 @@ import (
 	"time"
 )
 
-// RepoChartVersions returns available chart versions for a chart in a classic
-// (non-OCI) Helm repository.
+// RepoChartVersions returns available chart versions for a chart.
 //
-// It uses an isolated per-repoURL helm env (see EnvForRepoURL), ensures the repo
-// is added, runs a stale-aware repo update, then queries versions via:
+// For a classic Helm repository it uses an isolated per-repoURL helm env (see
+// EnvForRepoURL), ensures the repo is added, runs a stale-aware repo update,
+// then queries versions via:
 //
 //	helm search repo <repo>/<chart> --versions -o json
+//
+// OCI repositories have no index.yaml to search: their versions are registry
+// tags, listed over the OCI Distribution API instead (see ociChartVersions).
+// repoUpdateMaxAge has no meaning on that path and is ignored.
 func RepoChartVersions(ctx context.Context, repoRoot, repoURL, chartName string, repoUpdateMaxAge time.Duration) ([]string, error) {
 	if strings.HasPrefix(repoURL, "oci://") {
-		return nil, fmt.Errorf("helm search repo does not support OCI refs; cannot list versions for %s", repoURL)
+		return ociChartVersions(ctx, repoRoot, repoURL, chartName)
 	}
 	if strings.TrimSpace(chartName) == "" {
 		return nil, fmt.Errorf("chartName is required")
@@ -87,7 +91,7 @@ func RepoChartVersions(ctx context.Context, repoRoot, repoURL, chartName string,
 // It uses an isolated per-repoURL helm env (see EnvForRepoURL), ensures the repo
 // is added, runs a stale-aware repo update when needed, then lists charts via:
 //
-// 	helm search repo <repo> -o json
+//	helm search repo <repo> -o json
 //
 // Note: Helm does not support listing charts for OCI refs.
 func RepoChartNames(ctx context.Context, repoRoot, repoURL string, repoUpdateMaxAge time.Duration) ([]string, error) {
@@ -225,15 +229,26 @@ func parseSearchRepoVersionsForRef(raw, ref string) ([]string, error) {
 		seen[v] = struct{}{}
 		vs = append(vs, v)
 	}
-	// Stable ordering for UI:
-	// 1) SemVer descending when parseable
-	// 2) otherwise lexical descending as a fallback
+	sortVersionsDesc(vs)
+	return vs, nil
+}
+
+// sortVersionsDesc orders versions newest-first for the UI:
+//  1. SemVer descending when parseable
+//  2. otherwise lexical descending as a fallback
+func sortVersionsDesc(vs []string) {
 	sort.Slice(vs, func(i, j int) bool {
 		vi := strings.TrimSpace(vs[i])
 		vj := strings.TrimSpace(vs[j])
 		ai, ei := semver.NewVersion(vi)
 		aj, ej := semver.NewVersion(vj)
 		if ei == nil && ej == nil {
+			// Build metadata is ignored by SemVer precedence, so 1.0.0+a and
+			// 1.0.0+b compare equal; break the tie on the tag itself to keep
+			// the order stable between runs.
+			if ai.Equal(aj) {
+				return vi > vj
+			}
 			return ai.GreaterThan(aj)
 		}
 		if ei == nil && ej != nil {
@@ -245,5 +260,4 @@ func parseSearchRepoVersionsForRef(raw, ref string) ([]string, error) {
 		// Neither is SemVer: lexical desc.
 		return vi > vj
 	})
-	return vs, nil
 }
