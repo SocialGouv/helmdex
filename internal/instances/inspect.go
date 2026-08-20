@@ -166,8 +166,11 @@ func LoadDepInspectContent(ctx context.Context, repoRoot string, instPath string
 	env := helmutil.EnvForRepoURL(repoRoot, dep.Repository)
 	ctx2, cancel := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()
-	if tgzPath, err := helmutil.PullChartArchive(ctx2, env, dep.Repository, dep.Name, dep.Version); err == nil {
+	tgzPath, pullErr := helmutil.PullChartArchive(ctx2, env, dep.Repository, dep.Name, dep.Version)
+	var archiveErr error
+	if pullErr == nil {
 		readme, values, schema, err2 := helmutil.ReadChartArchiveFilesWithSchema(tgzPath)
+		archiveErr = err2
 		if err2 == nil {
 			gotArchive = true
 			if strings.TrimSpace(readme) != "" {
@@ -207,6 +210,17 @@ func LoadDepInspectContent(ctx context.Context, repoRoot string, instPath string
 	// schema subcommand, so a schema we could not read from an archive means
 	// the archive could not be fetched — surface that, not "absent".
 	if kind == InspectSchema {
+		// This is the only artifact `helm show` cannot serve, so the failed
+		// pull is the whole answer. Reporting it verbatim keeps the sign-in
+		// classification and any repository explanation the pull attached.
+		if pullErr != nil {
+			return "", fmt.Errorf("could not read this chart's values.schema.json: %w", pullErr)
+		}
+		if archiveErr != nil {
+			// The archive arrived but could not be read — a parse failure, not
+			// a network or credentials problem.
+			return "", fmt.Errorf("could not read this chart's archive: %w", archiveErr)
+		}
 		return "", fmt.Errorf("could not fetch the chart archive to read its schema; check registry access (sign in) or relock the dependency")
 	}
 	ctx3, cancel3 := context.WithTimeout(ctx, 60*time.Second)
@@ -230,13 +244,13 @@ func LoadDepInspectContent(ctx context.Context, repoRoot string, instPath string
 		if kind == InspectReadme {
 			s, err := helmutil.ShowReadme(ctx3, env, ref, dep.Version)
 			if err != nil {
-				return "", err
+				return "", helmutil.WithOCIRefHint(err, dep.Repository, dep.Name)
 			}
 			return showAndCache(s)
 		}
 		s, err := helmutil.ShowValues(ctx3, env, ref, dep.Version)
 		if err != nil {
-			return "", err
+			return "", helmutil.WithOCIRefHint(err, dep.Repository, dep.Name)
 		}
 		return showAndCache(s)
 	}

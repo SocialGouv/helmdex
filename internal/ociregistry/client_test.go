@@ -521,3 +521,40 @@ func TestNextPageURL_StopsOnANonAdvancingCursor(t *testing.T) {
 		t.Fatalf("nextPageURL = %q, want pagination to stop", got)
 	}
 }
+
+// A cursor may carry a comma. Splitting the header on every comma would bisect
+// the URI reference and silently end pagination one page early.
+func TestNextPageURL_CommaInsideTheCursor(t *testing.T) {
+	const current = "https://reg.test/v2/foo/tags/list?n=100"
+	resp := &http.Response{Header: http.Header{}}
+	resp.Header.Set("Link", `</v2/foo/tags/list?n=100&last=v1,build.1>; rel="next"`)
+
+	// The cursor is passed through verbatim; re-encoding could corrupt it.
+	want := "https://reg.test/v2/foo/tags/list?n=100&last=v1,build.1"
+	if got := nextPageURL(current, resp); got != want {
+		t.Fatalf("nextPageURL = %q, want %q", got, want)
+	}
+}
+
+// A registry that reorders query parameters between pages must not defeat the
+// non-advancing-cursor guard and burn the whole page budget.
+func TestNextPageURL_StopsOnAReorderedButIdenticalCursor(t *testing.T) {
+	const current = "https://reg.test/v2/foo/tags/list?n=100&last=v1"
+	resp := &http.Response{Header: http.Header{}}
+	resp.Header.Set("Link", `</v2/foo/tags/list?last=v1&n=100>; rel="next"`)
+
+	if got := nextPageURL(current, resp); got != "" {
+		t.Fatalf("nextPageURL = %q, want pagination to stop", got)
+	}
+}
+
+// The auth-scope splitter keeps its own comma case working.
+func TestSplitTopLevelCommas_KeepsQuotedAndBracketedCommas(t *testing.T) {
+	got := splitTopLevelCommas(`realm="https://a/token",scope="repository:a/b:pull,push"`)
+	if len(got) != 2 {
+		t.Fatalf("split into %d parts: %q", len(got), got)
+	}
+	if !strings.Contains(got[1], "pull,push") {
+		t.Fatalf("quoted comma was split: %q", got)
+	}
+}

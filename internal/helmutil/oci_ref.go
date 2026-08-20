@@ -40,10 +40,17 @@ func OCIChartRef(repoURL, chartName string) (string, error) {
 // <chart>/<chart>. It returns "" when the repository does not look like that,
 // so callers can append it unconditionally.
 //
-// It is advice, not a diagnosis: a namespace may legitimately end with the
-// chart name (oci://reg/nginx holding nginx/nginx). Callers must keep treating
-// the underlying failure as what it is — an auth failure stays an auth failure,
-// with its sign-in prompt.
+// It is a possibility to check, never a diagnosis. A namespace may legitimately
+// end with the chart name (oci://reg/nginx holding nginx/nginx), and a registry
+// answers 403 both for "absent" and for "forbidden" — deliberately, so that
+// repository existence is not leaked — so the two cases are indistinguishable.
+// The wording therefore states what was requested and leaves the conclusion to
+// the reader, and callers keep treating the underlying failure as what it is:
+// an auth failure stays an auth failure, with its sign-in prompt.
+// ociRefHintMarker identifies an explanation already present in an error, so
+// it is never appended twice.
+const ociRefHintMarker = "Helm appends the chart name"
+
 func OCIFullRefHint(repoURL, chartName string) string {
 	repoURL = strings.TrimRight(strings.TrimSpace(repoURL), "/")
 	chartName = strings.TrimSpace(chartName)
@@ -54,6 +61,7 @@ func OCIFullRefHint(repoURL, chartName string) string {
 		return ""
 	}
 	return fmt.Sprintf(
-		"repository %q already ends with the chart name and Helm appends it again; set repository to %q",
-		repoURL, strings.TrimSuffix(repoURL, "/"+chartName))
+		"note: "+ociRefHintMarker+" to the repository, so this asked the registry for %q; "+
+			"if the chart is not published under that path, set repository to %q",
+		strings.TrimPrefix(repoURL+"/"+chartName, "oci://"), strings.TrimSuffix(repoURL, "/"+chartName))
 }

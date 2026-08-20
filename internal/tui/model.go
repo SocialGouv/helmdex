@@ -2215,7 +2215,16 @@ func (m *AppModel) handleVersionsRefreshResult(msg versionsRefreshResultMsg) tea
 		// would hide a picker the next refresh brings back.
 		switch {
 		case len(m.depEditVersionsData) == 0 && m.depEditMode != depEditModeManual:
+			if m.depEditSourceOK && m.depEditSource.Kind == depSourceCatalog {
+				// Emptied by catalog coverage, not by the registry. Offering a
+				// free-text field here would contradict the message already on
+				// screen telling the user to detach first.
+				break
+			}
 			m.depEditMode = depEditModeManual
+			// The list is hidden now, but its filter state would survive and
+			// swallow the next keystrokes.
+			m.depEditVersions.ResetFilter()
 			// Seed only an untouched field: the picker can come and go while
 			// the user is mid-tag, and re-entering manual must not erase it.
 			if strings.TrimSpace(m.depEditVersionInput.Value()) == "" {
@@ -2223,8 +2232,13 @@ func (m *AppModel) handleVersionsRefreshResult(msg versionsRefreshResultMsg) tea
 			}
 			m.depEditVersionInput.Focus()
 		case len(m.depEditVersionsData) > 0 && m.depEditMode == depEditModeManual:
-			m.depEditMode = depEditModeList
-			m.depEditVersionInput.Blur()
+			// Restoring the picker under someone typing a tag would hide their
+			// text and apply the list's selection on Enter instead. The seeded
+			// default is not their text, so it does not hold the picker back.
+			if !userEditedVersion(m.depEditVersionInput.Value(), m.depEditDep.Version) {
+				m.depEditMode = depEditModeList
+				m.depEditVersionInput.Blur()
+			}
 		}
 	}
 	if m.depDetailOpen && msg.key == versionsKey(m.depDetailDep.Repository, m.depDetailDep.Name) {
@@ -2236,12 +2250,18 @@ func (m *AppModel) handleVersionsRefreshResult(msg versionsRefreshResultMsg) tea
 		}
 		switch {
 		case len(m.depDetailVersionsData) == 0 && m.depDetailMode != depEditModeManual:
+			if m.depDetailSourceOK && m.depDetailSource.Kind == depSourceCatalog {
+				break
+			}
 			m.depDetailMode = depEditModeManual
+			m.depDetailVersions.ResetFilter()
 			if strings.TrimSpace(m.depDetailVersionInput.Value()) == "" {
 				m.depDetailVersionInput.SetValue(m.depDetailDep.Version)
 			}
 		case len(m.depDetailVersionsData) > 0 && m.depDetailMode == depEditModeManual:
-			m.depDetailMode = depEditModeList
+			if !userEditedVersion(m.depDetailVersionInput.Value(), m.depDetailDep.Version) {
+				m.depDetailMode = depEditModeList
+			}
 		}
 		m.depDetailPreview.SetContent(m.renderDepDetailBody())
 	}
@@ -2304,15 +2324,56 @@ func (m *AppModel) setVersionsList(items []string, which versionsTarget) {
 	for _, v := range data {
 		its = append(its, versionItem{Ver: v})
 	}
-	listModel.SetItems(its)
-	// Keep selection on current version when possible.
-	listModel.Select(0)
-	for i := range data {
-		if strings.TrimSpace(data[i]) == strings.TrimSpace(curVer) {
-			listModel.Select(i)
-			break
+
+	// A refresh can land while the user is browsing, so remember where they
+	// were: re-anchoring on the current version every time would drag the
+	// cursor away under them.
+	previous := ""
+	if it, ok := listModel.SelectedItem().(versionItem); ok {
+		previous = strings.TrimSpace(it.Ver)
+	}
+
+	// SetItems drops the filtered view and returns the command that rebuilds
+	// it. The resulting FilterMatchesMsg carries no marker saying which list it
+	// belongs to, and the app's Update has no route for it, so run it here and
+	// feed it straight back: the rebuild stays local to this list.
+	if cmd := listModel.SetItems(its); cmd != nil {
+		if msg := cmd(); msg != nil {
+			*listModel, _ = listModel.Update(msg)
 		}
 	}
+
+	// Select takes an index into the VISIBLE rows, which is the filtered slice
+	// while a filter is active. Indexing into the unfiltered data would put the
+	// cursor on the wrong row — or past the end, where SelectedItem is nil and
+	// Enter silently does nothing.
+	listModel.Select(0)
+	visible := listModel.VisibleItems()
+	for _, target := range []string{previous, strings.TrimSpace(curVer)} {
+		if target == "" {
+			continue
+		}
+		if i := indexOfVersion(visible, target); i >= 0 {
+			listModel.Select(i)
+			return
+		}
+	}
+}
+
+func indexOfVersion(items []list.Item, want string) int {
+	for i, it := range items {
+		if v, ok := it.(versionItem); ok && strings.TrimSpace(v.Ver) == want {
+			return i
+		}
+	}
+	return -1
+}
+
+// userEditedVersion reports whether the manual field holds something the user
+// typed, as opposed to the value seeded when the picker came up empty.
+func userEditedVersion(value, seeded string) bool {
+	v := strings.TrimSpace(value)
+	return v != "" && v != strings.TrimSpace(seeded)
 }
 
 func versionsKey(repoURL, chartName string) string {
@@ -3325,19 +3386,31 @@ func (m AppModel) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.endBusy()
 		// Keep the originating modal open (version picker / dep detail). Instead of
 		// applying immediately, open the diff modal and require confirmation.
+		// Validation runs in the background, so the user may have moved to
+		// another dependency meanwhile. The version being upgraded FROM has to
+		// come from the dependency this result is about — reading it off the
+		// open modal would show a diff between two different charts.
+		wantID := yamlchart.DependencyID(msg.dep)
 		oldDep := yamlchart.Dependency{}
-		if m.depDetailOpen {
+		if m.depDetailOpen && yamlchart.DependencyID(m.depDetailDep) == wantID {
 			oldDep = m.depDetailDep
-		} else if m.depEditOpen {
+		} else if m.depEditOpen && yamlchart.DependencyID(m.depEditDep) == wantID {
 			oldDep = m.depEditDep
 		}
 		if oldDep.Name == "" {
-			// Fallback: best-effort use dependency list selection.
-			if it := m.depsList.SelectedItem(); it != nil {
-				if di, ok := it.(depItem); ok {
+			for _, it := range m.depsList.Items() {
+				if di, ok := it.(depItem); ok && yamlchart.DependencyID(di.Dep) == wantID {
 					oldDep = di.Dep
+					break
 				}
 			}
+		}
+		if oldDep.Name == "" {
+			// The dependency is gone — removed, or the user moved to another
+			// instance while this validated. Opening the diff anyway would
+			// offer to apply it to whichever chart is selected now.
+			m.setStatusErr(fmt.Sprintf("upgrade for %s no longer applies to the selected instance", wantID))
+			return m, nil
 		}
 		m.depDiffOpen = true
 		m.depDiffLoading = true
@@ -3613,8 +3686,7 @@ func (m AppModel) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case versionsRefreshResultMsg:
 		// Background refresh result: update cache + update the open modal when still relevant.
-		_ = m.handleVersionsRefreshResult(msg)
-		return m, nil
+		return m, m.handleVersionsRefreshResult(msg)
 	case versionsRefreshTickMsg:
 		// Periodic background refresh for watched deps.
 		cmds := []tea.Cmd{}
@@ -5800,6 +5872,7 @@ func (m AppModel) openDepDetailSelected() (tea.Model, tea.Cmd) {
 	m.depDetailSettingsCursor = 0
 	m.depDetailVersionsData = nil
 	m.depDetailVersions.SetItems(nil)
+	m.depDetailVersions.ResetFilter()
 	m.depDetailVersionsLoading = false
 	m.depDetailAliasInput.SetValue(strings.TrimSpace(dep.Alias))
 	m.depDetailAliasInput.Blur()
@@ -6566,12 +6639,18 @@ func (m AppModel) openDepEditSelected() (tea.Model, tea.Cmd) {
 	m.modalErr = ""
 	m.depEditVersionsData = nil
 	m.depEditVersions.SetItems(nil)
+	// The widget is shared across dependencies: a filter left over from the
+	// last one would silently hide this one's versions.
+	m.depEditVersions.ResetFilter()
 	m.depEditVersions.Title = fmt.Sprintf("Versions (%s)", yamlchart.DependencyID(dep))
 
 	// OCI repositories list versions as registry tags, so they use the same
 	// list mode; a failed refresh falls back to manual entry.
 	m.depEditMode = depEditModeList
 	m.depEditVersionInput.SetValue(dep.Version)
+	// The manual fallback focuses this input; nothing blurs it on the way out,
+	// so a fresh list-mode open would capture keys meant for the list.
+	m.depEditVersionInput.Blur()
 
 	// Cache-first: show cached versions immediately if present.
 	if vs, fetchedAt, ok, err := helmutil.ReadVersionsCache(m.params.RepoRoot, dep.Repository, dep.Name); err == nil && ok {

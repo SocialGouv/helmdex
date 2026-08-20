@@ -44,4 +44,22 @@ describe("DepDiffDialog", () => {
     expect(await screen.findByRole("option", { name: /15\.2\.0/ })).toBeDefined();
     expect(fake.requests).toContain("GET /api/instances/alpha/deps/nginx/versions");
   });
+
+  // The dropdown is the discoverable path; when the listing fails the dialog
+  // must say so rather than quietly showing only "or type a version".
+  it("surfaces a failed version listing", async () => {
+    fake = installFakeApi();
+    fake.failNext("GET", "/api/instances/alpha/deps/nginx/versions", 502, "registry unreachable");
+    renderWithProviders(
+      <DepDiffDialog
+        inst={instance()}
+        dep={dep("oci://registry.example.invalid/org/nginx")}
+        onClose={() => {}}
+      />,
+    );
+
+    expect(await screen.findByText(/registry unreachable/)).toBeDefined();
+    // The manual field stays usable as the fallback.
+    expect(screen.getByPlaceholderText("or type a version")).toBeDefined();
+  });
 });

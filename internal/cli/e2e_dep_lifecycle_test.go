@@ -316,6 +316,13 @@ func TestCLI_Dep_VersionsForOCI(t *testing.T) {
 	if got := strings.Join(strings.Fields(out), ","); got != "1.0.0,0.1.0" {
 		t.Fatalf("versions = %q, want newest-first without the junk tag", got)
 	}
+
+	// --format json is the documented contract: an array, newest-first.
+	var versions []string
+	r.runJSON(&versions, "instance", "dep", "versions", "alpha", "demo")
+	if strings.Join(versions, ",") != "1.0.0,0.1.0" {
+		t.Fatalf("json versions = %v", versions)
+	}
 }
 
 // Auto-upgrade reaches OCI dependencies too, now that their versions can be
@@ -364,5 +371,19 @@ func TestCLI_Dep_HelmFailureIsSurfaced(t *testing.T) {
 	}
 	if r.Exists(t, "apps", "alpha", "Chart.lock") {
 		t.Fatal("a failed relock must not leave a lock behind")
+	}
+}
+
+// A registry publishing only non-SemVer tags yields no versions; the JSON
+// contract is an empty array, not null.
+func TestCLI_Dep_VersionsForOCIEmptyIsAnArray(t *testing.T) {
+	r := newCLIRepo(t, testutil.RepoOpts{SourceMode: testutil.SourceNone})
+	testutil.FakeRegistry(t, map[string][]string{"org/demo": {"latest", "main", "artifacthub.io"}})
+	r.run("instance", "create", "alpha")
+	r.run("instance", "dep", "add", "alpha",
+		"--repo", "oci://registry.example.invalid/org", "--name", "demo", "--version", "0.1.0")
+
+	if out := strings.TrimSpace(r.run("instance", "dep", "versions", "alpha", "demo")); out != "[]" {
+		t.Fatalf("json output = %q, want an empty array", out)
 	}
 }
