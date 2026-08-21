@@ -2376,6 +2376,37 @@ func userEditedVersion(value, seeded string) bool {
 	return v != "" && v != strings.TrimSpace(seeded)
 }
 
+// pruneWatchedVersions drops watches for dependencies the user is no longer
+// looking at.
+//
+// The watch exists to keep the cache warm for the instance on screen. Nothing
+// removed entries, so every dependency ever opened kept being re-listed for the
+// life of the process — for OCI that is a registry round trip each, every
+// interval, against registries that rate-limit.
+func (m *AppModel) pruneWatchedVersions() {
+	keep := map[string]struct{}{}
+	for _, it := range m.depsList.Items() {
+		di, ok := it.(depItem)
+		if !ok {
+			continue
+		}
+		keep[versionsKey(di.Dep.Repository, di.Dep.Name)] = struct{}{}
+	}
+	// A dependency shown in an open modal stays warm even if the list behind
+	// it has moved on.
+	if m.depEditOpen {
+		keep[versionsKey(m.depEditDep.Repository, m.depEditDep.Name)] = struct{}{}
+	}
+	if m.depDetailOpen {
+		keep[versionsKey(m.depDetailDep.Repository, m.depDetailDep.Name)] = struct{}{}
+	}
+	for key := range m.versionsWatched {
+		if _, ok := keep[key]; !ok {
+			delete(m.versionsWatched, key)
+		}
+	}
+}
+
 func versionsKey(repoURL, chartName string) string {
 	return helmutil.VersionsCacheKey(repoURL, chartName)
 }
@@ -3689,6 +3720,7 @@ func (m AppModel) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.handleVersionsRefreshResult(msg)
 	case versionsRefreshTickMsg:
 		// Periodic background refresh for watched deps.
+		m.pruneWatchedVersions()
 		cmds := []tea.Cmd{}
 		for key, w := range m.versionsWatched {
 			if m.versionsInFlight[key] {
