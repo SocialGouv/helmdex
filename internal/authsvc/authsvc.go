@@ -75,7 +75,7 @@ func Login(ctx context.Context, repoRoot string, req LoginRequest) (LoginResult,
 	// url to an attacker endpoint — exfiltrating the secret via the
 	// verification request's Authorization header.
 	if u := strings.TrimSpace(req.URL); u != "" {
-		if h := creds.HostOf(u); h != host {
+		if h := creds.HostKeyFor(u, req.Kind); h != host {
 			return LoginResult{}, fmt.Errorf("verification URL host %q does not match credential host %q", h, host)
 		}
 	}

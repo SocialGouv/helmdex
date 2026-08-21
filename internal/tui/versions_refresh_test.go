@@ -486,3 +486,37 @@ func TestDepVersionValidated_DoesNotOpenADiffForAVanishedDependency(t *testing.T
 			mm.depDiffOldDep, mm.depDiffNewDep)
 	}
 }
+
+// The watch keeps the cache warm for what is on screen. Without pruning, every
+// dependency ever opened kept being re-listed for the life of the process —
+// a registry round trip each, every interval.
+func TestVersionsWatch_PrunedToWhatIsOnScreen(t *testing.T) {
+	shown := yamlchart.Dependency{Name: "shown", Repository: "oci://reg.test/org", Version: "1.0.0"}
+	gone := yamlchart.Dependency{Name: "gone", Repository: "oci://reg.test/org", Version: "1.0.0"}
+	inModal := yamlchart.Dependency{Name: "modal", Repository: "oci://reg.test/org", Version: "1.0.0"}
+
+	m := NewAppModel(Params{RepoRoot: "."})
+	m.watchVersions(shown)
+	m.watchVersions(gone)
+	m.watchVersions(inModal)
+	if len(m.versionsWatched) != 3 {
+		t.Fatalf("precondition: %d watches", len(m.versionsWatched))
+	}
+
+	// Only `shown` is in the current instance; `inModal` is open in front of it.
+	m.depsList.SetItems([]list.Item{depItem{Dep: shown}})
+	m.depEditOpen = true
+	m.depEditDep = inModal
+
+	m.pruneWatchedVersions()
+
+	if _, ok := m.versionsWatched[versionsKey(gone.Repository, gone.Name)]; ok {
+		t.Fatal("a dependency the user left is still being refreshed forever")
+	}
+	if _, ok := m.versionsWatched[versionsKey(shown.Repository, shown.Name)]; !ok {
+		t.Fatal("the visible dependency must stay warm")
+	}
+	if _, ok := m.versionsWatched[versionsKey(inModal.Repository, inModal.Name)]; !ok {
+		t.Fatal("a dependency open in a modal must stay warm")
+	}
+}

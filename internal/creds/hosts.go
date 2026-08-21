@@ -1,6 +1,7 @@
 package creds
 
 import (
+	"net"
 	"net/url"
 	"strings"
 )
@@ -32,6 +33,42 @@ func HostOf(raw string) string {
 		}
 	}
 	return ""
+}
+
+// AuthorityOf extracts the lowercase host of a registry or repository URL,
+// keeping the port. A port identifies a distinct service — two registries can
+// share a hostname — so a credential for one must never be presented to the
+// other. HostOf drops the port on purpose, because a git host is identified by
+// name alone; this is its counterpart for endpoints.
+func AuthorityOf(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" || !strings.Contains(raw, "://") {
+		return HostOf(raw)
+	}
+	u, err := url.Parse(raw)
+	if err != nil || u.Scheme == "file" {
+		return ""
+	}
+	return strings.ToLower(u.Host)
+}
+
+// HostKeyFor returns the credential-store key for a URL of the given kind:
+// the authority for endpoints helmdex authenticates against, the bare host for
+// git remotes.
+func HostKeyFor(rawURL string, kind Kind) string {
+	if kind == KindGit {
+		return HostOf(rawURL)
+	}
+	return AuthorityOf(rawURL)
+}
+
+// withoutPort drops a port from an authority, for the callers that mean a
+// host's identity rather than a service endpoint.
+func withoutPort(authority string) string {
+	if h, _, err := net.SplitHostPort(authority); err == nil {
+		return h
+	}
+	return authority
 }
 
 // IsSSHURL reports whether a git URL uses SSH transport (ssh:// or scp-like).
@@ -73,7 +110,7 @@ func registryStripped(host string) (string, bool) {
 // AccountHostFor maps a registry host to the host that likely owns the
 // account (identity when host is not registry-shaped).
 func AccountHostFor(host string) string {
-	host = strings.ToLower(strings.TrimSpace(host))
+	host = withoutPort(strings.ToLower(strings.TrimSpace(host)))
 	if stripped, ok := registryStripped(host); ok {
 		return stripped
 	}
@@ -85,7 +122,7 @@ func AccountHostFor(host string) string {
 // The result never contains host itself and is best-effort (used only to
 // widen credential detection and token-page guessing).
 func RelatedHosts(host string) []string {
-	host = strings.ToLower(strings.TrimSpace(host))
+	host = withoutPort(strings.ToLower(strings.TrimSpace(host)))
 	if strings.Count(host, ".") < 1 {
 		return nil
 	}
@@ -101,7 +138,7 @@ func RelatedHosts(host string) []string {
 // It matches on exact host or dotted suffix — never a bare substring, so
 // "notgithub.com" or "mygithub.attacker.example" do not qualify.
 func IsGitHubHost(host string) bool {
-	host = strings.ToLower(strings.TrimSpace(host))
+	host = withoutPort(strings.ToLower(strings.TrimSpace(host)))
 	return host == "github.com" ||
 		host == "ghcr.io" ||
 		strings.HasSuffix(host, ".github.com") ||

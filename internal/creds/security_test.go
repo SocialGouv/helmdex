@@ -225,3 +225,56 @@ func bumpMtimeAfter(t *testing.T, newer, older string) {
 		t.Fatal(err)
 	}
 }
+
+// A port identifies a distinct service: two registries can share a hostname.
+// A credential stored for one must never be presented to the other.
+func TestCredentialsAreKeyedPerEndpoint(t *testing.T) {
+	t.Setenv("HELMDEX_CREDENTIALS", filepath.Join(t.TempDir(), "credentials.yaml"))
+	if err := Upsert(Credential{
+		Host: "reg.example.org", Kind: KindOCI, Username: "alice", Secret: "for-the-default-port",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, ok := ForURL("oci://reg.example.org/org/chart", KindOCI); !ok {
+		t.Fatal("the credential must still serve its own endpoint")
+	}
+	if got, ok := ForURL("oci://reg.example.org:5000/org/chart", KindOCI); ok {
+		t.Fatalf("credential for reg.example.org leaked to a different service on :5000 (%q)", got.Secret)
+	}
+
+	// And a per-endpoint credential is storable and found.
+	if err := Upsert(Credential{
+		Host: "reg.example.org:5000", Kind: KindOCI, Username: "bob", Secret: "for-5000",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	got, ok := ForURL("oci://reg.example.org:5000/org/chart", KindOCI)
+	if !ok || got.Secret != "for-5000" {
+		t.Fatalf("per-endpoint credential not resolved: %+v ok=%v", got, ok)
+	}
+}
+
+// Signing in for a ported registry must record that endpoint, so the stored
+// credential is the one the registry will be asked for.
+func TestCandidateForRepoKeepsThePort(t *testing.T) {
+	c, ok := CandidateForRepo("oci://reg.example.org:5000/org/chart")
+	if !ok || c.Host != "reg.example.org:5000" {
+		t.Fatalf("candidate host = %q", c.Host)
+	}
+	// Git remotes keep identifying a host, not an endpoint.
+	if got := HostKeyFor("ssh://git@git.example.org:2222/o/r.git", KindGit); got != "git.example.org" {
+		t.Fatalf("git host key = %q", got)
+	}
+}
+
+// Token pages and host-family checks are about identity, so a port must not
+// reach them.
+func TestIdentityHelpersIgnoreThePort(t *testing.T) {
+	if got := AccountHostFor("registry.gitlab.example.org:5000"); got != "gitlab.example.org" {
+		t.Fatalf("account host = %q", got)
+	}
+	if !IsGitHubHost("ghcr.io:443") {
+		t.Fatal("ghcr.io with an explicit port is still GitHub")
+	}
+}

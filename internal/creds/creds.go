@@ -242,9 +242,12 @@ func ForHost(host string, kind Kind) (Credential, bool) {
 	return Credential{}, false
 }
 
-// ForURL returns the stored credential for the host of url, for the given kind.
+// ForURL returns the stored credential for url, for the given kind.
+//
+// Registries and Helm repositories are keyed by authority, so a credential
+// stored for one port is never presented to a service on another.
 func ForURL(rawURL string, kind Kind) (Credential, bool) {
-	h := HostOf(rawURL)
+	h := HostKeyFor(rawURL, kind)
 	if h == "" {
 		return Credential{}, false
 	}
