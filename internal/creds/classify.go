@@ -51,13 +51,15 @@ type AuthCandidate struct {
 // (file://) or unparseable URLs.
 func CandidateForRepo(repoURL string) (AuthCandidate, bool) {
 	repoURL = strings.TrimSpace(repoURL)
-	h := HostOf(repoURL)
-	if h == "" {
-		return AuthCandidate{}, false
-	}
 	kind := KindHelmRepo
 	if strings.HasPrefix(repoURL, "oci://") {
 		kind = KindOCI
+	}
+	// Keyed by authority: signing in for a registry on a non-default port must
+	// store a credential for that endpoint, not for its hostname at large.
+	h := HostKeyFor(repoURL, kind)
+	if h == "" {
+		return AuthCandidate{}, false
 	}
 	return AuthCandidate{Host: h, Kind: kind, URL: repoURL}, true
 }
